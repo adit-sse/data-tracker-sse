@@ -29,6 +29,9 @@ export default function ClientDetailPage() {
   const [loading, setLoading] = useState(true);
   const [editingFacility, setEditingFacility] = useState<Facility | null>(null);
   const [deletingFacility, setDeletingFacility] = useState<Facility | null>(null);
+  const [showDeleteClient, setShowDeleteClient] = useState(false);
+  const [deletingClient, setDeletingClient] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   
   useEffect(() => {
     fetchClientData();
@@ -204,6 +207,13 @@ export default function ClientDetailPage() {
               >
                 🐛 Debug
               </Link>
+              <button
+                onClick={() => setShowDeleteClient(true)}
+                className="px-4 py-2 border border-red-300 text-red-600 rounded-md hover:bg-red-50 transition-colors text-sm"
+                title="Delete client"
+              >
+                Delete Client
+              </button>
             </div>
           </div>
         </div>
@@ -317,6 +327,58 @@ export default function ClientDetailPage() {
               <button
                 onClick={() => setDeletingFacility(null)}
                 className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Client Modal */}
+      {showDeleteClient && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-semibold mb-4 text-red-600">Delete Client</h2>
+            <p className="text-gray-700 mb-2">
+              Are you sure you want to delete <strong>{client?.name}</strong> and all its associated facilities, meters, and invoices?
+            </p>
+            <p className="text-sm text-gray-600 mb-4">
+              This action cannot be undone.
+            </p>
+            {deleteError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">{deleteError}</div>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={async () => {
+                  setDeletingClient(true);
+                  setDeleteError('');
+                  try {
+                    const response = await fetch(`/api/clients/${clientId}`, { method: 'DELETE' });
+                    if (!response.ok) {
+                      const err = await response.json();
+                      setDeleteError(err.error || 'Failed to delete client');
+                      setDeletingClient(false);
+                      return;
+                    }
+                    // Redirect to homepage after deletion
+                    router.push('/');
+                  } catch (error) {
+                    console.error('Error deleting client:', error);
+                    setDeleteError('Failed to delete client');
+                    setDeletingClient(false);
+                  }
+                }}
+                className="flex-1 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700"
+                disabled={deletingClient}
+              >
+                {deletingClient ? 'Deleting...' : 'Delete'}
+              </button>
+              <button
+                onClick={() => setShowDeleteClient(false)}
+                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={deletingClient}
               >
                 Cancel
               </button>

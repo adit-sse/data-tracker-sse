@@ -63,3 +63,36 @@ export async function PUT(
     );
   }
 }
+
+// DELETE /api/clients/[id] - Delete a client and cascade delete related data
+export async function DELETE(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+  try {
+    // Attempt to delete the client row; DB schema uses ON DELETE CASCADE for related rows
+    const { data, error } = await supabase
+      .from('clients')
+      .delete()
+      .eq('id', params.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    if (!data) {
+      return NextResponse.json(
+        { error: 'Client not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting client:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete client' },
+      { status: 500 }
+    );
+  }
+}

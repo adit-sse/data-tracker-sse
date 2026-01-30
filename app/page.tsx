@@ -133,6 +133,7 @@ export default function HomePage() {
                 key={data.client.id} 
                 client={data.client}
                 facilitiesCount={data.facilitiesCount}
+                onDeleted={() => fetchClients()}
               />
             ))}
           </div>
