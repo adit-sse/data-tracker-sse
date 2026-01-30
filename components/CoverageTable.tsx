@@ -58,7 +58,7 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear }: Covera
       {/* Table */}
       <div className="overflow-x-auto">
         <table className="w-full">
-          <thead className="bg-gray-50 border-b sticky top-0">
+          <thead className="bg-gray-50 border-b sticky top-0 z-50">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-48 align-middle">
                 Facility
@@ -77,9 +77,9 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear }: Covera
                 const mon = parts[0] || month;
                 const yr = parts[1] || '';
                 return (
-                  <th key={month} className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-28 whitespace-nowrap">
-                    <div className="text-sm font-semibold leading-4">{mon}</div>
-                    <div className="text-xs text-gray-400 mt-1">{yr}</div>
+                  <th key={month} className="px-3 py-4 text-center text-sm font-medium text-gray-500 uppercase tracking-wider w-36 whitespace-nowrap">
+                    <div className="text-base font-semibold leading-5">{mon}</div>
+                    <div className="text-sm text-gray-400 mt-1">{yr}</div>
                   </th>
                 );
               })}
@@ -104,7 +104,7 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear }: Covera
                   {meter.lookup1.length > 12 && '...'}
                 </td>
                 {coverage.map((monthlyCoverage, idx) => (
-                  <td key={idx} className="px-2 py-3 align-middle">
+                  <td key={idx} className="px-3 py-3 align-middle">
                     <ProgressBarCell coverage={monthlyCoverage} />
                   </td>
                 ))}
@@ -116,26 +116,26 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear }: Covera
       
       {/* Legend */}
       <div className="p-4 bg-gray-50 border-t">
-        <div className="flex items-center gap-6 text-xs">
+        <div className="flex items-center gap-6 text-sm">
           <span className="font-medium text-gray-700">Coverage Legend:</span>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-green-500 rounded"></div>
+            <div className="w-5 h-5 bg-green-500 rounded"></div>
             <span className="text-gray-600">100%</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-yellow-500 rounded"></div>
+            <div className="w-5 h-5 bg-yellow-500 rounded"></div>
             <span className="text-gray-600">85-99%</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-orange-500 rounded"></div>
+            <div className="w-5 h-5 bg-orange-500 rounded"></div>
             <span className="text-gray-600">50-84%</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-red-500 rounded"></div>
+            <div className="w-5 h-5 bg-red-500 rounded"></div>
             <span className="text-gray-600">1-49%</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-gray-400 rounded"></div>
+            <div className="w-5 h-5 bg-gray-400 rounded"></div>
             <span className="text-gray-600">0%</span>
           </div>
         </div>
