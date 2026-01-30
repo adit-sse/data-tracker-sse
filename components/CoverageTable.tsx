@@ -105,47 +105,53 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear }: Covera
       {/* Table */}
       <div className="overflow-x-auto">
         <table className="w-full">
-          <thead className="bg-gray-50 border-b sticky top-0">
+          <thead className="bg-gray-50 border-b sticky top-0 z-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-48">
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-48 align-middle">
                 Facility
               </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32 align-middle">
                 Supplier
               </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24 align-middle">
                 Type
               </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32 align-middle">
                 Meter ID
               </th>
-              {monthLabels.map(month => (
-                <th key={month} className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-28">
-                  {month}
-                </th>
-              ))}
+              {monthLabels.map(month => {
+                const parts = month.split(' ');
+                const mon = parts[0] || month;
+                const yr = parts[1] || '';
+                return (
+                  <th key={month} className="px-3 py-4 text-center text-sm font-medium text-gray-500 uppercase tracking-wider w-36 whitespace-nowrap">
+                    <div className="text-base font-semibold leading-5">{mon}</div>
+                    <div className="text-sm text-gray-400 mt-1">{yr}</div>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {filteredMeters.map(({ meter, coverage }) => (
               <tr key={meter.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-sm text-gray-900">
+                <td className="px-4 py-3 text-sm text-gray-900 align-middle">
                   {meter.facility?.name || 'Unknown'}
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-700">
+                <td className="px-4 py-3 text-sm text-gray-700 align-middle">
                   {meter.supplier?.name || 'No Supplier'}
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-700">
+                <td className="px-4 py-3 text-sm text-gray-700 align-middle">
                   <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
                     {meter.utility_category?.name || 'N/A'}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-600 font-mono">
+                <td className="px-4 py-3 text-sm text-gray-600 font-mono align-middle">
                   {meter.lookup1.substring(0, 12)}
                   {meter.lookup1.length > 12 && '...'}
                 </td>
                 {coverage.map((monthlyCoverage, idx) => (
-                  <td key={idx} className="px-2 py-3">
+                  <td key={idx} className="px-3 py-3 align-middle">
                     <ProgressBarCell coverage={monthlyCoverage} />
                   </td>
                 ))}
@@ -157,26 +163,26 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear }: Covera
       
       {/* Legend */}
       <div className="p-4 bg-gray-50 border-t">
-        <div className="flex items-center gap-6 text-xs">
+        <div className="flex items-center gap-6 text-sm">
           <span className="font-medium text-gray-700">Coverage Legend:</span>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-green-500 rounded"></div>
+            <div className="w-5 h-5 bg-green-500 rounded"></div>
             <span className="text-gray-600">100%</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-yellow-500 rounded"></div>
+            <div className="w-5 h-5 bg-yellow-500 rounded"></div>
             <span className="text-gray-600">85-99%</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-orange-500 rounded"></div>
+            <div className="w-5 h-5 bg-orange-500 rounded"></div>
             <span className="text-gray-600">50-84%</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-red-500 rounded"></div>
+            <div className="w-5 h-5 bg-red-500 rounded"></div>
             <span className="text-gray-600">1-49%</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-gray-400 rounded"></div>
+            <div className="w-5 h-5 bg-gray-400 rounded"></div>
             <span className="text-gray-600">0%</span>
           </div>
         </div>
