@@ -47,7 +47,9 @@ export function calculateMonthlyCoverage(
     
     // Set to store unique days covered in this month
     const coveredDays = new Set<string>();
-    
+    // Collect invoices that overlap this month
+    const monthlyInvoices: ActualInvoice[] = [];
+
     // For each invoice, add covered days in this month
     invoices.forEach(invoice => {
       const periodStart = parseISO(invoice.period_start_date);
@@ -67,6 +69,9 @@ export function calculateMonthlyCoverage(
       if (start > end) {
         return;
       }
+
+      // record that this invoice overlaps this month
+      monthlyInvoices.push(invoice);
 
       // Get all days in the overlapping interval
       const daysInPeriod = eachDayOfInterval({ start, end });
@@ -90,7 +95,8 @@ export function calculateMonthlyCoverage(
       daysInMonth,
       daysCovered,
       percentage,
-      gaps: gaps.length > 0 ? gaps : undefined
+      gaps: gaps.length > 0 ? gaps : undefined,
+      invoices: monthlyInvoices.length > 0 ? monthlyInvoices : undefined
     };
   });
 }

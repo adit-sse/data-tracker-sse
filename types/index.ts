@@ -77,6 +77,8 @@ export interface MonthlyCoverage {
   daysCovered: number;
   percentage: number;
   gaps?: DateGap[];
+  // Invoices that overlap this month (optional)
+  invoices?: ActualInvoice[];
 }
 
 export interface DateGap {

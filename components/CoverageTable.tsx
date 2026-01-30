@@ -2,14 +2,14 @@
 
 import { useState } from 'react';
 import ProgressBarCell from './ProgressBarCell';
-import type { MeterWithCoverage } from '@/types';
+import type { MeterWithCoverage, ActualInvoice } from '@/types';
 
 import { format, endOfMonth } from 'date-fns';
 
 interface CoverageTableProps {
   metersWithCoverage: MeterWithCoverage[];
   fiscalYear: number;
-  onQuickAddInvoice?: (opts: { meterId: string; facilityId?: string; period_start_date: string; period_end_date: string }) => void;
+  onQuickAddInvoice?: (opts: { meterId: string; facilityId?: string; period_start_date: string; period_end_date: string; invoices?: ActualInvoice[] }) => void;
 }
 
 export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickAddInvoice }: CoverageTableProps) {
@@ -164,7 +164,8 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
                           meterId: String(meter.id),
                           facilityId: meter.facility?.id,
                           period_start_date,
-                          period_end_date
+                          period_end_date,
+                          invoices: monthlyCoverage.invoices
                         })}
                       />
                     </td>

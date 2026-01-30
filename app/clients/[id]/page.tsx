@@ -6,7 +6,7 @@ import Link from 'next/link';
 import CoverageTable from '@/components/CoverageTable';
 import FacilitySettingsModal from '@/components/FacilitySettingsModal';
 import InvoiceForm, { InvoiceFormData } from '@/components/InvoiceForm';
-import type { Client, MeterWithCoverage } from '@/types';
+import type { Client, MeterWithCoverage, ActualInvoice } from '@/types';
 
 interface Facility {
   id: string;
@@ -36,6 +36,9 @@ export default function ClientDetailPage() {
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
   const [invoiceInitialData, setInvoiceInitialData] = useState<any | null>(null);
   const [invoiceInitialFacilityId, setInvoiceInitialFacilityId] = useState<string | null>(null);
+  // Invoice list modal state for months that already have invoices
+  const [invoiceListModalOpen, setInvoiceListModalOpen] = useState(false);
+  const [invoiceListForPeriod, setInvoiceListForPeriod] = useState<ActualInvoice[] | null>(null);
   
   useEffect(() => {
     fetchClientData();
@@ -274,11 +277,16 @@ export default function ClientDetailPage() {
             <CoverageTable 
               metersWithCoverage={metersWithCoverage} 
               fiscalYear={fiscalYear}
-              onQuickAddInvoice={({ meterId, facilityId, period_start_date, period_end_date }) => {
-                setInvoiceModalOpen(true);
-                setInvoiceInitialData({ meter_id: String(meterId), period_start_date, period_end_date });
-                // set facility filter in the form via initial data too
-                setInvoiceInitialFacilityId(facilityId ? String(facilityId) : '');
+              onQuickAddInvoice={({ meterId, facilityId, period_start_date, period_end_date, invoices }) => {
+                if (invoices && invoices.length > 0) {
+                  setInvoiceListForPeriod(invoices);
+                  setInvoiceListModalOpen(true);
+                } else {
+                  setInvoiceModalOpen(true);
+                  setInvoiceInitialData({ meter_id: String(meterId), period_start_date, period_end_date });
+                  // set facility filter in the form via initial data too
+                  setInvoiceInitialFacilityId(facilityId ? String(facilityId) : '');
+                }
               }}
             />
           )}
@@ -294,12 +302,67 @@ export default function ClientDetailPage() {
         />
       )}
 
-      {/* Quick Add Invoice Modal */}
+      {/* Invoice List Modal (shows when there are already invoices for the selected month) */}
+      {invoiceListModalOpen && invoiceListForPeriod && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
+            <div className="flex items-start justify-between">
+              <h2 className="text-lg font-semibold">Invoices for selected period</h2>
+              <button onClick={() => { setInvoiceListModalOpen(false); setInvoiceListForPeriod(null); }} className="text-gray-400 hover:text-gray-700">Close</button>
+            </div>
+            <div className="mt-4 space-y-3">
+              {invoiceListForPeriod.map(inv => (
+                <div key={inv.id} className="border border-gray-200 rounded p-3 flex items-center justify-between">
+                  <div>
+                    <div className="font-medium">{inv.invoice_number || 'No invoice number'}</div>
+                    <div className="text-sm text-gray-600">{inv.period_start_date} → {inv.period_end_date} • ${inv.amount ?? '—'}</div>
+                    <div className="text-sm text-gray-500">Meter: {inv.meter?.lookup1 || String(inv.meter_id)}</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        // Open edit form prefilled with this invoice
+                        setInvoiceInitialData({ ...inv });
+                        setInvoiceInitialFacilityId(inv.meter?.facility_id ? String(inv.meter.facility_id) : '');
+                        setInvoiceListModalOpen(false);
+                        setInvoiceListForPeriod(null);
+                        setInvoiceModalOpen(true);
+                      }}
+                      className="px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              <div className="pt-2">
+                <button
+                  onClick={() => {
+                    // Add new invoice for the same period (prefill period dates from the first invoice)
+                    const first = invoiceListForPeriod[0];
+                    setInvoiceInitialData({ meter_id: String(first.meter_id), period_start_date: first.period_start_date, period_end_date: first.period_end_date });
+                    setInvoiceInitialFacilityId(first.meter?.facility_id ? String(first.meter.facility_id) : '');
+                    setInvoiceListModalOpen(false);
+                    setInvoiceListForPeriod(null);
+                    setInvoiceModalOpen(true);
+                  }}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+                >
+                  Add New Invoice for Period
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Add / Edit Invoice Modal */}
       {invoiceModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
             <div className="flex items-start justify-between">
-              <h2 className="text-lg font-semibold">Add Invoice</h2>
+              <h2 className="text-lg font-semibold">{invoiceInitialData?.id ? 'Edit Invoice' : 'Add Invoice'}</h2>
               <button onClick={() => setInvoiceModalOpen(false)} className="text-gray-400 hover:text-gray-700">Close</button>
             </div>
             <div className="mt-4">
@@ -309,16 +372,33 @@ export default function ClientDetailPage() {
                 initialFacilityId={invoiceInitialFacilityId ?? undefined}
                 onSubmit={async (data) => {
                   try {
-                    const res = await fetch(`/api/clients/${clientId}/invoices`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(data)
-                    });
-                    if (!res.ok) {
-                      const err = await res.json();
-                      throw new Error(err.error || 'Failed to create invoice');
+                    if (data.id) {
+                      // Update existing invoice
+                      const res = await fetch(`/api/clients/${clientId}/invoices/${data.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                      });
+                      if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.error || 'Failed to update invoice');
+                      }
+                    } else {
+                      // Create new invoice
+                      const res = await fetch(`/api/clients/${clientId}/invoices`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                      });
+                      if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.error || 'Failed to create invoice');
+                      }
                     }
+
                     setInvoiceModalOpen(false);
+                    setInvoiceInitialData(null);
+                    setInvoiceInitialFacilityId(null);
                     // refresh coverage and related lists
                     fetchCoverage();
                     fetchFacilities();
