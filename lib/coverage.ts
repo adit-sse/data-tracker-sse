@@ -6,7 +6,8 @@ import {
   isWithinInterval,
   eachDayOfInterval,
   parseISO,
-  isSameDay
+  isSameDay,
+  differenceInCalendarDays
 } from 'date-fns';
 import type { ActualInvoice, MonthlyCoverage, DateGap } from '@/types';
 
@@ -107,7 +108,7 @@ function findGaps(
       gaps.push({
         start: format(gapStart, 'dd/MM/yyyy'),
         end: format(gapEnd, 'dd/MM/yyyy'),
-        days: Math.ceil((gapEnd.getTime() - gapStart.getTime()) / 86400000) + 1
+        days: differenceInCalendarDays(gapEnd, gapStart) + 1
       });
       gapStart = null;
     }
@@ -118,7 +119,7 @@ function findGaps(
     gaps.push({
       start: format(gapStart, 'dd/MM/yyyy'),
       end: format(monthEnd, 'dd/MM/yyyy'),
-      days: Math.ceil((monthEnd.getTime() - gapStart.getTime()) / 86400000) + 1
+      days: differenceInCalendarDays(monthEnd, gapStart) + 1
     });
   }
   
