@@ -7,7 +7,8 @@ import {
   eachDayOfInterval,
   parseISO,
   isSameDay,
-  differenceInCalendarDays
+  differenceInCalendarDays,
+  isValid
 } from 'date-fns';
 import type { ActualInvoice, MonthlyCoverage, DateGap } from '@/types';
 
@@ -51,13 +52,25 @@ export function calculateMonthlyCoverage(
     invoices.forEach(invoice => {
       const periodStart = parseISO(invoice.period_start_date);
       const periodEnd = parseISO(invoice.period_end_date);
-      
-      // Get all days in the invoice period that fall within this month
-      const daysInPeriod = eachDayOfInterval({
-        start: periodStart > monthStart ? periodStart : monthStart,
-        end: periodEnd < monthEnd ? periodEnd : monthEnd
-      });
-      
+
+      // Skip invalid dates
+      if (!isValid(periodStart) || !isValid(periodEnd)) {
+        console.warn('Skipping invoice with invalid dates', invoice.id, invoice.period_start_date, invoice.period_end_date);
+        return;
+      }
+
+      // Compute overlap with this month
+      const start = periodStart > monthStart ? periodStart : monthStart;
+      const end = periodEnd < monthEnd ? periodEnd : monthEnd;
+
+      // If invoice does not overlap this month, skip
+      if (start > end) {
+        return;
+      }
+
+      // Get all days in the overlapping interval
+      const daysInPeriod = eachDayOfInterval({ start, end });
+
       daysInPeriod.forEach(day => {
         if (isWithinInterval(day, { start: monthStart, end: monthEnd })) {
           coveredDays.add(format(day, 'yyyy-MM-dd'));
@@ -150,11 +163,23 @@ export function calculateCurrentMonthCoverageForClient(
     const periodStart = parseISO(invoice.period_start_date);
     const periodEnd = parseISO(invoice.period_end_date);
     
+    // Validate invoice dates
+    if (!isValid(periodStart) || !isValid(periodEnd)) {
+      console.warn('Skipping invoice with invalid dates for current-month calc', invoice.id, invoice.period_start_date, invoice.period_end_date);
+      return;
+    }
+
+    // Compute overlap with current month
+    const start = periodStart > monthStart ? periodStart : monthStart;
+    const end = periodEnd < monthEnd ? periodEnd : monthEnd;
+
+    if (start > end) {
+      // No overlap with current month
+      return;
+    }
+
     // Get days that overlap with current month
-    const daysInPeriod = eachDayOfInterval({
-      start: periodStart > monthStart ? periodStart : monthStart,
-      end: periodEnd < monthEnd ? periodEnd : monthEnd
-    });
+    const daysInPeriod = eachDayOfInterval({ start, end });
     
     daysInPeriod.forEach(day => {
       if (isWithinInterval(day, { start: monthStart, end: monthEnd })) {
