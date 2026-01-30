@@ -11,16 +11,30 @@ interface CoverageTableProps {
 
 export default function CoverageTable({ metersWithCoverage, fiscalYear }: CoverageTableProps) {
   const [filterUtility, setFilterUtility] = useState<string>('ALL');
+  const [filterSupplier, setFilterSupplier] = useState<string>('ALL');
+  const [filterFacility, setFilterFacility] = useState<string>('ALL');
   
-  // Get unique utility types
+  // Get unique utility types, suppliers, and facilities
   const utilityTypes = Array.from(
     new Set(metersWithCoverage.map(m => m.meter.utility_category?.name || 'UNKNOWN'))
   );
   
-  // Filter meters by utility type
-  const filteredMeters = filterUtility === 'ALL' 
-    ? metersWithCoverage 
-    : metersWithCoverage.filter(m => m.meter.utility_category?.name === filterUtility);
+  const suppliers = Array.from(
+    new Set(metersWithCoverage.map(m => m.meter.supplier?.name || 'No Supplier'))
+  ).sort();
+  
+  const facilities = Array.from(
+    new Set(metersWithCoverage.map(m => m.meter.facility?.name || 'Unknown'))
+  ).sort();
+  
+  // Filter meters by all selected criteria
+  const filteredMeters = metersWithCoverage.filter(m => {
+    const utilityMatch = filterUtility === 'ALL' || m.meter.utility_category?.name === filterUtility;
+    const supplierMatch = filterSupplier === 'ALL' || (m.meter.supplier?.name || 'No Supplier') === filterSupplier;
+    const facilityMatch = filterFacility === 'ALL' || (m.meter.facility?.name || 'Unknown') === filterFacility;
+    
+    return utilityMatch && supplierMatch && facilityMatch;
+  });
   
   if (filteredMeters.length === 0) {
     return (
@@ -37,20 +51,53 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear }: Covera
     <div className="bg-white rounded-lg shadow overflow-hidden">
       {/* Filter Controls */}
       <div className="p-4 bg-gray-50 border-b">
-        <div className="flex items-center gap-4">
-          <label className="text-sm font-medium text-gray-700">Filter by Utility:</label>
-          <select
-            value={filterUtility}
-            onChange={(e) => setFilterUtility(e.target.value)}
-            className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="ALL">All Utilities</option>
-            {utilityTypes.map(type => (
-              <option key={type} value={type}>{type}</option>
-            ))}
-          </select>
-          <span className="text-sm text-gray-500">
-            Showing {filteredMeters.length} meters
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="text-sm font-medium text-gray-700">Filters:</label>
+          
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-600">Utility:</label>
+            <select
+              value={filterUtility}
+              onChange={(e) => setFilterUtility(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="ALL">All</option>
+              {utilityTypes.map(type => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-600">Supplier:</label>
+            <select
+              value={filterSupplier}
+              onChange={(e) => setFilterSupplier(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="ALL">All</option>
+              {suppliers.map(supplier => (
+                <option key={supplier} value={supplier}>{supplier}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-600">Facility:</label>
+            <select
+              value={filterFacility}
+              onChange={(e) => setFilterFacility(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="ALL">All</option>
+              {facilities.map(facility => (
+                <option key={facility} value={facility}>{facility}</option>
+              ))}
+            </select>
+          </div>
+          
+          <span className="text-sm text-gray-500 ml-auto">
+            Showing {filteredMeters.length} of {metersWithCoverage.length} meters
           </span>
         </div>
       </div>
