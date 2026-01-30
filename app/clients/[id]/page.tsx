@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import CoverageTable from '@/components/CoverageTable';
+import FacilitySettingsModal from '@/components/FacilitySettingsModal';
 import type { Client, MeterWithCoverage } from '@/types';
 
 interface Facility {
@@ -29,6 +30,7 @@ export default function ClientDetailPage() {
   const [loading, setLoading] = useState(true);
   const [editingFacility, setEditingFacility] = useState<Facility | null>(null);
   const [deletingFacility, setDeletingFacility] = useState<Facility | null>(null);
+  const [settingsFacility, setSettingsFacility] = useState<Facility | null>(null);
   
   useEffect(() => {
     fetchClientData();
@@ -215,21 +217,13 @@ export default function ClientDetailPage() {
                     <h3 className="font-medium text-gray-900">{facility.name}</h3>
                     <div className="flex gap-1">
                       <button
-                        onClick={() => setEditingFacility(facility)}
-                        className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
-                        title="Edit facility"
+                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); setSettingsFacility(facility); }}
+                        title="Facility settings"
+                        className="p-2 rounded-full hover:bg-gray-100 border border-transparent hover:border-gray-200 focus:outline-none"
                       >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => setDeletingFacility(facility)}
-                        className="p-1 text-gray-400 hover:text-red-600 transition-colors"
-                        title="Delete facility"
-                      >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        <svg className="w-5 h-5 text-gray-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2h-.02a2 2 0 01-2-2v-.09a1.65 1.65 0 00-1-1.51c-.7-.28-1.45-.1-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2v-.02a2 2 0 012-2h.09c.7 0 1.3-.45 1.51-1 .28-.7.1-1.45-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06c.37.37 1.12.61 1.82.33.55-.21 1-.81 1-1.51V3a2 2 0 012-2h.02a2 2 0 012 2v.09c0 .7.45 1.3 1 1.51.7.28 1.45.1 1.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06c-.37.37-.61 1.12-.33 1.82.21.55.81 1 1.51 1H21a2 2 0 012 2v.02a2 2 0 01-2 2h-.09c-.7 0-1.3.45-1.51 1z" />
                         </svg>
                       </button>
                     </div>
@@ -289,6 +283,17 @@ export default function ClientDetailPage() {
         />
       )}
       
+      {/* Facility Settings Modal (cog) */}
+      {settingsFacility && (
+        <FacilitySettingsModal
+          facility={settingsFacility}
+          clientId={clientId}
+          onClose={() => setSettingsFacility(null)}
+          onFacilityDeleted={() => { setSettingsFacility(null); fetchFacilities(); fetchCoverage(); }}
+          onFacilityUpdated={() => { fetchFacilities(); fetchCoverage(); }}
+        />
+      )}
+
       {/* Delete Facility Modal */}
       {deletingFacility && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
