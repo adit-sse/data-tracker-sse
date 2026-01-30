@@ -110,26 +110,37 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
         <table className="w-full">
           <thead className="bg-gray-50 border-b sticky top-0 z-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-48 align-middle">
+              <th className="px-4 py-4 text-left text-sm font-semibold text-gray-600 uppercase tracking-wider w-48 align-middle">
                 Facility
               </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32 align-middle">
+              <th className="px-4 py-4 text-left text-sm font-semibold text-gray-600 uppercase tracking-wider w-32 align-middle">
                 Supplier
               </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24 align-middle">
+              <th className="px-4 py-4 text-left text-sm font-semibold text-gray-600 uppercase tracking-wider w-24 align-middle">
                 Type
               </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32 align-middle">
+              <th className="px-4 py-4 text-left text-sm font-semibold text-gray-600 uppercase tracking-wider w-32 align-middle">
                 Meter ID
               </th>
               {monthLabels.map(month => {
                 const parts = month.split(' ');
                 const mon = parts[0] || month;
                 const yr = parts[1] || '';
+                
+                // Check if this is the current month-year (format: "MMM yy" e.g. "Jan 26")
+                const now = new Date();
+                const currentMonthYearLabel = format(now, 'MMM yy');
+                const isCurrentMonth = month === currentMonthYearLabel;
+                
                 return (
                   <th key={month} className="px-3 py-4 text-center text-sm font-medium text-gray-500 uppercase tracking-wider w-36 whitespace-nowrap">
-                    <div className="text-base font-semibold leading-5">{mon}</div>
-                    <div className="text-sm text-gray-400 mt-1">{yr}</div>
+                    <div className={`relative inline-block px-3 py-2 rounded-lg ${isCurrentMonth ? 'bg-blue-100' : ''}`}>
+                      {isCurrentMonth && (
+                        <div className="absolute -top-4 left-1/2 -translate-x-1/2 text-[10px] text-blue-600 font-medium">Current</div>
+                      )}
+                      <div className="text-base font-semibold leading-5">{mon}</div>
+                      <div className="text-sm text-gray-400 mt-1">{yr}</div>
+                    </div>
                   </th>
                 );
               })}
