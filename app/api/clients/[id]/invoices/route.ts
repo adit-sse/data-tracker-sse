@@ -22,6 +22,13 @@ export async function POST(
       emissions_factor,
       customer
     } = body;
+
+    // Normalize optional fields: convert empty strings/undefined to null, but preserve numeric 0
+    const invoiceNumberTrimmed = invoice_number?.toString().trim() || null;
+    const invoiceDateValue = invoice_date ? invoice_date.toString() : null;
+    const consumptionValue = consumption == null ? null : consumption; // allows 0
+    const amountValue = amount == null ? null : amount; // allows 0
+    const customerValue = customer?.toString().trim() || null;
     
     if (!meter_id || !period_start_date || !period_end_date) {
       return NextResponse.json(
@@ -42,13 +49,13 @@ export async function POST(
     }
 
     // Prevent duplicate invoices:
-    // 1) If an invoice_number is provided, ensure no existing invoice for the same meter has that invoice_number
-    if (invoice_number && invoice_number.trim()) {
+    // 1) If an invoice number is provided (non-empty after trimming), check duplicate by invoice number for the meter
+    if (invoiceNumberTrimmed) {
       const { data: existingByNumber, error: existingByNumberError } = await supabase
         .from('actual_invoices')
         .select('id')
         .eq('meter_id', meter_id)
-        .eq('invoice_number', invoice_number.trim())
+        .eq('invoice_number', invoiceNumberTrimmed)
         .limit(1)
         .maybeSingle();
 
@@ -64,7 +71,7 @@ export async function POST(
       }
     }
 
-    // 2) Prevent exact period duplicates for the same meter
+    // 2) Always prevent exact period duplicates for the same meter (applies regardless of invoice number)
     const { data: existingByPeriod, error: existingByPeriodError } = await supabase
       .from('actual_invoices')
       .select('id')
@@ -89,17 +96,17 @@ export async function POST(
       .from('actual_invoices')
       .insert([{
         meter_id,
-        invoice_number: invoice_number?.trim() || null,
-        invoice_date: invoice_date || null,
+        invoice_number: invoiceNumberTrimmed,
+        invoice_date: invoiceDateValue,
         period_start_date,
         period_end_date,
-        consumption: consumption || null,
-        amount: amount || null,
+        consumption: consumptionValue,
+        amount: amountValue,
         framework: framework?.trim() || null,
         version: version?.trim() || null,
         input_type: input_type?.trim() || null,
-        emissions_factor: emissions_factor || null,
-        customer: customer?.trim() || null,
+        emissions_factor: emissions_factor ?? null,
+        customer: customerValue,
         status: 'MANUAL_ENTRY'
       }])
       .select()
