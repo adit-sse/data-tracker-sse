@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import ConfirmModal from './ConfirmModal';
 
 interface Supplier {
   id: string;
@@ -12,6 +13,12 @@ export default function SupplierManager({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
+
+  // Delete confirmation state
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteCandidateId, setDeleteCandidateId] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchSuppliers();
@@ -48,13 +55,31 @@ export default function SupplierManager({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this supplier? This will remove the supplier record.')) return;
+  const promptDelete = (id: string) => {
+    setDeleteError(null);
+    setDeleteCandidateId(id);
+    setShowDeleteModal(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    const id = deleteCandidateId;
+    if (!id) return;
+    setDeleteLoading(true);
+    setDeleteError(null);
     try {
       const res = await fetch(`/api/suppliers/${id}`, { method: 'DELETE' });
-      if (res.ok) await fetchSuppliers();
+      if (res.ok) {
+        setShowDeleteModal(false);
+        setDeleteCandidateId(null);
+        await fetchSuppliers();
+      } else {
+        setDeleteError('Failed to delete supplier');
+      }
     } catch (err) {
       console.error('Failed to delete supplier', err);
+      setDeleteError('Failed to delete supplier');
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -109,12 +134,25 @@ export default function SupplierManager({ onClose }: { onClose: () => void }) {
                   onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
                 />
                 {savingId === s.id ? <div className="text-sm text-gray-500">Saving...</div> : null}
-                <button onClick={() => handleDelete(s.id)} className="px-3 py-1 bg-red-600 text-white rounded">Delete</button>
+                <button onClick={() => promptDelete(s.id)} className="px-3 py-1 bg-red-600 text-white rounded">Delete</button>
               </div>
             ))
           )}
         </div>
       </div>
+
+      {showDeleteModal && (
+        <ConfirmModal
+          title="Delete Supplier"
+          message={<>Are you sure you want to delete this supplier? This will remove the supplier record.</>}
+          subMessage="This action cannot be undone."
+          confirmLabel="Delete"
+          onConfirm={handleConfirmDelete}
+          onCancel={() => { setShowDeleteModal(false); setDeleteCandidateId(null); setDeleteError(null); }}
+          loading={deleteLoading}
+          error={deleteError ?? undefined}
+        />
+      )}
     </div>
   );
 }

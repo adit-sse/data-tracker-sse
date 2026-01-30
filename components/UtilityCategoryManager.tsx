@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import ConfirmModal from './ConfirmModal';
 
 interface Category {
   id: string;
@@ -12,6 +13,12 @@ export default function UtilityCategoryManager({ onClose }: { onClose: () => voi
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
+
+  // Delete confirmation state
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteCandidateId, setDeleteCandidateId] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => { fetchItems(); }, []);
 
@@ -46,13 +53,31 @@ export default function UtilityCategoryManager({ onClose }: { onClose: () => voi
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this category? This may affect existing meters.')) return;
+  const promptDelete = (id: string) => {
+    setDeleteError(null);
+    setDeleteCandidateId(id);
+    setShowDeleteModal(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    const id = deleteCandidateId;
+    if (!id) return;
+    setDeleteLoading(true);
+    setDeleteError(null);
     try {
       const res = await fetch(`/api/utility-categories/${id}`, { method: 'DELETE' });
-      if (res.ok) await fetchItems();
+      if (res.ok) {
+        setShowDeleteModal(false);
+        setDeleteCandidateId(null);
+        await fetchItems();
+      } else {
+        setDeleteError('Failed to delete category');
+      }
     } catch (err) {
       console.error('Failed to delete category', err);
+      setDeleteError('Failed to delete category');
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -107,12 +132,25 @@ export default function UtilityCategoryManager({ onClose }: { onClose: () => voi
                   onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
                 />
                 {savingId === i.id ? <div className="text-sm text-gray-500">Saving...</div> : null}
-                <button onClick={() => handleDelete(i.id)} className="px-3 py-1 bg-red-600 text-white rounded">Delete</button>
+                <button onClick={() => promptDelete(i.id)} className="px-3 py-1 bg-red-600 text-white rounded">Delete</button>
               </div>
             ))
           )}
         </div>
       </div>
+
+      {showDeleteModal && (
+        <ConfirmModal
+          title="Delete Category"
+          message={<>Delete this category? This may affect existing meters.</>}
+          subMessage="This action cannot be undone."
+          confirmLabel="Delete"
+          onConfirm={handleConfirmDelete}
+          onCancel={() => { setShowDeleteModal(false); setDeleteCandidateId(null); setDeleteError(null); }}
+          loading={deleteLoading}
+          error={deleteError ?? undefined}
+        />
+      )}
     </div>
   );
 }
