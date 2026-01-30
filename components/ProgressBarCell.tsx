@@ -22,7 +22,7 @@ export default function ProgressBarCell({ coverage }: ProgressBarCellProps) {
       </div>
 
       {/* Centered overlay text */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20 group-hover:opacity-0 transition-opacity duration-150">
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20 transition-opacity duration-150 group-hover:opacity-60">
         <span className={`${percentage >= 50 ? 'text-white' : 'text-gray-600'} text-sm font-semibold`}>
           {daysCovered}/{daysInMonth}
         </span>
@@ -30,7 +30,7 @@ export default function ProgressBarCell({ coverage }: ProgressBarCellProps) {
 
       {/* Hover tooltip */}
       {gaps && gaps.length > 0 && (
-        <div className="absolute z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-150 bg-gray-900 text-white text-xs rounded p-2 mt-1 w-48 shadow-lg">
+        <div className="absolute z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none group-hover:pointer-events-auto bg-gray-900 text-white text-xs rounded p-2 mt-1 w-48 shadow-lg">
           <div className="font-semibold mb-1">Coverage Gaps:</div>
           {gaps.map((gap, idx) => (
             <div key={idx} className="text-xs">
