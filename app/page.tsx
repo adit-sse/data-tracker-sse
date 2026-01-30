@@ -2,10 +2,20 @@
 
 import { useState, useEffect } from 'react';
 import ClientCard from '@/components/ClientCard';
-import type { ClientWithStats } from '@/types';
+
+interface Client {
+  id: number;
+  name: string;
+  logo_url?: string | null;
+}
+
+interface ClientWithCount {
+  client: Client;
+  facilitiesCount: number;
+}
 
 export default function HomePage() {
-  const [clients, setClients] = useState<ClientWithStats[]>([]);
+  const [clients, setClients] = useState<ClientWithCount[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newClientName, setNewClientName] = useState('');
@@ -118,8 +128,12 @@ export default function HomePage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {clients.map((clientData) => (
-              <ClientCard key={clientData.client.id} clientData={clientData} />
+            {clients.map((data) => (
+              <ClientCard 
+                key={data.client.id} 
+                client={data.client}
+                facilitiesCount={data.facilitiesCount}
+              />
             ))}
           </div>
         )}

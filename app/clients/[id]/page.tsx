@@ -23,6 +23,8 @@ export default function ClientDetailPage() {
   const [metersWithCoverage, setMetersWithCoverage] = useState<MeterWithCoverage[]>([]);
   const [fiscalYear, setFiscalYear] = useState(2025);
   const [loading, setLoading] = useState(true);
+  const [editingFacility, setEditingFacility] = useState<Facility | null>(null);
+  const [deletingFacility, setDeletingFacility] = useState<Facility | null>(null);
   
   useEffect(() => {
     fetchClientData();
@@ -72,6 +74,43 @@ export default function ClientDetailPage() {
       console.error('Error fetching coverage:', error);
     } finally {
       setLoading(false);
+    }
+  };
+  
+  const handleEditFacility = async (name: string, address: string) => {
+    if (!editingFacility) return;
+    
+    try {
+      const response = await fetch(`/api/facilities/${editingFacility.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, address })
+      });
+      
+      if (response.ok) {
+        setEditingFacility(null);
+        fetchFacilities();
+      }
+    } catch (error) {
+      console.error('Error updating facility:', error);
+    }
+  };
+  
+  const handleDeleteFacility = async () => {
+    if (!deletingFacility) return;
+    
+    try {
+      const response = await fetch(`/api/facilities/${deletingFacility.id}`, {
+        method: 'DELETE'
+      });
+      
+      if (response.ok) {
+        setDeletingFacility(null);
+        fetchFacilities();
+        fetchCoverage(); // Refresh coverage as meters might be affected
+      }
+    } catch (error) {
+      console.error('Error deleting facility:', error);
     }
   };
   
@@ -151,8 +190,30 @@ export default function ClientDetailPage() {
             <h2 className="text-xl font-semibold mb-4">Facilities</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {facilities.map((facility) => (
-                <div key={facility.id} className="border border-gray-200 rounded-lg p-4">
-                  <h3 className="font-medium text-gray-900">{facility.name}</h3>
+                <div key={facility.id} className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
+                  <div className="flex justify-between items-start mb-2">
+                    <h3 className="font-medium text-gray-900">{facility.name}</h3>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setEditingFacility(facility)}
+                        className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                        title="Edit facility"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => setDeletingFacility(facility)}
+                        className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+                        title="Delete facility"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
                   {facility.address && (
                     <p className="text-sm text-gray-500 mt-1">{facility.address}</p>
                   )}
@@ -196,6 +257,120 @@ export default function ClientDetailPage() {
           )}
         </section>
       </main>
+      
+      {/* Edit Facility Modal */}
+      {editingFacility && (
+        <EditFacilityModal
+          facility={editingFacility}
+          onSave={handleEditFacility}
+          onCancel={() => setEditingFacility(null)}
+        />
+      )}
+      
+      {/* Delete Facility Modal */}
+      {deletingFacility && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-semibold mb-4 text-red-600">Delete Facility</h2>
+            <p className="text-gray-700 mb-2">
+              Are you sure you want to delete <strong>{deletingFacility.name}</strong>?
+            </p>
+            <p className="text-sm text-gray-600 mb-4">
+              This will also delete all {deletingFacility.meterCount} associated meter(s) and their invoices. This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={handleDeleteFacility}
+                className="flex-1 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700"
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setDeletingFacility(null)}
+                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Edit Facility Modal Component
+function EditFacilityModal({ 
+  facility, 
+  onSave, 
+  onCancel 
+}: { 
+  facility: Facility; 
+  onSave: (name: string, address: string) => void; 
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(facility.name);
+  const [address, setAddress] = useState(facility.address || '');
+  const [saving, setSaving] = useState(false);
+  
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    await onSave(name, address);
+    setSaving(false);
+  };
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-lg p-6 max-w-md w-full">
+        <h2 className="text-xl font-semibold mb-4">Edit Facility</h2>
+        <form onSubmit={handleSubmit}>
+          <div className="mb-4">
+            <label htmlFor="facilityName" className="block text-sm font-medium text-gray-700 mb-1">
+              Facility Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              id="facilityName"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+              autoFocus
+            />
+          </div>
+          <div className="mb-4">
+            <label htmlFor="facilityAddress" className="block text-sm font-medium text-gray-700 mb-1">
+              Address
+            </label>
+            <input
+              type="text"
+              id="facilityAddress"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Optional"
+            />
+          </div>
+          <div className="flex gap-3">
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={saving}
+              className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

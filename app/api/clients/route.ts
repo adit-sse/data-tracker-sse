@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { calculateCurrentMonthCoverageForClient } from '@/lib/coverage';
 
-// GET /api/clients - List all clients with current month coverage
+// GET /api/clients - List all clients with facility count
 export async function GET() {
   try {
     // Fetch all clients
@@ -13,8 +12,8 @@ export async function GET() {
     
     if (clientsError) throw clientsError;
     
-    // For each client, get stats
-    const clientsWithStats = await Promise.all(
+    // For each client, count facilities
+    const clientsWithCounts = await Promise.all(
       (clients || []).map(async (client) => {
         // Count facilities
         const { count: facilitiesCount } = await supabase
@@ -22,53 +21,14 @@ export async function GET() {
           .select('*', { count: 'exact', head: true })
           .eq('client_id', client.id);
         
-        // Get all meters for this client
-        const { data: facilities } = await supabase
-          .from('facilities')
-          .select('id')
-          .eq('client_id', client.id);
-        
-        const facilityIds = facilities?.map(f => f.id) || [];
-        
-        let currentMonthCoverage = {
-          month: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-          daysCovered: 0,
-          totalPossibleDays: 0,
-          percentage: 0
-        };
-        
-        if (facilityIds.length > 0) {
-          // Get all meters
-          const { data: meters } = await supabase
-            .from('meters')
-            .select('id')
-            .in('facility_id', facilityIds);
-          
-          const meterIds = meters?.map(m => m.id) || [];
-          
-          if (meterIds.length > 0) {
-            // Get all invoices for current month
-            const { data: invoices } = await supabase
-              .from('actual_invoices')
-              .select('*')
-              .in('meter_id', meterIds);
-            
-            currentMonthCoverage = calculateCurrentMonthCoverageForClient(
-              invoices || [],
-              meterIds.length
-            );
-          }
-        }
-        
         return {
           client,
-          facilitiesCount: facilitiesCount || 0,
-          currentMonthCoverage
+          facilitiesCount: facilitiesCount || 0
         };
       })
     );
     
-    return NextResponse.json(clientsWithStats);
+    return NextResponse.json(clientsWithCounts);
   } catch (error) {
     console.error('Error fetching clients:', error);
     return NextResponse.json(
