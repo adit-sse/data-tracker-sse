@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import ConfirmModal from './ConfirmModal';
 
 interface FacilityShort {
   id: string;
@@ -39,6 +40,10 @@ export default function FacilitySettingsModal({
   const [saving, setSaving] = useState(false);
   const [deletingMeterId, setDeletingMeterId] = useState<string | null>(null);
   const [deletingFacility, setDeletingFacility] = useState(false);
+  const [showDeleteFacilityModal, setShowDeleteFacilityModal] = useState(false);
+  const [showDeleteMeterModal, setShowDeleteMeterModal] = useState(false);
+  const [deleteMeterCandidateId, setDeleteMeterCandidateId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMeters();
@@ -83,43 +88,61 @@ export default function FacilitySettingsModal({
     }
   };
 
-  const handleDeleteFacility = async () => {
-    const ok = window.confirm(`Delete facility "${facility.name}" and all its meters and invoices? This cannot be undone.`);
-    if (!ok) return;
+  const promptDeleteFacility = () => {
+    setDeleteError(null);
+    setShowDeleteFacilityModal(true);
+  };
+
+  const handleConfirmDeleteFacility = async () => {
+    setDeleteError(null);
     setDeletingFacility(true);
     try {
       const res = await fetch(`/api/facilities/${facility.id}`, { method: 'DELETE' });
       if (res.ok) {
+        setShowDeleteFacilityModal(false);
         onFacilityDeleted?.();
         onClose();
       } else {
+        setDeleteError('Failed to delete facility');
         console.error('Failed to delete facility');
       }
     } catch (err) {
       console.error('Error deleting facility:', err);
+      setDeleteError('Failed to delete facility');
     } finally {
       setDeletingFacility(false);
     }
+  }; 
+
+  const promptDeleteMeter = (meterId: string) => {
+    setDeleteError(null);
+    setDeleteMeterCandidateId(meterId);
+    setShowDeleteMeterModal(true);
   };
 
-  const handleDeleteMeter = async (meterId: string) => {
-    const ok = window.confirm('Delete this meter and its invoices?');
-    if (!ok) return;
+  const handleConfirmDeleteMeter = async () => {
+    const meterId = deleteMeterCandidateId;
+    if (!meterId) return;
+    setDeleteError(null);
     setDeletingMeterId(meterId);
     try {
       const res = await fetch(`/api/meters/${meterId}`, { method: 'DELETE' });
       if (res.ok) {
         setMeters((prev) => prev.filter((m) => m.id !== meterId));
+        setShowDeleteMeterModal(false);
         onFacilityUpdated?.();
       } else {
+        setDeleteError('Failed to delete meter');
         console.error('Failed to delete meter');
       }
     } catch (err) {
       console.error('Error deleting meter:', err);
+      setDeleteError('Failed to delete meter');
     } finally {
       setDeletingMeterId(null);
+      setDeleteMeterCandidateId(null);
     }
-  };
+  }; 
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -164,7 +187,7 @@ export default function FacilitySettingsModal({
                     </div>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => handleDeleteMeter(m.id)}
+                        onClick={() => promptDeleteMeter(m.id)}
                         className="text-red-600 px-2 py-1 border border-red-100 rounded-md text-sm"
                         disabled={deletingMeterId === m.id}
                       >
@@ -192,7 +215,7 @@ export default function FacilitySettingsModal({
               {saving ? 'Saving…' : 'Save'}
             </button>
             <button
-              onClick={handleDeleteFacility}
+              onClick={promptDeleteFacility}
               className="ml-3 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
               disabled={deletingFacility}
             >
@@ -201,6 +224,31 @@ export default function FacilitySettingsModal({
           </div>
         </div>
       </div>
+
+      {showDeleteFacilityModal && (
+        <ConfirmModal
+          title="Delete Facility"
+          message={<>Are you sure you want to delete <strong>{facility.name}</strong> and all its meters and invoices?</>}
+          subMessage="This action cannot be undone."
+          onConfirm={handleConfirmDeleteFacility}
+          onCancel={() => setShowDeleteFacilityModal(false)}
+          loading={deletingFacility}
+          error={deleteError ?? undefined}
+        />
+      )}
+
+      {showDeleteMeterModal && (
+        <ConfirmModal
+          title="Delete Meter"
+          message="Are you sure you want to delete this meter and its invoices?"
+          subMessage="This action cannot be undone."
+          onConfirm={handleConfirmDeleteMeter}
+          onCancel={() => { setShowDeleteMeterModal(false); setDeleteMeterCandidateId(null); }}
+          loading={Boolean(deletingMeterId)}
+          error={deleteError ?? undefined}
+        />
+      )}
+
     </div>
   );
 }
