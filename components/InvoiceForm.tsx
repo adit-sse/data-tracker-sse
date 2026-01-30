@@ -43,12 +43,31 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
   const [selectedFacilityId, setSelectedFacilityId] = useState('');
   const [filteredMeters, setFilteredMeters] = useState<Meter[]>([]);
   
+  // Helper functions for date handling
+  const getCurrentMonthStart = () => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+  };
+  
+  const getCurrentMonthEnd = () => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+  };
+  
+  const getMonthStart = (year: number, month: number) => {
+    return new Date(year, month, 1).toISOString().split('T')[0];
+  };
+  
+  const getMonthEnd = (year: number, month: number) => {
+    return new Date(year, month + 1, 0).toISOString().split('T')[0];
+  };
+  
   const [formData, setFormData] = useState<InvoiceFormData>({
     meter_id: '',
     invoice_number: '',
     invoice_date: '',
-    period_start_date: '',
-    period_end_date: '',
+    period_start_date: getCurrentMonthStart(),
+    period_end_date: getCurrentMonthEnd(),
     consumption: undefined,
     amount: undefined,
     framework: '',
@@ -60,6 +79,18 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  
+  // Quick date selectors state
+  const [quickYear, setQuickYear] = useState(new Date().getFullYear());
+  const [quickMonth, setQuickMonth] = useState(new Date().getMonth());
+  
+  // Generate year options (current year ± 5 years)
+  const yearOptions = Array.from({ length: 11 }, (_, i) => new Date().getFullYear() - 5 + i);
+  
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
   
   useEffect(() => {
     fetchData();
@@ -77,6 +108,49 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
       setFilteredMeters(allMeters);
     }
   }, [selectedFacilityId, allMeters, formData.meter_id]);
+  
+  // When start date changes, update end date to stay in the same month
+  useEffect(() => {
+    if (formData.period_start_date) {
+      const startDate = new Date(formData.period_start_date);
+      const year = startDate.getFullYear();
+      const month = startDate.getMonth();
+      
+      // Update quick selectors to match
+      setQuickYear(year);
+      setQuickMonth(month);
+      
+      // If end date is empty or in a different month, set it to end of start date's month
+      if (!formData.period_end_date) {
+        setFormData(prev => ({
+          ...prev,
+          period_end_date: getMonthEnd(year, month)
+        }));
+      } else {
+        const endDate = new Date(formData.period_end_date);
+        if (endDate.getFullYear() !== year || endDate.getMonth() !== month) {
+          // Only auto-update if end date is before start date
+          if (endDate < startDate) {
+            setFormData(prev => ({
+              ...prev,
+              period_end_date: getMonthEnd(year, month)
+            }));
+          }
+        }
+      }
+    }
+  }, [formData.period_start_date]);
+  
+  // Handle quick year/month selection
+  const handleQuickDateChange = (year: number, month: number) => {
+    setQuickYear(year);
+    setQuickMonth(month);
+    setFormData(prev => ({
+      ...prev,
+      period_start_date: getMonthStart(year, month),
+      period_end_date: getMonthEnd(year, month)
+    }));
+  };
   
   const fetchData = async () => {
     try {
@@ -119,13 +193,13 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
     try {
       await onSubmit(formData);
       
-      // Reset form
+      // Reset form with current month as default
       setFormData({
         meter_id: '',
         invoice_number: '',
         invoice_date: '',
-        period_start_date: '',
-        period_end_date: '',
+        period_start_date: getCurrentMonthStart(),
+        period_end_date: getCurrentMonthEnd(),
         consumption: undefined,
         amount: undefined,
         framework: '',
@@ -135,6 +209,8 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
         customer: ''
       });
       setSelectedFacilityId('');
+      setQuickYear(new Date().getFullYear());
+      setQuickMonth(new Date().getMonth());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create invoice');
     } finally {
@@ -155,6 +231,51 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
           No meters found. Please add a meter first before creating invoices.
         </div>
       )}
+      
+      {/* Quick Year/Month Selector */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Quick Date Selection
+        </label>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="quick_year" className="block text-xs text-gray-600 mb-1">
+              Year
+            </label>
+            <select
+              id="quick_year"
+              value={quickYear}
+              onChange={(e) => handleQuickDateChange(parseInt(e.target.value), quickMonth)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              disabled={isSubmitting}
+            >
+              {yearOptions.map(year => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div>
+            <label htmlFor="quick_month" className="block text-xs text-gray-600 mb-1">
+              Month
+            </label>
+            <select
+              id="quick_month"
+              value={quickMonth}
+              onChange={(e) => handleQuickDateChange(quickYear, parseInt(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              disabled={isSubmitting}
+            >
+              {monthNames.map((month, index) => (
+                <option key={index} value={index}>{month}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 mt-2">
+          Select a year and month to quickly set the billing period
+        </p>
+      </div>
       
       <div>
         <label htmlFor="facility_filter" className="block text-sm font-medium text-gray-700 mb-1">
@@ -209,6 +330,7 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
             required
             disabled={isSubmitting}
           />
+          <p className="text-xs text-gray-500 mt-1">You can type the date (YYYY-MM-DD) or use the picker</p>
         </div>
         
         <div>
@@ -224,6 +346,7 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
             required
             disabled={isSubmitting}
           />
+          <p className="text-xs text-gray-500 mt-1">You can type the date (YYYY-MM-DD) or use the picker</p>
         </div>
       </div>
       
