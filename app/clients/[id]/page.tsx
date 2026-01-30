@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import CoverageTable from '@/components/CoverageTable';
 import FacilitySettingsModal from '@/components/FacilitySettingsModal';
+import InvoiceForm, { InvoiceFormData } from '@/components/InvoiceForm';
 import type { Client, MeterWithCoverage } from '@/types';
 
 interface Facility {
@@ -31,6 +32,10 @@ export default function ClientDetailPage() {
   const [editingFacility, setEditingFacility] = useState<Facility | null>(null);
   const [deletingFacility, setDeletingFacility] = useState<Facility | null>(null);
   const [settingsFacility, setSettingsFacility] = useState<Facility | null>(null);
+  // Quick add invoice modal state
+  const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
+  const [invoiceInitialData, setInvoiceInitialData] = useState<any | null>(null);
+  const [invoiceInitialFacilityId, setInvoiceInitialFacilityId] = useState<string | null>(null);
   
   useEffect(() => {
     fetchClientData();
@@ -269,6 +274,12 @@ export default function ClientDetailPage() {
             <CoverageTable 
               metersWithCoverage={metersWithCoverage} 
               fiscalYear={fiscalYear}
+              onQuickAddInvoice={({ meterId, facilityId, period_start_date, period_end_date }) => {
+                setInvoiceModalOpen(true);
+                setInvoiceInitialData({ meter_id: String(meterId), period_start_date, period_end_date });
+                // set facility filter in the form via initial data too
+                setInvoiceInitialFacilityId(facilityId ? String(facilityId) : '');
+              }}
             />
           )}
         </section>
@@ -281,6 +292,46 @@ export default function ClientDetailPage() {
           onSave={handleEditFacility}
           onCancel={() => setEditingFacility(null)}
         />
+      )}
+
+      {/* Quick Add Invoice Modal */}
+      {invoiceModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
+            <div className="flex items-start justify-between">
+              <h2 className="text-lg font-semibold">Add Invoice</h2>
+              <button onClick={() => setInvoiceModalOpen(false)} className="text-gray-400 hover:text-gray-700">Close</button>
+            </div>
+            <div className="mt-4">
+              <InvoiceForm
+                clientId={clientId}
+                initialData={invoiceInitialData}
+                initialFacilityId={invoiceInitialFacilityId ?? undefined}
+                onSubmit={async (data) => {
+                  try {
+                    const res = await fetch(`/api/clients/${clientId}/invoices`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(data)
+                    });
+                    if (!res.ok) {
+                      const err = await res.json();
+                      throw new Error(err.error || 'Failed to create invoice');
+                    }
+                    setInvoiceModalOpen(false);
+                    // refresh coverage and related lists
+                    fetchCoverage();
+                    fetchFacilities();
+                  } catch (err) {
+                    // Let InvoiceForm show errors via thrown error from onSubmit
+                    throw err;
+                  }
+                }}
+                onCancel={() => setInvoiceModalOpen(false)}
+              />
+            </div>
+          </div>
+        </div>
       )}
       
       {/* Facility Settings Modal (cog) */}

@@ -5,16 +5,22 @@ import type { MonthlyCoverage } from '@/types';
 
 interface ProgressBarCellProps {
   coverage: MonthlyCoverage;
+  onClick?: () => void;
 }
 
-export default function ProgressBarCell({ coverage }: ProgressBarCellProps) {
+export default function ProgressBarCell({ coverage, onClick }: ProgressBarCellProps) {
   const { daysCovered, daysInMonth, percentage, gaps } = coverage;
   const colors = getCoverageColorClass(percentage);
   
   return (
-    <div className="group relative">
+    <button
+      type="button"
+      onClick={onClick}
+      className="group relative focus:outline-none"
+      aria-label={`Add invoice for ${coverage.month}`}
+    >
       {/* Progress bar container (wider, not taller) */}
-      <div className="mx-auto bg-gray-200 rounded-full h-8 overflow-hidden relative min-w-[60px] md:min-w-[60px]">
+      <div className="mx-auto bg-gray-200 rounded-full h-8 overflow-hidden relative min-w-[60px] md:min-w-[60px] cursor-pointer">
         <div
           className={`${colors.bg} absolute left-0 top-0 h-full progress-bar-transition ${percentage >= 100 ? 'rounded-full' : 'rounded-l-full'}`}
           style={{ width: `${Math.max(0.5, Math.min(percentage, 100))}%` }}
@@ -22,7 +28,7 @@ export default function ProgressBarCell({ coverage }: ProgressBarCellProps) {
       </div>
 
       {/* Centered overlay text */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20 transition-opacity duration-150 group-hover:opacity-60">
+      <div className="absolute inset-0 flex items-center justify-center z-20 transition-opacity duration-150 group-hover:opacity-60">
         <span className={`${percentage >= 50 ? 'text-white' : 'text-gray-600'} text-sm font-semibold`}>
           {daysCovered}/{daysInMonth}
         </span>
@@ -39,6 +45,8 @@ export default function ProgressBarCell({ coverage }: ProgressBarCellProps) {
           ))}
         </div>
       )}
-    </div>
+
+
+    </button>
   );
 }

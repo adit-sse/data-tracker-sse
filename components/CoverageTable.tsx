@@ -4,12 +4,15 @@ import { useState } from 'react';
 import ProgressBarCell from './ProgressBarCell';
 import type { MeterWithCoverage } from '@/types';
 
+import { format, endOfMonth } from 'date-fns';
+
 interface CoverageTableProps {
   metersWithCoverage: MeterWithCoverage[];
   fiscalYear: number;
+  onQuickAddInvoice?: (opts: { meterId: string; facilityId?: string; period_start_date: string; period_end_date: string }) => void;
 }
 
-export default function CoverageTable({ metersWithCoverage, fiscalYear }: CoverageTableProps) {
+export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickAddInvoice }: CoverageTableProps) {
   const [filterUtility, setFilterUtility] = useState<string>('ALL');
   const [filterSupplier, setFilterSupplier] = useState<string>('ALL');
   const [filterFacility, setFilterFacility] = useState<string>('ALL');
@@ -150,11 +153,23 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear }: Covera
                   {meter.lookup1 ? (meter.lookup1.length > 20 ? `${meter.lookup1.substring(0,20)}...` : meter.lookup1) : '(no id)'}
                   {meter.identifier_type ? <div className="text-xs text-gray-400 mt-1">{meter.identifier_type}</div> : null}
                 </td>
-                {coverage.map((monthlyCoverage, idx) => (
-                  <td key={idx} className="px-3 py-3 align-middle">
-                    <ProgressBarCell coverage={monthlyCoverage} />
-                  </td>
-                ))}
+                {coverage.map((monthlyCoverage, idx) => {
+                  const period_start_date = format(monthlyCoverage.monthDate, 'yyyy-MM-dd');
+                  const period_end_date = format(endOfMonth(monthlyCoverage.monthDate), 'yyyy-MM-dd');
+                  return (
+                    <td key={idx} className="px-3 py-3 align-middle">
+                      <ProgressBarCell
+                        coverage={monthlyCoverage}
+                        onClick={() => onQuickAddInvoice?.({
+                          meterId: String(meter.id),
+                          facilityId: meter.facility?.id,
+                          period_start_date,
+                          period_end_date
+                        })}
+                      />
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>

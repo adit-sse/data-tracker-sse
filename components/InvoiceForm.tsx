@@ -7,6 +7,8 @@ interface InvoiceFormProps {
   clientId: string;
   onSubmit: (data: InvoiceFormData) => Promise<void>;
   onCancel?: () => void;
+  initialData?: Partial<InvoiceFormData>;
+  initialFacilityId?: string;
 }
 
 export interface InvoiceFormData {
@@ -38,7 +40,7 @@ interface Meter {
   supplier?: { name: string } | null;
 }
 
-export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFormProps) {
+export default function InvoiceForm({ clientId, onSubmit, onCancel, initialData, initialFacilityId }: InvoiceFormProps) {
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [allMeters, setAllMeters] = useState<Meter[]>([]);
   const [selectedFacilityId, setSelectedFacilityId] = useState('');
@@ -77,6 +79,30 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
     emissions_factor: undefined,
     customer: ''
   });
+
+  // If initialData is provided (e.g., quick-add from coverage pill), prefill form when meters are loaded
+  useEffect(() => {
+    if (!initialData && !initialFacilityId) return;
+
+    // If initial meter is provided and we already loaded meters, set meter and facility
+    if (initialData?.meter_id && allMeters.length > 0) {
+      const matched = allMeters.find(m => String(m.id) === String(initialData.meter_id));
+      if (matched) {
+        setSelectedFacilityId(String(matched.facility_id));
+      }
+      setFormData(prev => ({ ...prev, ...initialData } as InvoiceFormData));
+    } else {
+      // Apply initial facility if provided
+      if (initialFacilityId) {
+        setSelectedFacilityId(initialFacilityId);
+      }
+      // Apply initial data even if meters not loaded yet
+      if (initialData) {
+        setFormData(prev => ({ ...prev, ...initialData } as InvoiceFormData));
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialData, initialFacilityId, allMeters]);
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
