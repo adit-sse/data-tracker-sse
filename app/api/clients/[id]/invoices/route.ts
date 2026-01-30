@@ -40,7 +40,51 @@ export async function POST(
         { status: 400 }
       );
     }
-    
+
+    // Prevent duplicate invoices:
+    // 1) If an invoice_number is provided, ensure no existing invoice for the same meter has that invoice_number
+    if (invoice_number && invoice_number.trim()) {
+      const { data: existingByNumber, error: existingByNumberError } = await supabase
+        .from('actual_invoices')
+        .select('id')
+        .eq('meter_id', meter_id)
+        .eq('invoice_number', invoice_number.trim())
+        .limit(1)
+        .maybeSingle();
+
+      if (existingByNumberError) {
+        throw existingByNumberError;
+      }
+
+      if (existingByNumber) {
+        return NextResponse.json(
+          { error: 'An invoice with that invoice number already exists for this meter' },
+          { status: 409 }
+        );
+      }
+    }
+
+    // 2) Prevent exact period duplicates for the same meter
+    const { data: existingByPeriod, error: existingByPeriodError } = await supabase
+      .from('actual_invoices')
+      .select('id')
+      .eq('meter_id', meter_id)
+      .eq('period_start_date', period_start_date)
+      .eq('period_end_date', period_end_date)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingByPeriodError) {
+      throw existingByPeriodError;
+    }
+
+    if (existingByPeriod) {
+      return NextResponse.json(
+        { error: 'An invoice for this meter with the same period already exists' },
+        { status: 409 }
+      );
+    }
+
     const { data, error } = await supabase
       .from('actual_invoices')
       .insert([{
