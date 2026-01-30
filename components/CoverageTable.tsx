@@ -147,8 +147,8 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear }: Covera
                   </span>
                 </td>
                 <td className="px-4 py-3 text-sm text-gray-600 font-mono align-middle">
-                  {meter.lookup1.substring(0, 12)}
-                  {meter.lookup1.length > 12 && '...'}
+                  {meter.lookup1 ? (meter.lookup1.length > 20 ? `${meter.lookup1.substring(0,20)}...` : meter.lookup1) : '(no id)'}
+                  {meter.identifier_type ? <div className="text-xs text-gray-400 mt-1">{meter.identifier_type}</div> : null}
                 </td>
                 {coverage.map((monthlyCoverage, idx) => (
                   <td key={idx} className="px-3 py-3 align-middle">

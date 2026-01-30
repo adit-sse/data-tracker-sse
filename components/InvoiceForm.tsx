@@ -209,7 +209,7 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
           <option value="">Select a meter</option>
           {filteredMeters.map(meter => (
             <option key={meter.id} value={String(meter.id)}>
-              {meter.utility_category.name} - {meter.supplier?.name || 'No Supplier'} - {meter.lookup1}
+              {meter.utility_category.name} - {meter.supplier?.name || 'No Supplier'} • {meter.lookup1}
             </option>
           ))}
         </select>
