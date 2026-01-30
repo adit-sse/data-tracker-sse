@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import ClientCard from '@/components/ClientCard';
+import SupplierManager from '@/components/SupplierManager';
+import UtilityCategoryManager from '@/components/UtilityCategoryManager';
 
 interface Client {
   id: number;
@@ -20,6 +22,8 @@ export default function HomePage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newClientName, setNewClientName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [showSuppliersManager, setShowSuppliersManager] = useState(false);
+  const [showUtilitiesManager, setShowUtilitiesManager] = useState(false);
   
   useEffect(() => {
     fetchClients();
@@ -86,12 +90,26 @@ export default function HomePage() {
                 Track utility coverage across all your clients
               </p>
             </div>
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
-            >
-              + Add Client
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowSuppliersManager(true)}
+                className="px-3 py-2 border border-gray-300 rounded-md hover:bg-gray-50 text-sm"
+              >
+                Manage Suppliers
+              </button>
+              <button
+                onClick={() => setShowUtilitiesManager(true)}
+                className="px-3 py-2 border border-gray-300 rounded-md hover:bg-gray-50 text-sm"
+              >
+                Manage Utilities
+              </button>
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+              >
+                + Add Client
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -184,6 +202,14 @@ export default function HomePage() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Managers */}
+      {showSuppliersManager && (
+        <SupplierManager onClose={() => setShowSuppliersManager(false)} />
+      )}
+      {showUtilitiesManager && (
+        <UtilityCategoryManager onClose={() => setShowUtilitiesManager(false)} />
       )}
     </div>
   );

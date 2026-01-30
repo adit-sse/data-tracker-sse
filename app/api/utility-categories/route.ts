@@ -23,3 +23,38 @@ export async function GET() {
     );
   }
 }
+
+// POST /api/utility-categories - Create new category
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const { name } = body;
+
+    if (!name || !name.trim()) {
+      return NextResponse.json({ error: 'Category name is required' }, { status: 400 });
+    }
+
+    const { data: existing } = await supabase
+      .from('utility_categories')
+      .select('*')
+      .eq('name', name.trim())
+      .single();
+
+    if (existing) {
+      return NextResponse.json(existing);
+    }
+
+    const { data, error } = await supabase
+      .from('utility_categories')
+      .insert([{ name: name.trim() }])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return NextResponse.json(data, { status: 201 });
+  } catch (error) {
+    console.error('Error creating utility category:', error);
+    return NextResponse.json({ error: 'Failed to create utility category' }, { status: 500 });
+  }
+}
