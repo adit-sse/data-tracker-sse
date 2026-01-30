@@ -24,17 +24,17 @@ export interface InvoiceFormData {
 }
 
 interface Facility {
-  id: string;
+  id: string | number;
   name: string;
 }
 
 interface Meter {
-  id: string;
-  facility_id: string;
+  id: string | number;
+  facility_id: string | number;
   lookup1: string;
   identifier_type: string;
   utility_category: { name: string };
-  supplier: { name: string };
+  supplier?: { name: string } | null;
 }
 
 export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFormProps) {
@@ -67,16 +67,16 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
   
   useEffect(() => {
     if (selectedFacilityId) {
-      const filtered = allMeters.filter(m => m.facility_id === selectedFacilityId);
+      const filtered = allMeters.filter(m => String(m.facility_id) === String(selectedFacilityId));
       setFilteredMeters(filtered);
       // Reset meter selection if it doesn't match facility
-      if (formData.meter_id && !filtered.find(m => m.id === formData.meter_id)) {
+      if (formData.meter_id && !filtered.find(m => String(m.id) === String(formData.meter_id))) {
         setFormData({ ...formData, meter_id: '' });
       }
     } else {
       setFilteredMeters(allMeters);
     }
-  }, [selectedFacilityId, allMeters]);
+  }, [selectedFacilityId, allMeters, formData.meter_id]);
   
   const fetchData = async () => {
     try {
@@ -169,7 +169,7 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
         >
           <option value="">All Facilities</option>
           {facilities.map(facility => (
-            <option key={facility.id} value={facility.id}>{facility.name}</option>
+            <option key={facility.id} value={String(facility.id)}>{facility.name}</option>
           ))}
         </select>
       </div>
@@ -188,7 +188,7 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel }: InvoiceFor
         >
           <option value="">Select a meter</option>
           {filteredMeters.map(meter => (
-            <option key={meter.id} value={meter.id}>
+            <option key={meter.id} value={String(meter.id)}>
               {meter.utility_category.name} - {meter.supplier?.name || 'No Supplier'} - {meter.lookup1}
             </option>
           ))}

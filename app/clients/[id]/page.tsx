@@ -21,7 +21,11 @@ export default function ClientDetailPage() {
   const [client, setClient] = useState<Client | null>(null);
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [metersWithCoverage, setMetersWithCoverage] = useState<MeterWithCoverage[]>([]);
-  const [fiscalYear, setFiscalYear] = useState(2025);
+  const [fiscalYears, setFiscalYears] = useState<number[]>([]);
+  const [fiscalYear, setFiscalYear] = useState<number>(() => {
+    const now = new Date();
+    return now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
+  });
   const [loading, setLoading] = useState(true);
   const [editingFacility, setEditingFacility] = useState<Facility | null>(null);
   const [deletingFacility, setDeletingFacility] = useState<Facility | null>(null);
@@ -30,7 +34,30 @@ export default function ClientDetailPage() {
     fetchClientData();
     fetchFacilities();
     fetchCoverage();
+    fetchFiscalYears();
   }, [clientId, fiscalYear]);
+
+  const fetchFiscalYears = async () => {
+    try {
+      const response = await fetch(`/api/clients/${clientId}/coverage/years`);
+      const data = await response.json();
+      if (data.fiscalYears && Array.isArray(data.fiscalYears) && data.fiscalYears.length > 0) {
+        setFiscalYears(data.fiscalYears);
+        // If current selected fiscalYear isn't in the list, set to latest
+        if (!data.fiscalYears.includes(fiscalYear)) {
+          setFiscalYear(data.fiscalYears[data.fiscalYears.length - 1]);
+        }
+      } else {
+        // Fallback to current FY
+        const now = new Date();
+        const currentFY = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
+        setFiscalYears([currentFY]);
+        setFiscalYear(currentFY);
+      }
+    } catch (error) {
+      console.error('Error fetching fiscal years:', error);
+    }
+  };
   
   const fetchClientData = async () => {
     try {
@@ -237,9 +264,11 @@ export default function ClientDetailPage() {
                 onChange={(e) => setFiscalYear(parseInt(e.target.value))}
                 className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value={2024}>FY 2024 (Jul 23 - Jun 24)</option>
-                <option value={2025}>FY 2025 (Jul 24 - Jun 25)</option>
-                <option value={2026}>FY 2026 (Jul 25 - Jun 26)</option>
+                {fiscalYears.map((fy) => (
+                  <option key={fy} value={fy}>
+                    {`FY ${fy} (Jul ${String(fy - 1).slice(-2)} - Jun ${String(fy).slice(-2)})`}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
