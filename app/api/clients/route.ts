@@ -31,11 +31,11 @@ export async function GET() {
       })
     );
     
-    return NextResponse.json(clientsWithCounts);
+    return NextResponse.json({ data: clientsWithCounts });
   } catch (error) {
     console.error('Error fetching clients:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch clients' },
+      { data: [], error: 'Failed to fetch clients' },
       { status: 500 }
     );
   }
@@ -62,11 +62,11 @@ export async function POST(request: Request) {
     
     if (error) throw error;
     
-    return NextResponse.json(data, { status: 201 });
+    return NextResponse.json({ data }, { status: 201 });
   } catch (error) {
     console.error('Error creating client:', error);
     return NextResponse.json(
-      { error: 'Failed to create client' },
+      { data: [], error: 'Failed to create client' },
       { status: 500 }
     );
   }

@@ -45,6 +45,24 @@ export default function DatePicker({
       }
     }
   }, [isOpen, initialViewDate, value]);
+
+  // Also update the calendar view when `initialViewDate` changes
+  // This ensures related pickers (e.g., end date) show the same month/year
+  // as a recently-selected start date.
+  useEffect(() => {
+    if (initialViewDate) {
+      const syncDate = new Date(initialViewDate);
+      if (!isNaN(syncDate.getTime())) {
+        // Only update if month/year differ to avoid unnecessary state updates
+        if (
+          syncDate.getFullYear() !== viewDate.getFullYear() ||
+          syncDate.getMonth() !== viewDate.getMonth()
+        ) {
+          setViewDate(syncDate);
+        }
+      }
+    }
+  }, [initialViewDate]);
   
   // Close calendar when clicking outside
   useEffect(() => {

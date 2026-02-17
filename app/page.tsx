@@ -24,6 +24,7 @@ export default function HomePage() {
   const [creating, setCreating] = useState(false);
   const [showSuppliersManager, setShowSuppliersManager] = useState(false);
   const [showUtilitiesManager, setShowUtilitiesManager] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   
   useEffect(() => {
     fetchClients();
@@ -33,7 +34,33 @@ export default function HomePage() {
     try {
       const response = await fetch('/api/clients');
       const data = await response.json();
-      setClients(data);
+
+      // If the API returned a non-2xx status, show a UI-friendly error.
+      if (!response.ok) {
+        const message = (data && (data.error || data.message)) || 'Failed to fetch clients';
+        console.error('Error fetching clients:', message);
+        setFetchError(message);
+        setClients([]);
+        return;
+      }
+
+      setFetchError(null);
+
+      // Normalize response to an array to avoid runtime errors when
+      // the API returns an object (e.g. { error: '...' }) or wraps
+      // results under a key like `data` or `clients`.
+      let parsedClients: ClientWithCount[] = [];
+      if (Array.isArray(data)) {
+        parsedClients = data;
+      } else if (data && Array.isArray((data as any).clients)) {
+        parsedClients = (data as any).clients;
+      } else if (data && Array.isArray((data as any).data)) {
+        parsedClients = (data as any).data;
+      } else {
+        console.warn('Unexpected /api/clients response, defaulting to []:', data);
+      }
+
+      setClients(parsedClients);
     } catch (error) {
       console.error('Error fetching clients:', error);
     } finally {
@@ -116,7 +143,31 @@ export default function HomePage() {
       
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {clients.length === 0 ? (
+        {fetchError ? (
+          <div className="text-center py-12">
+            <svg
+              className="mx-auto h-12 w-12 text-red-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12A9 9 0 113 12a9 9 0 0118 0z" />
+            </svg>
+            <h3 className="mt-2 text-sm font-medium text-red-700">Unable to load clients</h3>
+            <p className="mt-1 text-sm text-red-500">{fetchError}</p>
+            <div className="mt-6">
+              <button
+                onClick={() => {
+                  setLoading(true);
+                  fetchClients();
+                }}
+                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        ) : clients.length === 0 ? (
           <div className="text-center py-12">
             <svg
               className="mx-auto h-12 w-12 text-gray-400"

@@ -48,22 +48,28 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel, initialData,
   const [filteredMeters, setFilteredMeters] = useState<Meter[]>([]);
   
   // Helper functions for date handling
+  const formatLocalDate = (date: Date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
   const getCurrentMonthStart = () => {
     const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    return formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1));
   };
   
   const getCurrentMonthEnd = () => {
     const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+    return formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
   };
   
   const getMonthStart = (year: number, month: number) => {
-    return new Date(year, month, 1).toISOString().split('T')[0];
+    return formatLocalDate(new Date(year, month, 1));
   };
   
   const getMonthEnd = (year: number, month: number) => {
-    return new Date(year, month + 1, 0).toISOString().split('T')[0];
+    return formatLocalDate(new Date(year, month + 1, 0));
   };
   
   const [formData, setFormData] = useState<InvoiceFormData>({
@@ -124,6 +130,40 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel, initialData,
       setFilteredMeters(allMeters);
     }
   }, [selectedFacilityId, allMeters, formData.meter_id]);
+
+  // Auto-update period_end_date when period_start_date changes.
+  // - If start is the 1st of the month -> set end to last day of that same month.
+  // - Otherwise -> default to the same day one calendar month later (clamped to month's last day).
+  useEffect(() => {
+    const startStr = formData.period_start_date;
+    if (!startStr) return;
+    const start = new Date(startStr);
+    if (isNaN(start.getTime())) return;
+
+    const year = start.getFullYear();
+    const month = start.getMonth();
+    const day = start.getDate();
+
+    let end: Date;
+    if (day === 1) {
+      // Last day of the same month
+      end = new Date(year, month + 1, 0);
+    } else {
+      // Same day next month, clamp to last day if necessary
+      const nextMonth = month + 1;
+      const lastDayNextMonth = new Date(year, nextMonth + 1, 0).getDate();
+      const dayToUse = Math.min(day, lastDayNextMonth);
+      end = new Date(year, nextMonth, dayToUse);
+    }
+
+    const formattedEnd = formatLocalDate(end);
+
+    // Only update if different to avoid unnecessary re-renders
+    if (formattedEnd !== formData.period_end_date) {
+      setFormData(prev => ({ ...prev, period_end_date: formattedEnd } as InvoiceFormData));
+    }
+  // Intentionally only watch the start date string
+  }, [formData.period_start_date]);
   
   const fetchData = async () => {
     try {
