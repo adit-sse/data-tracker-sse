@@ -93,8 +93,6 @@ export async function POST(
 }
 
 async function processRow(clientId: string, row: CSVRow, rowNum: number): Promise<void> {
-  // Convert client ID to integer for database operations
-  const clientIdInt = parseInt(clientId);
   
   // 1. Validate required fields - CHECK EACH ONE INDIVIDUALLY
   const missingFields: string[] = [];
@@ -124,7 +122,7 @@ async function processRow(clientId: string, row: CSVRow, rowNum: number): Promis
   let { data: facility } = await supabase
     .from('facilities')
     .select('id')
-    .eq('client_id', clientIdInt) // Use integer version
+    .eq('client_id', clientId)
     .eq('name', row.Facility.trim())
     .single();
   
@@ -132,7 +130,7 @@ async function processRow(clientId: string, row: CSVRow, rowNum: number): Promis
     const { data: newFacility, error } = await supabase
       .from('facilities')
       .insert([{
-        client_id: clientIdInt, // Use integer version
+        client_id: clientId,
         name: row.Facility.trim(),
         address: row['Supply Address']?.trim() || null
       }])

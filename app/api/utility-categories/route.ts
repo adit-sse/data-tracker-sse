@@ -24,7 +24,7 @@ export async function GET() {
   }
 }
 
-// POST /api/utility-categories - Create new category
+// POST /api/utility-categories - Create new category (using upsert to avoid race conditions)
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -34,19 +34,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Category name is required' }, { status: 400 });
     }
 
-    const { data: existing } = await supabase
-      .from('utility_categories')
-      .select('*')
-      .eq('name', name.trim())
-      .single();
-
-    if (existing) {
-      return NextResponse.json(existing);
-    }
-
+    // Use upsert to handle race conditions
     const { data, error } = await supabase
       .from('utility_categories')
-      .insert([{ name: name.trim() }])
+      .upsert(
+        [{ name: name.trim() }],
+        { onConflict: 'name', ignoreDuplicates: false }
+      )
       .select()
       .single();
 

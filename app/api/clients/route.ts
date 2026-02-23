@@ -7,29 +7,24 @@ import { supabase } from '@/lib/supabase';
 // GET /api/clients - List all clients with facility count
 export async function GET() {
   try {
-    // Fetch all clients
+    // Fetch all clients with facilities in a single query
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('*')
+      .select('*, facilities(id)')
       .order('name');
     
     if (clientsError) throw clientsError;
     
-    // For each client, count facilities
-    const clientsWithCounts = await Promise.all(
-      (clients || []).map(async (client) => {
-        // Count facilities
-        const { count: facilitiesCount } = await supabase
-          .from('facilities')
-          .select('*', { count: 'exact', head: true })
-          .eq('client_id', client.id);
-        
-        return {
-          client,
-          facilitiesCount: facilitiesCount || 0
-        };
-      })
-    );
+    // Transform to include facilities count
+    const clientsWithCounts = (clients || []).map(client => ({
+      client: {
+        id: client.id,
+        name: client.name,
+        logo_url: client.logo_url,
+        created_at: client.created_at
+      },
+      facilitiesCount: client.facilities?.length || 0
+    }));
     
     return NextResponse.json({ data: clientsWithCounts });
   } catch (error) {

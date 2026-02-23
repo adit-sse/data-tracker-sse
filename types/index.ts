@@ -37,7 +37,7 @@ export type IdentifierType =
 export interface Meter {
   id: string;
   facility_id: string;
-  supplier_id: string;
+  supplier_id?: string | null;  // Optional - meters can exist without a supplier
   utility_category_id: string;
   identifier_type: IdentifierType;
   lookup1: string;  // Primary identifier

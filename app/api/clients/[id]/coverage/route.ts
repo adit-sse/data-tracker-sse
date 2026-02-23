@@ -12,33 +12,22 @@ export async function GET(
 ) {
   try {
     const { searchParams } = new URL(request.url);
-    const fiscalYear = parseInt(searchParams.get('fiscalYear') || '2025');
+    const fiscalYearParam = searchParams.get('fiscalYear');
+    const fiscalYear = fiscalYearParam ? parseInt(fiscalYearParam, 10) : new Date().getFullYear();
     
-    // IMPORTANT: Convert string ID to integer for database comparison
-    const clientId = parseInt(params.id);
-    
-    console.log('=== COVERAGE API DEBUG ===');
-    console.log('Client ID (original):', params.id, 'type:', typeof params.id);
-    console.log('Client ID (converted):', clientId, 'type:', typeof clientId);
-    console.log('Fiscal Year:', fiscalYear);
+    const clientId = params.id;
     
     // Get all facilities for this client
     const { data: facilities, error: facilitiesError } = await supabase
       .from('facilities')
       .select('id')
-      .eq('client_id', clientId);  // Use the integer version
+      .eq('client_id', clientId);
     
-    if (facilitiesError) {
-      console.error('Error fetching facilities:', facilitiesError);
-      throw facilitiesError;
-    }
-    
-    console.log('Facilities found:', facilities?.length, facilities);
+    if (facilitiesError) throw facilitiesError;
     
     const facilityIds = facilities?.map(f => f.id) || [];
     
     if (facilityIds.length === 0) {
-      console.log('No facilities - returning empty');
       return NextResponse.json({
         meters: [],
         fiscalYear
@@ -57,17 +46,10 @@ export async function GET(
       .in('facility_id', facilityIds)
       .order('facility_id');
     
-    if (metersError) {
-      console.error('Error fetching meters:', metersError);
-      throw metersError;
-    }
-    
-    console.log('Meters found:', meters?.length, meters);
+    if (metersError) throw metersError;
     
     // Get all invoices for these meters
     const meterIds = meters?.map(m => m.id) || [];
-    
-    console.log('Meter IDs:', meterIds);
     
     let invoices: any[] = [];
     
@@ -77,15 +59,10 @@ export async function GET(
         .select('*')
         .in('meter_id', meterIds);
       
-      if (invoicesError) {
-        console.error('Error fetching invoices:', invoicesError);
-        throw invoicesError;
-      }
+      if (invoicesError) throw invoicesError;
       
       invoices = invoicesData || [];
     }
-    
-    console.log('Invoices found:', invoices.length, invoices);
     
     // Group invoices by meter
     const invoicesByMeter = (invoices || []).reduce((acc, invoice) => {
@@ -96,24 +73,14 @@ export async function GET(
       return acc;
     }, {} as Record<string, any[]>);
     
-    console.log('Invoices by meter:', Object.keys(invoicesByMeter).length, 'meters have invoices');
-    
     // Calculate coverage for each meter
-    const metersWithCoverage = (meters || []).map(meter => {
-      const meterInvoices = invoicesByMeter[meter.id] || [];
-      console.log(`Meter ${meter.id}: ${meterInvoices.length} invoices`);
-      
-      return {
-        meter,
-        coverage: calculateMonthlyCoverage(
-          meterInvoices,
-          fiscalYear
-        )
-      };
-    });
-    
-    console.log('=== COVERAGE API COMPLETE ===');
-    console.log('Returning', metersWithCoverage.length, 'meters with coverage');
+    const metersWithCoverage = (meters || []).map(meter => ({
+      meter,
+      coverage: calculateMonthlyCoverage(
+        invoicesByMeter[meter.id] || [],
+        fiscalYear
+      )
+    }));
     
     return NextResponse.json({
       meters: metersWithCoverage,

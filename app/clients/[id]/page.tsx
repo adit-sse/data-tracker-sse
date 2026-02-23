@@ -40,6 +40,7 @@ export default function ClientDetailPage() {
   // Invoice list modal state for months that already have invoices
   const [invoiceListModalOpen, setInvoiceListModalOpen] = useState(false);
   const [invoiceListForPeriod, setInvoiceListForPeriod] = useState<ActualInvoice[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   
   useEffect(() => {
     fetchClientData();
@@ -51,6 +52,10 @@ export default function ClientDetailPage() {
   const fetchFiscalYears = async () => {
     try {
       const response = await fetch(`/api/clients/${clientId}/coverage/years`);
+      if (!response.ok) {
+        console.error('Failed to fetch fiscal years');
+        return;
+      }
       const data = await response.json();
       if (data.fiscalYears && Array.isArray(data.fiscalYears) && data.fiscalYears.length > 0) {
         setFiscalYears(data.fiscalYears);
@@ -73,18 +78,28 @@ export default function ClientDetailPage() {
   const fetchClientData = async () => {
     try {
       const response = await fetch(`/api/clients/${clientId}`);
+      if (!response.ok) {
+        setError('Failed to load client');
+        return;
+      }
       const data = await response.json();
       setClient(data);
+      setError(null);
     } catch (error) {
       console.error('Error fetching client:', error);
+      setError('Failed to load client');
     }
   };
   
   const fetchFacilities = async () => {
     try {
       const response = await fetch(`/api/clients/${clientId}/facilities`);
+      if (!response.ok) {
+        console.error('Failed to fetch facilities');
+        return;
+      }
       const data = await response.json();
-      setFacilities(data);
+      setFacilities(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching facilities:', error);
     }
@@ -93,23 +108,19 @@ export default function ClientDetailPage() {
   const fetchCoverage = async () => {
     try {
       setLoading(true);
-      console.log('Fetching coverage for client:', clientId, 'fiscal year:', fiscalYear);
       
       const response = await fetch(`/api/clients/${clientId}/coverage?fiscalYear=${fiscalYear}`);
-      const data = await response.json();
-      
-      console.log('Coverage API response:', data);
-      console.log('Meters with coverage:', data.meters?.length || 0);
-      
-      if (data.meters) {
-        data.meters.forEach((m: any, i: number) => {
-          console.log(`Meter ${i}:`, m.meter?.lookup1, 'has', m.coverage?.length, 'months');
-        });
+      if (!response.ok) {
+        console.error('Failed to fetch coverage');
+        setMetersWithCoverage([]);
+        return;
       }
+      const data = await response.json();
       
       setMetersWithCoverage(data.meters || []);
     } catch (error) {
       console.error('Error fetching coverage:', error);
+      setMetersWithCoverage([]);
     } finally {
       setLoading(false);
     }
@@ -151,6 +162,33 @@ export default function ClientDetailPage() {
       console.error('Error deleting facility:', error);
     }
   };
+  
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <svg className="mx-auto h-12 w-12 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12A9 9 0 113 12a9 9 0 0118 0z" />
+          </svg>
+          <h3 className="mt-2 text-sm font-medium text-red-700">{error}</h3>
+          <div className="mt-4 flex gap-3 justify-center">
+            <button
+              onClick={() => {
+                setError(null);
+                fetchClientData();
+              }}
+              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+            >
+              Retry
+            </button>
+            <Link href="/" className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">
+              Go Back
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
   
   if (!client) {
     return (

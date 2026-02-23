@@ -10,26 +10,22 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const clientId = parseInt(params.id); // Convert to integer!
-    console.log('Fetching meters for client:', clientId, '(type:', typeof clientId, ')');
+    const clientId = params.id;
     
     // Get all facilities for this client
     const { data: facilities, error: facilitiesError } = await supabase
       .from('facilities')
       .select('id')
-      .eq('client_id', clientId); // Use integer version
+      .eq('client_id', clientId);
     
     if (facilitiesError) {
       console.error('Error fetching facilities:', facilitiesError);
       throw facilitiesError;
     }
     
-    console.log('Found facilities:', facilities);
-    
     const facilityIds = facilities?.map(f => f.id) || [];
     
     if (facilityIds.length === 0) {
-      console.log('No facilities found for this client');
       return NextResponse.json([]);
     }
     
@@ -45,12 +41,7 @@ export async function GET(
       .in('facility_id', facilityIds)
       .order('facility_id');
     
-    if (metersError) {
-      console.error('Error fetching meters:', metersError);
-      throw metersError;
-    }
-    
-    console.log('Found meters:', meters?.length || 0, meters);
+    if (metersError) throw metersError;
     
     return NextResponse.json(meters || []);
   } catch (error) {

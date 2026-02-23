@@ -10,30 +10,26 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const clientId = parseInt(params.id);
+    const clientId = params.id;
     
-    const { data, error } = await supabase
+    // Get facilities with meter count in a single query using left join
+    const { data: facilities, error } = await supabase
       .from('facilities')
-      .select('*')
+      .select('*, meters(id)')
       .eq('client_id', clientId)
       .order('name');
     
     if (error) throw error;
     
-    // Get meter count for each facility
-    const facilitiesWithCounts = await Promise.all(
-      (data || []).map(async (facility) => {
-        const { count } = await supabase
-          .from('meters')
-          .select('*', { count: 'exact', head: true })
-          .eq('facility_id', facility.id);
-        
-        return {
-          ...facility,
-          meterCount: count || 0
-        };
-      })
-    );
+    // Transform to include meter count
+    const facilitiesWithCounts = (facilities || []).map(facility => ({
+      id: facility.id,
+      client_id: facility.client_id,
+      name: facility.name,
+      address: facility.address,
+      created_at: facility.created_at,
+      meterCount: facility.meters?.length || 0
+    }));
     
     return NextResponse.json(facilitiesWithCounts);
   } catch (error) {
@@ -51,7 +47,7 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const clientId = parseInt(params.id); // Convert to integer!
+    const clientId = params.id;
     const body = await request.json();
     const { name, address } = body;
     
@@ -65,7 +61,7 @@ export async function POST(
     const { data, error } = await supabase
       .from('facilities')
       .insert([{
-        client_id: clientId, // Use integer version
+        client_id: clientId,
         name: name.trim(),
         address: address?.trim() || null
       }])

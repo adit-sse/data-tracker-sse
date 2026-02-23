@@ -18,7 +18,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const clientId = parseInt(params.id);
+    const clientId = params.id;
 
     // Get facilities for client
     const { data: facilities, error: facilitiesError } = await supabase

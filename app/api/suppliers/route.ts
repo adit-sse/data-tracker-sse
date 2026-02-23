@@ -24,7 +24,7 @@ export async function GET() {
   }
 }
 
-// POST /api/suppliers - Create new supplier
+// POST /api/suppliers - Create new supplier (using upsert to avoid race conditions)
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -37,20 +37,13 @@ export async function POST(request: Request) {
       );
     }
     
-    // Check if supplier already exists
-    const { data: existing } = await supabase
-      .from('suppliers')
-      .select('*')
-      .eq('name', name.trim())
-      .single();
-    
-    if (existing) {
-      return NextResponse.json(existing);
-    }
-    
+    // Use upsert to handle race conditions - if supplier exists, return it; otherwise create
     const { data, error } = await supabase
       .from('suppliers')
-      .insert([{ name: name.trim() }])
+      .upsert(
+        [{ name: name.trim() }],
+        { onConflict: 'name', ignoreDuplicates: false }
+      )
       .select()
       .single();
     
