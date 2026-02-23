@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import CoverageTable from '@/components/CoverageTable';
+import CoverageSummary from '@/components/CoverageSummary';
 import FacilitySettingsModal from '@/components/FacilitySettingsModal';
 import InvoiceForm, { InvoiceFormData } from '@/components/InvoiceForm';
 import type { Client, MeterWithCoverage, ActualInvoice } from '@/types';
@@ -274,6 +275,8 @@ export default function ClientDetailPage() {
               <p className="mt-4 text-gray-600">Loading coverage data...</p>
             </div>
           ) : (
+            <>
+            <CoverageSummary metersWithCoverage={metersWithCoverage} />
             <CoverageTable 
               metersWithCoverage={metersWithCoverage} 
               fiscalYear={fiscalYear}
@@ -289,6 +292,7 @@ export default function ClientDetailPage() {
                 }
               }}
             />
+            </>
           )}
         </section>
       </main>

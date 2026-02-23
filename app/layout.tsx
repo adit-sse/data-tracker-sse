@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Invoice Tracker - Utility Coverage Management',
+  title: 'SSE Data Tracker',
   description: 'Track utility invoices and coverage across multiple clients and facilities',
 };
 
