@@ -33,11 +33,9 @@ export default function ClientDetailPage() {
   const [editingFacility, setEditingFacility] = useState<Facility | null>(null);
   const [deletingFacility, setDeletingFacility] = useState<Facility | null>(null);
   const [settingsFacility, setSettingsFacility] = useState<Facility | null>(null);
-  // Quick add invoice modal state
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
   const [invoiceInitialData, setInvoiceInitialData] = useState<any | null>(null);
   const [invoiceInitialFacilityId, setInvoiceInitialFacilityId] = useState<string | null>(null);
-  // Invoice list modal state for months that already have invoices
   const [invoiceListModalOpen, setInvoiceListModalOpen] = useState(false);
   const [invoiceListForPeriod, setInvoiceListForPeriod] = useState<ActualInvoice[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,19 +50,14 @@ export default function ClientDetailPage() {
   const fetchFiscalYears = async () => {
     try {
       const response = await fetch(`/api/clients/${clientId}/coverage/years`);
-      if (!response.ok) {
-        console.error('Failed to fetch fiscal years');
-        return;
-      }
+      if (!response.ok) return;
       const data = await response.json();
       if (data.fiscalYears && Array.isArray(data.fiscalYears) && data.fiscalYears.length > 0) {
         setFiscalYears(data.fiscalYears);
-        // If current selected fiscalYear isn't in the list, set to latest
         if (!data.fiscalYears.includes(fiscalYear)) {
           setFiscalYear(data.fiscalYears[data.fiscalYears.length - 1]);
         }
       } else {
-        // Fallback to current FY
         const now = new Date();
         const currentFY = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
         setFiscalYears([currentFY]);
@@ -94,10 +87,7 @@ export default function ClientDetailPage() {
   const fetchFacilities = async () => {
     try {
       const response = await fetch(`/api/clients/${clientId}/facilities`);
-      if (!response.ok) {
-        console.error('Failed to fetch facilities');
-        return;
-      }
+      if (!response.ok) return;
       const data = await response.json();
       setFacilities(Array.isArray(data) ? data : []);
     } catch (error) {
@@ -108,15 +98,12 @@ export default function ClientDetailPage() {
   const fetchCoverage = async () => {
     try {
       setLoading(true);
-      
       const response = await fetch(`/api/clients/${clientId}/coverage?fiscalYear=${fiscalYear}`);
       if (!response.ok) {
-        console.error('Failed to fetch coverage');
         setMetersWithCoverage([]);
         return;
       }
       const data = await response.json();
-      
       setMetersWithCoverage(data.meters || []);
     } catch (error) {
       console.error('Error fetching coverage:', error);
@@ -128,14 +115,12 @@ export default function ClientDetailPage() {
   
   const handleEditFacility = async (name: string, address: string) => {
     if (!editingFacility) return;
-    
     try {
       const response = await fetch(`/api/facilities/${editingFacility.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, address })
       });
-      
       if (response.ok) {
         setEditingFacility(null);
         fetchFacilities();
@@ -147,16 +132,14 @@ export default function ClientDetailPage() {
   
   const handleDeleteFacility = async () => {
     if (!deletingFacility) return;
-    
     try {
       const response = await fetch(`/api/facilities/${deletingFacility.id}`, {
         method: 'DELETE'
       });
-      
       if (response.ok) {
         setDeletingFacility(null);
         fetchFacilities();
-        fetchCoverage(); // Refresh coverage as meters might be affected
+        fetchCoverage();
       }
     } catch (error) {
       console.error('Error deleting facility:', error);
@@ -165,23 +148,22 @@ export default function ClientDetailPage() {
   
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 flex items-center justify-center">
         <div className="text-center">
-          <svg className="mx-auto h-12 w-12 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12A9 9 0 113 12a9 9 0 0118 0z" />
-          </svg>
-          <h3 className="mt-2 text-sm font-medium text-red-700">{error}</h3>
-          <div className="mt-4 flex gap-3 justify-center">
+          <div className="w-16 h-16 mx-auto rounded-full bg-red-100 flex items-center justify-center mb-4">
+            <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4m0 4h.01M21 12A9 9 0 113 12a9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-gray-900">{error}</h3>
+          <div className="mt-6 flex gap-3 justify-center">
             <button
-              onClick={() => {
-                setError(null);
-                fetchClientData();
-              }}
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+              onClick={() => { setError(null); fetchClientData(); }}
+              className="bg-emerald-600 text-white px-5 py-2.5 rounded-lg hover:bg-emerald-700 font-medium transition-colors"
             >
-              Retry
+              Try Again
             </button>
-            <Link href="/" className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">
+            <Link href="/" className="px-5 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors">
               Go Back
             </Link>
           </div>
@@ -192,59 +174,76 @@ export default function ClientDetailPage() {
   
   if (!client) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="relative w-16 h-16 mx-auto">
+            <div className="absolute inset-0 rounded-full border-4 border-emerald-100"></div>
+            <div className="absolute inset-0 rounded-full border-4 border-emerald-600 border-t-transparent animate-spin"></div>
+          </div>
+          <p className="mt-4 text-gray-500 font-medium">Loading...</p>
+        </div>
       </div>
     );
   }
   
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50">
       {/* Header */}
-      <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+      <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center gap-3">
               <Link
                 href="/"
-                className="text-gray-500 hover:text-gray-700"
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
               >
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
               </Link>
+              <div className="w-px h-6 bg-gray-200" />
               <div>
-                <h1 className="text-3xl font-bold text-gray-900">{client.name}</h1>
-                <p className="mt-1 text-sm text-gray-500">
-                  {facilities.length} facilities • {metersWithCoverage.length} meters
-                </p>
+                <h1 className="text-xl font-bold text-gray-900">{client.name}</h1>
               </div>
             </div>
             
-            <div className="flex gap-3">
+            <div className="flex items-center gap-2">
               <Link
                 href={`/clients/${clientId}/facilities/new`}
-                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
               >
-                + Add Facility
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Facility
               </Link>
               <Link
                 href={`/clients/${clientId}/meters/new`}
-                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
               >
-                + Add Meter
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Meter
               </Link>
               <Link
                 href={`/clients/${clientId}/invoices/new`}
-                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
               >
-                + Add Invoice
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Invoice
               </Link>
+              <div className="w-px h-6 bg-gray-200 mx-1" />
               <Link
                 href={`/clients/${clientId}/upload`}
-                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
+                className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors font-medium text-sm flex items-center gap-1.5"
               >
-                Upload Invoices
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+                <span className="hidden sm:inline">Upload</span>
               </Link>
             </div>
           </div>
@@ -252,51 +251,52 @@ export default function ClientDetailPage() {
       </header>
       
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {/* Facilities Section */}
-        {facilities.length > 0 && (
-          <section className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-semibold mb-4">Facilities</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {facilities.map((facility) => (
-                <div key={facility.id} className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
-                  <div className="flex justify-between items-start mb-2">
-                    <h3 className="font-medium text-gray-900">{facility.name}</h3>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); setSettingsFacility(facility); }}
-                        title="Facility settings"
-                        className="p-2 rounded-full hover:bg-gray-100 border border-transparent hover:border-gray-200 focus:outline-none"
-                      >
-                        <svg className="w-5 h-5 text-gray-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2h-.02a2 2 0 01-2-2v-.09a1.65 1.65 0 00-1-1.51c-.7-.28-1.45-.1-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2v-.02a2 2 0 012-2h.09c.7 0 1.3-.45 1.51-1 .28-.7.1-1.45-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06c.37.37 1.12.61 1.82.33.55-.21 1-.81 1-1.51V3a2 2 0 012-2h.02a2 2 0 012 2v.09c0 .7.45 1.3 1 1.51.7.28 1.45.1 1.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06c-.37.37-.61 1.12-.33 1.82.21.55.81 1 1.51 1H21a2 2 0 012 2v.02a2 2 0 01-2 2h-.09c-.7 0-1.3.45-1.51 1z" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                  {facility.address && (
-                    <p className="text-sm text-gray-500 mt-1">{facility.address}</p>
-                  )}
-                  <p className="text-sm text-gray-600 mt-2">
-                    {facility.meterCount} {facility.meterCount === 1 ? 'meter' : 'meters'}
-                  </p>
-                </div>
-              ))}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+        {/* Quick Stats */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center">
+                <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-gray-900">{facilities.length}</div>
+                <div className="text-xs text-gray-500">Facilities</div>
+              </div>
             </div>
-          </section>
-        )}
-        
-        {/* Coverage Dashboard */}
-        <section>
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold">Coverage Dashboard</h2>
-            <div className="flex items-center gap-2">
-              <label className="text-sm text-gray-600">Fiscal Year:</label>
+          </div>
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-gray-900">{metersWithCoverage.length}</div>
+                <div className="text-xs text-gray-500">Meters</div>
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm col-span-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-violet-50 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-gray-900">Fiscal Year</div>
+                  <div className="text-xs text-gray-500">Select period</div>
+                </div>
+              </div>
               <select
                 value={fiscalYear}
                 onChange={(e) => setFiscalYear(parseInt(e.target.value))}
-                className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
               >
                 {fiscalYears.map((fy) => (
                   <option key={fy} value={fy}>
@@ -306,30 +306,90 @@ export default function ClientDetailPage() {
               </select>
             </div>
           </div>
+        </div>
+
+        {/* Facilities Section */}
+        {facilities.length > 0 && (
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">Facilities</h2>
+              <Link
+                href={`/clients/${clientId}/facilities/new`}
+                className="text-sm text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {facilities.map((facility) => (
+                <div key={facility.id} className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-gray-200 transition-all p-4 group">
+                  <div className="flex justify-between items-start">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0">
+                        <span className="text-sm font-bold text-emerald-600">{facility.name.charAt(0).toUpperCase()}</span>
+                      </div>
+                      <div>
+                        <h3 className="font-medium text-gray-900">{facility.name}</h3>
+                        {facility.address && (
+                          <p className="text-sm text-gray-500 mt-0.5 line-clamp-1">{facility.address}</p>
+                        )}
+                        <div className="flex items-center gap-1.5 mt-2">
+                          <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                          </svg>
+                          <span className="text-sm text-gray-500">{facility.meterCount} {facility.meterCount === 1 ? 'meter' : 'meters'}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setSettingsFacility(facility); }}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 opacity-0 group-hover:opacity-100 transition-all"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+        
+        {/* Coverage Dashboard */}
+        <section>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Coverage Dashboard</h2>
+          </div>
           
           {loading ? (
-            <div className="bg-white rounded-lg shadow p-8 text-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-              <p className="mt-4 text-gray-600">Loading coverage data...</p>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+              <div className="relative w-12 h-12 mx-auto">
+                <div className="absolute inset-0 rounded-full border-4 border-emerald-100"></div>
+                <div className="absolute inset-0 rounded-full border-4 border-emerald-600 border-t-transparent animate-spin"></div>
+              </div>
+              <p className="mt-4 text-gray-500">Loading coverage data...</p>
             </div>
           ) : (
             <>
-            <CoverageSummary metersWithCoverage={metersWithCoverage} />
-            <CoverageTable 
-              metersWithCoverage={metersWithCoverage} 
-              fiscalYear={fiscalYear}
-              onQuickAddInvoice={({ meterId, facilityId, period_start_date, period_end_date, invoices }) => {
-                if (invoices && invoices.length > 0) {
-                  setInvoiceListForPeriod(invoices);
-                  setInvoiceListModalOpen(true);
-                } else {
-                  setInvoiceModalOpen(true);
-                  setInvoiceInitialData({ meter_id: String(meterId), period_start_date, period_end_date });
-                  // set facility filter in the form via initial data too
-                  setInvoiceInitialFacilityId(facilityId ? String(facilityId) : '');
-                }
-              }}
-            />
+              <CoverageSummary metersWithCoverage={metersWithCoverage} />
+              <CoverageTable 
+                metersWithCoverage={metersWithCoverage} 
+                fiscalYear={fiscalYear}
+                onQuickAddInvoice={({ meterId, facilityId, period_start_date, period_end_date, invoices }) => {
+                  if (invoices && invoices.length > 0) {
+                    setInvoiceListForPeriod(invoices);
+                    setInvoiceListModalOpen(true);
+                  } else {
+                    setInvoiceModalOpen(true);
+                    setInvoiceInitialData({ meter_id: String(meterId), period_start_date, period_end_date });
+                    setInvoiceInitialFacilityId(facilityId ? String(facilityId) : '');
+                  }
+                }}
+              />
             </>
           )}
         </section>
@@ -344,56 +404,56 @@ export default function ClientDetailPage() {
         />
       )}
 
-      {/* Invoice List Modal (shows when there are already invoices for the selected month) */}
+      {/* Invoice List Modal */}
       {invoiceListModalOpen && invoiceListForPeriod && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
-            <div className="flex items-start justify-between">
-              <h2 className="text-lg font-semibold">Invoices for selected period</h2>
-              <button onClick={() => { setInvoiceListModalOpen(false); setInvoiceListForPeriod(null); }} className="text-gray-400 hover:text-gray-700">Close</button>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-6 max-w-2xl w-full shadow-xl">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-xl font-semibold text-gray-900">Invoices for Period</h2>
+              <button 
+                onClick={() => { setInvoiceListModalOpen(false); setInvoiceListForPeriod(null); }} 
+                className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
-            <div className="mt-4 space-y-3">
+            <div className="space-y-3">
               {invoiceListForPeriod.map(inv => (
-                <div key={inv.id} className="border border-gray-200 rounded p-3 flex items-center justify-between">
+                <div key={inv.id} className="border border-gray-100 rounded-lg p-4 flex items-center justify-between hover:border-gray-200 transition-colors">
                   <div>
-                    <div className="font-medium">{inv.invoice_number || 'No invoice number'}</div>
-                    <div className="text-sm text-gray-600">{inv.period_start_date} → {inv.period_end_date} • ${inv.amount ?? '—'}</div>
-                    <div className="text-sm text-gray-500">Meter: {inv.meter?.lookup1 || String(inv.meter_id)}</div>
+                    <div className="font-medium text-gray-900">{inv.invoice_number || 'No invoice number'}</div>
+                    <div className="text-sm text-gray-500 mt-1">{inv.period_start_date} → {inv.period_end_date} • ${inv.amount ?? '—'}</div>
+                    <div className="text-sm text-gray-400 mt-0.5">Meter: {inv.meter?.lookup1 || String(inv.meter_id)}</div>
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => {
-                        // Open edit form prefilled with this invoice
-                        setInvoiceInitialData({ ...inv });
-                        setInvoiceInitialFacilityId(inv.meter?.facility_id ? String(inv.meter.facility_id) : '');
-                        setInvoiceListModalOpen(false);
-                        setInvoiceListForPeriod(null);
-                        setInvoiceModalOpen(true);
-                      }}
-                      className="px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50"
-                    >
-                      Edit
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => {
+                      setInvoiceInitialData({ ...inv });
+                      setInvoiceInitialFacilityId(inv.meter?.facility_id ? String(inv.meter.facility_id) : '');
+                      setInvoiceListModalOpen(false);
+                      setInvoiceListForPeriod(null);
+                      setInvoiceModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Edit
+                  </button>
                 </div>
               ))}
-
-              <div className="pt-2">
-                <button
-                  onClick={() => {
-                    // Add new invoice for the same period (prefill period dates from the first invoice)
-                    const first = invoiceListForPeriod[0];
-                    setInvoiceInitialData({ meter_id: String(first.meter_id), period_start_date: first.period_start_date, period_end_date: first.period_end_date });
-                    setInvoiceInitialFacilityId(first.meter?.facility_id ? String(first.meter.facility_id) : '');
-                    setInvoiceListModalOpen(false);
-                    setInvoiceListForPeriod(null);
-                    setInvoiceModalOpen(true);
-                  }}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-                >
-                  Add New Invoice for Period
-                </button>
-              </div>
+              <button
+                onClick={() => {
+                  const first = invoiceListForPeriod[0];
+                  setInvoiceInitialData({ meter_id: String(first.meter_id), period_start_date: first.period_start_date, period_end_date: first.period_end_date });
+                  setInvoiceInitialFacilityId(first.meter?.facility_id ? String(first.meter.facility_id) : '');
+                  setInvoiceListModalOpen(false);
+                  setInvoiceListForPeriod(null);
+                  setInvoiceModalOpen(true);
+                }}
+                className="w-full bg-emerald-600 text-white px-4 py-2.5 rounded-lg hover:bg-emerald-700 font-medium transition-colors"
+              >
+                Add New Invoice for Period
+              </button>
             </div>
           </div>
         </div>
@@ -401,62 +461,62 @@ export default function ClientDetailPage() {
 
       {/* Quick Add / Edit Invoice Modal */}
       {invoiceModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
-            <div className="flex items-start justify-between">
-              <h2 className="text-lg font-semibold">{invoiceInitialData?.id ? 'Edit Invoice' : 'Add Invoice'}</h2>
-              <button onClick={() => setInvoiceModalOpen(false)} className="text-gray-400 hover:text-gray-700">Close</button>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-6 max-w-2xl w-full shadow-xl">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-xl font-semibold text-gray-900">{invoiceInitialData?.id ? 'Edit Invoice' : 'Add Invoice'}</h2>
+              <button 
+                onClick={() => setInvoiceModalOpen(false)} 
+                className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
-            <div className="mt-4">
-              <InvoiceForm
-                clientId={clientId}
-                initialData={invoiceInitialData}
-                initialFacilityId={invoiceInitialFacilityId ?? undefined}
-                onSubmit={async (data) => {
-                  try {
-                    if (data.id) {
-                      // Update existing invoice
-                      const res = await fetch(`/api/clients/${clientId}/invoices/${data.id}`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(data)
-                      });
-                      if (!res.ok) {
-                        const err = await res.json();
-                        throw new Error(err.error || 'Failed to update invoice');
-                      }
-                    } else {
-                      // Create new invoice
-                      const res = await fetch(`/api/clients/${clientId}/invoices`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(data)
-                      });
-                      if (!res.ok) {
-                        const err = await res.json();
-                        throw new Error(err.error || 'Failed to create invoice');
-                      }
+            <InvoiceForm
+              clientId={clientId}
+              initialData={invoiceInitialData}
+              initialFacilityId={invoiceInitialFacilityId ?? undefined}
+              onSubmit={async (data) => {
+                try {
+                  if (data.id) {
+                    const res = await fetch(`/api/clients/${clientId}/invoices/${data.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(data)
+                    });
+                    if (!res.ok) {
+                      const err = await res.json();
+                      throw new Error(err.error || 'Failed to update invoice');
                     }
-
-                    setInvoiceModalOpen(false);
-                    setInvoiceInitialData(null);
-                    setInvoiceInitialFacilityId(null);
-                    // refresh coverage and related lists
-                    fetchCoverage();
-                    fetchFacilities();
-                  } catch (err) {
-                    // Let InvoiceForm show errors via thrown error from onSubmit
-                    throw err;
+                  } else {
+                    const res = await fetch(`/api/clients/${clientId}/invoices`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(data)
+                    });
+                    if (!res.ok) {
+                      const err = await res.json();
+                      throw new Error(err.error || 'Failed to create invoice');
+                    }
                   }
-                }}
-                onCancel={() => setInvoiceModalOpen(false)}
-              />
-            </div>
+                  setInvoiceModalOpen(false);
+                  setInvoiceInitialData(null);
+                  setInvoiceInitialFacilityId(null);
+                  fetchCoverage();
+                  fetchFacilities();
+                } catch (err) {
+                  throw err;
+                }
+              }}
+              onCancel={() => setInvoiceModalOpen(false)}
+            />
           </div>
         </div>
       )}
       
-      {/* Facility Settings Modal (cog) */}
+      {/* Facility Settings Modal */}
       {settingsFacility && (
         <FacilitySettingsModal
           facility={settingsFacility}
@@ -469,39 +529,43 @@ export default function ClientDetailPage() {
 
       {/* Delete Facility Modal */}
       {deletingFacility && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-semibold mb-4 text-red-600">Delete Facility</h2>
-            <p className="text-gray-700 mb-2">
-              Are you sure you want to delete <strong>{deletingFacility.name}</strong>?
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-semibold text-gray-900">Delete Facility</h2>
+            </div>
+            <p className="text-gray-600 mb-2">
+              Are you sure you want to delete <span className="font-medium text-gray-900">{deletingFacility.name}</span>?
             </p>
-            <p className="text-sm text-gray-600 mb-4">
-              This will also delete all {deletingFacility.meterCount} associated meter(s) and their invoices. This action cannot be undone.
+            <p className="text-sm text-gray-500 mb-5">
+              This will also delete {deletingFacility.meterCount} meter(s) and their invoices.
             </p>
             <div className="flex gap-3">
               <button
-                onClick={handleDeleteFacility}
-                className="flex-1 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700"
-              >
-                Delete
-              </button>
-              <button
                 onClick={() => setDeletingFacility(null)}
-                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+                className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors"
               >
                 Cancel
+              </button>
+              <button
+                onClick={handleDeleteFacility}
+                className="flex-1 bg-red-600 text-white px-4 py-2.5 rounded-lg hover:bg-red-700 font-medium transition-colors"
+              >
+                Delete
               </button>
             </div>
           </div>
         </div>
       )}
-
-
     </div>
   );
 }
 
-// Edit Facility Modal Component
 function EditFacilityModal({ 
   facility, 
   onSave, 
@@ -523,12 +587,22 @@ function EditFacilityModal({
   };
   
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg p-6 max-w-md w-full">
-        <h2 className="text-xl font-semibold mb-4">Edit Facility</h2>
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-xl font-semibold text-gray-900">Edit Facility</h2>
+          <button
+            onClick={onCancel}
+            className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
         <form onSubmit={handleSubmit}>
           <div className="mb-4">
-            <label htmlFor="facilityName" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="facilityName" className="block text-sm font-medium text-gray-700 mb-1.5">
               Facility Name <span className="text-red-500">*</span>
             </label>
             <input
@@ -536,13 +610,13 @@ function EditFacilityModal({
               id="facilityName"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
               required
               autoFocus
             />
           </div>
-          <div className="mb-4">
-            <label htmlFor="facilityAddress" className="block text-sm font-medium text-gray-700 mb-1">
+          <div className="mb-5">
+            <label htmlFor="facilityAddress" className="block text-sm font-medium text-gray-700 mb-1.5">
               Address
             </label>
             <input
@@ -550,25 +624,25 @@ function EditFacilityModal({
               id="facilityAddress"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
               placeholder="Optional"
             />
           </div>
           <div className="flex gap-3">
             <button
-              type="submit"
-              disabled={saving}
-              className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : 'Save Changes'}
-            </button>
-            <button
               type="button"
               onClick={onCancel}
               disabled={saving}
-              className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+              className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors disabled:opacity-50"
             >
               Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 bg-emerald-600 text-white px-4 py-2.5 rounded-lg hover:bg-emerald-700 font-medium transition-colors disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
         </form>

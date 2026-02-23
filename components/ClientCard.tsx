@@ -16,6 +16,12 @@ interface ClientCardProps {
   onUpdated?: () => void;
 }
 
+const cardColor = {
+  gradient: 'from-emerald-500 to-emerald-600',
+  bg: 'bg-emerald-50',
+  text: 'text-emerald-600'
+};
+
 export default function ClientCard({ client, facilitiesCount, onDeleted, onUpdated }: ClientCardProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -47,94 +53,141 @@ export default function ClientCard({ client, facilitiesCount, onDeleted, onUpdat
   };
 
   return (
-    <div className="relative">
+    <div className="relative group">
       <Link href={`/clients/${client.id}`}>
-        <div className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6 cursor-pointer border border-gray-200">
-          {/* Client Logo and Name */}
-          <div className="flex items-center gap-4">
-            {client.logo_url ? (
-              <div className="w-16 h-16 relative flex-shrink-0">
-                <Image 
-                  src={client.logo_url} 
-                  alt={`${client.name} logo`}
-                  fill
-                  className="object-contain"
-                />
+        <div className="bg-white rounded-xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden border border-gray-100 hover:border-gray-200">
+          {/* Color accent bar */}
+          <div className={`h-1.5 bg-gradient-to-r ${cardColor.gradient}`} />
+          
+          <div className="p-5">
+            {/* Client Logo and Name */}
+            <div className="flex items-start gap-4">
+              {client.logo_url ? (
+                <div className="w-14 h-14 relative flex-shrink-0 rounded-lg overflow-hidden bg-gray-50">
+                  <Image 
+                    src={client.logo_url} 
+                    alt={`${client.name} logo`}
+                    fill
+                    className="object-contain p-1"
+                  />
+                </div>
+              ) : (
+                <div className={`w-14 h-14 rounded-lg flex items-center justify-center flex-shrink-0 ${cardColor.bg}`}>
+                  <span className={`text-xl font-bold ${cardColor.text}`}>
+                    {client.name.charAt(0).toUpperCase()}
+                  </span>
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <h2 className="text-lg font-semibold text-gray-900 truncate">{client.name}</h2>
+                <div className="flex items-center gap-2 mt-1">
+                  <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                  </svg>
+                  <span className="text-sm text-gray-500">
+                    {facilitiesCount} {facilitiesCount === 1 ? 'facility' : 'facilities'}
+                  </span>
+                </div>
               </div>
-            ) : (
-              <div className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center flex-shrink-0">
-                <span className="text-2xl font-bold text-gray-400">
-                  {client.name.charAt(0)}
-                </span>
-              </div>
-            )}
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">{client.name}</h2>
-              <p className="text-sm text-gray-500">
-                {facilitiesCount} {facilitiesCount === 1 ? 'facility' : 'facilities'}
-              </p>
+            </div>
+            
+            {/* View Details Link */}
+            <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between">
+              <span className="text-sm text-gray-400">View details</span>
+              <svg className="w-4 h-4 text-gray-400 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
             </div>
           </div>
         </div>
       </Link>
 
-      {/* Cog Menu */}
-      <div className="absolute top-3 right-3">
+      {/* Settings Menu Button */}
+      <div className="absolute top-4 right-3">
         <button
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowMenu(!showMenu); }}
           aria-haspopup="true"
           aria-expanded={showMenu}
-          className="p-2 rounded-full hover:bg-gray-100 border border-transparent hover:border-gray-200 focus:outline-none"
+          className="p-1.5 rounded-lg bg-white/80 backdrop-blur-sm opacity-0 group-hover:opacity-100 hover:bg-gray-100 transition-all duration-200 shadow-sm"
           title="Client settings"
         >
-          {/* Cog Icon */}
-          <svg className="w-5 h-5 text-gray-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2h-.02a2 2 0 01-2-2v-.09a1.65 1.65 0 00-1-1.51c-.7-.28-1.45-.1-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2v-.02a2 2 0 012-2h.09c.7 0 1.3-.45 1.51-1 .28-.7.1-1.45-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06c.37.37 1.12.61 1.82.33.55-.21 1-.81 1-1.51V3a2 2 0 012-2h.02a2 2 0 012 2v.09c0 .7.45 1.3 1 1.51.7.28 1.45.1 1.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06c-.37.37-.61 1.12-.33 1.82.21.55.81 1 1.51 1H21a2 2 0 012 2v.02a2 2 0 01-2 2h-.09c-.7 0-1.3.45-1.51 1z" />
+          <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
           </svg>
         </button>
 
         {showMenu && (
-          <div
-            className="absolute right-0 mt-2 w-44 bg-white border border-gray-200 rounded shadow z-50"
-            onClick={(e) => e.stopPropagation()}
-            role="menu"
-            aria-orientation="vertical"
-          >
-            <button
-              onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowEditModal(true); setShowMenu(false); }}
-              className="w-full text-left px-4 py-3 text-base text-gray-700 hover:bg-gray-50"
-            >
-              Edit Client
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowDeleteModal(true); setShowMenu(false); }}
-              className="w-full text-left px-4 py-3 text-base text-red-600 hover:bg-gray-50"
-            >
-              Delete Client
-            </button>
-            <a
-              href={`/clients/${client.id}/debug`}
+          <>
+            <div 
+              className="fixed inset-0 z-40" 
+              onClick={(e) => { e.stopPropagation(); setShowMenu(false); }}
+            />
+            <div
+              className="absolute right-0 mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-100 py-1 z-50"
               onClick={(e) => e.stopPropagation()}
-              className="block px-4 py-3 text-base text-gray-700 hover:bg-gray-50"
+              role="menu"
             >
-              Debug
-            </a>
-          </div>
+              <button
+                onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowEditModal(true); setShowMenu(false); }}
+                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                Edit
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowDeleteModal(true); setShowMenu(false); }}
+                className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Delete
+              </button>
+            </div>
+          </>
         )}
       </div>
 
       {/* Delete Modal */}
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-semibold mb-4 text-red-600">Delete Client</h2>
-            <p className="text-gray-700 mb-2">Are you sure you want to delete <strong>{client.name}</strong> and all its associated facilities, meters, and invoices?</p>
-            <p className="text-sm text-gray-600 mb-4">This action cannot be undone.</p>
-            {deleteError && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">{deleteError}</div>}
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-semibold text-gray-900">Delete Client</h2>
+            </div>
+            <p className="text-gray-600 mb-2">
+              Are you sure you want to delete <span className="font-medium text-gray-900">{client.name}</span>?
+            </p>
+            <p className="text-sm text-gray-500 mb-5">
+              This will permanently remove all facilities, meters, and invoices associated with this client.
+            </p>
+            {deleteError && (
+              <div className="bg-red-50 border border-red-100 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
+                {deleteError}
+              </div>
+            )}
             <div className="flex gap-3">
-              <button onClick={handleDelete} className="flex-1 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700" disabled={deleting}>{deleting ? 'Deleting...' : 'Delete'}</button>
-              <button onClick={() => setShowDeleteModal(false)} className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50" disabled={deleting}>Cancel</button>
+              <button 
+                onClick={() => setShowDeleteModal(false)} 
+                className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors" 
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleDelete} 
+                className="flex-1 bg-red-600 text-white px-4 py-2.5 rounded-lg hover:bg-red-700 font-medium transition-colors disabled:opacity-50" 
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting...' : 'Delete'}
+              </button>
             </div>
           </div>
         </div>
