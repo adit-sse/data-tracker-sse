@@ -13,7 +13,11 @@ export async function GET(
   try {
     const { searchParams } = new URL(request.url);
     const fiscalYearParam = searchParams.get('fiscalYear');
-    const fiscalYear = fiscalYearParam ? parseInt(fiscalYearParam, 10) : new Date().getFullYear();
+    
+    // Calculate current fiscal year (July starts new FY)
+    const now = new Date();
+    const currentFY = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
+    const fiscalYear = fiscalYearParam ? parseInt(fiscalYearParam, 10) : currentFY;
     
     const clientId = params.id;
     

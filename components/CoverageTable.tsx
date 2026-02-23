@@ -18,20 +18,17 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
   const [filterFacility, setFilterFacility] = useState<string>('ALL');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
 
-  const getMeterServiceStatus = (meter: MeterWithCoverage['meter']): { label: string; color: string; isActive: boolean } => {
+  const getMeterServiceStatus = (meter: MeterWithCoverage['meter']): { label: string; isActive: boolean } => {
     const today = new Date().toISOString().split('T')[0];
-    // Mark as inactive if end date is set and is today or in the past
     if (meter.in_service_end_date && meter.in_service_end_date <= today) {
-      return { label: 'Inactive', color: 'bg-gray-200 text-gray-600', isActive: false };
+      return { label: 'Inactive', isActive: false };
     }
-    // Mark as not yet active if start date is in the future
     if (meter.in_service_start_date && meter.in_service_start_date > today) {
-      return { label: 'Not Yet Active', color: 'bg-yellow-100 text-yellow-700', isActive: false };
+      return { label: 'Pending', isActive: false };
     }
-    return { label: 'Active', color: 'bg-green-100 text-green-700', isActive: true };
+    return { label: 'Active', isActive: true };
   };
   
-  // Get unique utility types, suppliers, and facilities
   const utilityTypes = Array.from(
     new Set(metersWithCoverage.map(m => m.meter.utility_category?.name || 'UNKNOWN'))
   );
@@ -44,7 +41,6 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
     new Set(metersWithCoverage.map(m => m.meter.facility?.name || 'Unknown'))
   ).sort();
   
-  // Filter meters by all selected criteria
   const filteredMeters = metersWithCoverage.filter(m => {
     const utilityMatch = filterUtility === 'ALL' || m.meter.utility_category?.name === filterUtility;
     const supplierMatch = filterSupplier === 'ALL' || (m.meter.supplier?.name || 'No Supplier') === filterSupplier;
@@ -58,182 +54,183 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
     return utilityMatch && supplierMatch && facilityMatch && statusMatch;
   });
   
-  // Show empty state only when there are no meters at all
   if (metersWithCoverage.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow p-8 text-center">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-8 text-center">
         <p className="text-gray-500">No meters found. Upload invoices to see coverage data.</p>
       </div>
     );
   }
   
-  // Get month labels from first meter's coverage (all meters have same months)
   const monthLabels = metersWithCoverage[0]?.coverage.map(c => c.month) || [];
+  const now = new Date();
+  const currentMonthYearLabel = format(now, 'MMM yy');
   
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       {/* Filter Controls */}
-      <div className="p-4 bg-gray-50 border-b">
-        <div className="flex flex-wrap items-center gap-4">
-          <label className="text-sm font-medium text-gray-700">Filters:</label>
+      <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Filters:</span>
           
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-600">Utility:</label>
-            <select
-              value={filterUtility}
-              onChange={(e) => setFilterUtility(e.target.value)}
-              className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="ALL">All</option>
-              {utilityTypes.map(type => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={filterUtility}
+            onChange={(e) => setFilterUtility(e.target.value)}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+          >
+            <option value="ALL">All Types</option>
+            {utilityTypes.map(type => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
           
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-600">Supplier:</label>
-            <select
-              value={filterSupplier}
-              onChange={(e) => setFilterSupplier(e.target.value)}
-              className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="ALL">All</option>
-              {suppliers.map(supplier => (
-                <option key={supplier} value={supplier}>{supplier}</option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={filterSupplier}
+            onChange={(e) => setFilterSupplier(e.target.value)}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+          >
+            <option value="ALL">All Suppliers</option>
+            {suppliers.map(supplier => (
+              <option key={supplier} value={supplier}>{supplier}</option>
+            ))}
+          </select>
           
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-600">Facility:</label>
-            <select
-              value={filterFacility}
-              onChange={(e) => setFilterFacility(e.target.value)}
-              className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="ALL">All</option>
-              {facilities.map(facility => (
-                <option key={facility} value={facility}>{facility}</option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={filterFacility}
+            onChange={(e) => setFilterFacility(e.target.value)}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+          >
+            <option value="ALL">All Facilities</option>
+            {facilities.map(facility => (
+              <option key={facility} value={facility}>{facility}</option>
+            ))}
+          </select>
           
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-600">Status:</label>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="ALL">All</option>
-              <option value="ACTIVE">Active Only</option>
-              <option value="INACTIVE">Inactive Only</option>
-            </select>
-          </div>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+          >
+            <option value="ALL">All Status</option>
+            <option value="ACTIVE">Active</option>
+            <option value="INACTIVE">Inactive</option>
+          </select>
           
           <span className="text-sm text-gray-500 ml-auto">
-            Showing {filteredMeters.length} of {metersWithCoverage.length} meters
+            {filteredMeters.length}/{metersWithCoverage.length} meters
           </span>
         </div>
       </div>
       
-      {/* Table */}
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className="bg-gray-50 border-b sticky top-0 z-50">
-            <tr>
-              <th className="px-4 py-4 text-left text-sm font-semibold text-gray-600 uppercase tracking-wider w-48 align-middle">
-                Facility
-              </th>
-              <th className="px-4 py-4 text-left text-sm font-semibold text-gray-600 uppercase tracking-wider w-32 align-middle">
-                Supplier
-              </th>
-              <th className="px-4 py-4 text-left text-sm font-semibold text-gray-600 uppercase tracking-wider w-24 align-middle">
-                Type
-              </th>
-              <th className="px-4 py-4 text-left text-sm font-semibold text-gray-600 uppercase tracking-wider w-32 align-middle">
-                Meter ID
-              </th>
-              <th className="px-4 py-4 text-center text-sm font-semibold text-gray-600 uppercase tracking-wider w-24 align-middle">
-                Status
-              </th>
-              {monthLabels.map(month => {
+      {/* Scrollable container with sticky header */}
+      <div className="max-h-[600px] overflow-y-auto">
+        {/* Calendar-style Grid Header */}
+        <div className="border-b border-gray-300 bg-gray-100 sticky top-0 z-20">
+          <div className="flex">
+            {/* Meter info column headers */}
+            <div className="w-[150px] min-w-[150px] px-3 py-3 border-r border-gray-300">
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Facility</span>
+            </div>
+            <div className="w-[130px] min-w-[130px] px-3 py-3 border-r border-gray-300">
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Supplier</span>
+            </div>
+            <div className="w-[110px] min-w-[110px] px-3 py-3 border-r border-gray-300">
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Type</span>
+            </div>
+            <div className="w-[140px] min-w-[140px] px-3 py-3 border-r border-gray-300">
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Meter ID</span>
+            </div>
+            <div className="w-[80px] min-w-[80px] px-2 py-3 border-r border-gray-300 text-center">
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Status</span>
+            </div>
+            
+            {/* Month headers - calendar style */}
+            <div className="flex-1 flex">
+              {monthLabels.map((month) => {
                 const parts = month.split(' ');
-                const mon = parts[0] || month;
+                const mon = parts[0]?.toUpperCase() || month;
                 const yr = parts[1] || '';
-                
-                // Check if this is the current month-year (format: "MMM yy" e.g. "Jan 26")
-                const now = new Date();
-                const currentMonthYearLabel = format(now, 'MMM yy');
                 const isCurrentMonth = month === currentMonthYearLabel;
                 
                 return (
-                  <th key={month} className="px-3 py-4 text-center text-sm font-medium text-gray-500 uppercase tracking-wider w-36 whitespace-nowrap">
-                    <div className={`relative inline-block px-3 py-2 rounded-lg ${isCurrentMonth ? 'bg-blue-100' : ''}`}>
-                      {isCurrentMonth && (
-                        <div className="absolute -top-4 left-1/2 -translate-x-1/2 text-[10px] text-blue-600 font-medium">Current</div>
-                      )}
-                      <div className="text-base font-semibold leading-5">{mon}</div>
-                      <div className="text-sm text-gray-400 mt-1">{yr}</div>
+                  <div 
+                    key={month} 
+                    className={`flex-1 min-w-[60px] py-2 text-center border-r border-gray-200 last:border-r-0 ${isCurrentMonth ? 'bg-orange-100' : ''}`}
+                  >
+                    <div className={`text-sm font-bold ${isCurrentMonth ? 'text-orange-700' : 'text-gray-700'}`}>
+                      {mon}
                     </div>
-                  </th>
+                    <div className={`text-xs ${isCurrentMonth ? 'text-orange-600' : 'text-gray-500'}`}>
+                      {yr}
+                    </div>
+                  </div>
                 );
               })}
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {filteredMeters.length === 0 ? (
-              <tr>
-                <td colSpan={5 + monthLabels.length} className="px-4 py-8 text-center text-gray-500">
-                  No meters match your filters.
-                </td>
-              </tr>
-            ) : filteredMeters.map(({ meter, coverage }) => {
-              const status = getMeterServiceStatus(meter);
-              return (
-              <tr key={meter.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-sm text-gray-900 align-middle">
+            </div>
+          </div>
+        </div>
+        
+        {/* Calendar-style Grid Body */}
+        <div>
+        {filteredMeters.length === 0 ? (
+          <div className="px-4 py-8 text-center text-gray-500 text-sm border-b border-gray-200">
+            No meters match your filters.
+          </div>
+        ) : filteredMeters.map(({ meter, coverage }) => {
+          const status = getMeterServiceStatus(meter);
+          return (
+            <div key={meter.id} className="flex border-b border-gray-200 last:border-b-0 hover:bg-gray-50/50">
+              {/* Meter info columns */}
+              <div className="w-[150px] min-w-[150px] px-3 py-3 border-r border-gray-200">
+                <div className="font-semibold text-gray-900 text-sm" title={meter.facility?.name}>
                   {meter.facility?.name || 'Unknown'}
-                </td>
-                <td className="px-4 py-3 text-sm text-gray-700 align-middle">
-                  {meter.supplier?.name || 'No Supplier'}
-                </td>
-                <td className="px-4 py-3 text-sm text-gray-700 align-middle">
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                    {meter.utility_category?.name || 'N/A'}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-sm text-gray-600 font-mono align-middle">
-                  {meter.lookup1 ? (meter.lookup1.length > 20 ? `${meter.lookup1.substring(0,20)}...` : meter.lookup1) : '(no id)'}
-                  {meter.identifier_type ? <div className="text-xs text-gray-400 mt-1">{meter.identifier_type}</div> : null}
-                </td>
-                <td className="px-4 py-3 text-sm text-center align-middle">
-                  <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
-                    status.isActive 
-                      ? 'bg-green-100 text-green-700' 
-                      : 'bg-red-100 text-red-700'
-                  }`}>
-                    {status.isActive ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
+                </div>
+              </div>
+              <div className="w-[130px] min-w-[130px] px-3 py-3 border-r border-gray-200">
+                <div className="text-sm text-gray-700" title={meter.supplier?.name}>
+                  {meter.supplier?.name || '—'}
+                </div>
+              </div>
+              <div className="w-[110px] min-w-[110px] px-3 py-3 border-r border-gray-200">
+                <div className="text-sm text-gray-600">
+                  {meter.utility_category?.name || 'N/A'}
+                </div>
+              </div>
+              <div className="w-[140px] min-w-[140px] px-3 py-3 border-r border-gray-200">
+                <div className="text-sm text-gray-500 font-mono" title={meter.lookup1}>
+                  {meter.lookup1 || '—'}
+                </div>
+              </div>
+              <div className="w-[80px] min-w-[80px] px-2 py-3 border-r border-gray-200 flex items-center justify-center">
+                <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                  status.isActive 
+                    ? 'bg-green-100 text-green-700' 
+                    : 'bg-gray-100 text-gray-500'
+                }`}>
+                  {status.isActive ? 'Active' : 'Inactive'}
+                </span>
+              </div>
+              
+              {/* Month cells - calendar event style */}
+              <div className="flex-1 flex items-center py-1.5">
                 {coverage.map((monthlyCoverage, idx) => {
                   const period_start_date = format(monthlyCoverage.monthDate, 'yyyy-MM-dd');
                   const period_end_date = format(endOfMonth(monthlyCoverage.monthDate), 'yyyy-MM-dd');
                   
-                  // Check if this specific month is within the meter's service period
                   const monthStart = period_start_date;
                   const monthEnd = period_end_date;
                   
-                  // Meter wasn't in service yet for this month
                   const beforeServiceStart = meter.in_service_start_date && monthEnd < meter.in_service_start_date;
-                  // Meter was already out of service for this month
-                  const afterServiceEnd = meter.in_service_end_date && monthStart > meter.in_service_end_date;
+                  const afterServiceEnd = meter.in_service_end_date && monthStart >= meter.in_service_end_date;
                   
                   const isMonthDisabled = beforeServiceStart || afterServiceEnd;
+                  const isCurrentMonth = monthlyCoverage.month === currentMonthYearLabel;
                   
                   return (
-                    <td key={idx} className="px-3 py-3 align-middle">
+                    <div 
+                      key={idx} 
+                      className={`flex-1 min-w-[60px] px-1 ${isCurrentMonth ? 'bg-orange-50/50' : ''}`}
+                    >
                       <ProgressBarCell
                         coverage={monthlyCoverage}
                         disabled={isMonthDisabled}
@@ -245,39 +242,39 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
                           invoices: monthlyCoverage.invoices
                         })}
                       />
-                    </td>
+                    </div>
                   );
                 })}
-              </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              </div>
+            </div>
+          );
+        })}
+        </div>
       </div>
       
       {/* Legend */}
-      <div className="p-4 bg-gray-50 border-t">
-        <div className="flex items-center gap-6 text-sm">
-          <span className="font-medium text-gray-700">Coverage Legend:</span>
+      <div className="px-4 py-3 bg-gray-100 border-t border-gray-300">
+        <div className="flex items-center gap-5 text-sm">
+          <span className="font-semibold text-gray-600">Legend:</span>
           <div className="flex items-center gap-2">
-            <div className="w-5 h-5 bg-green-500 rounded"></div>
-            <span className="text-gray-600">100%</span>
+            <div className="w-8 h-5 bg-green-500 border border-green-600 rounded"></div>
+            <span className="text-gray-700">100%</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-5 h-5 bg-yellow-500 rounded"></div>
-            <span className="text-gray-600">85-99%</span>
+            <div className="w-8 h-5 bg-yellow-400 border border-yellow-500 rounded"></div>
+            <span className="text-gray-700">85-99%</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-5 h-5 bg-orange-500 rounded"></div>
-            <span className="text-gray-600">50-84%</span>
+            <div className="w-8 h-5 bg-orange-500 border border-orange-600 rounded"></div>
+            <span className="text-gray-700">50-84%</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-5 h-5 bg-red-500 rounded"></div>
-            <span className="text-gray-600">1-49%</span>
+            <div className="w-8 h-5 bg-red-500 border border-red-600 rounded"></div>
+            <span className="text-gray-700">1-49%</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-5 h-5 bg-gray-400 rounded"></div>
-            <span className="text-gray-600">0%</span>
+            <div className="w-8 h-5 bg-gray-200 border border-gray-300 rounded"></div>
+            <span className="text-gray-700">0%</span>
           </div>
         </div>
       </div>

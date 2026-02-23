@@ -56,7 +56,7 @@ export default function CoverageSummary({ metersWithCoverage }: CoverageSummaryP
         const monthEnd = format(new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0), 'yyyy-MM-dd');
         
         const beforeServiceStart = meter.in_service_start_date && monthEnd < meter.in_service_start_date;
-        const afterServiceEnd = meter.in_service_end_date && monthStart > meter.in_service_end_date;
+        const afterServiceEnd = meter.in_service_end_date && monthStart >= meter.in_service_end_date;
         
         if (beforeServiceStart || afterServiceEnd) {
           return;

@@ -31,10 +31,10 @@ export async function GET(
     const facilityIds = (facilities || []).map((f: any) => f.id);
 
     if (facilityIds.length === 0) {
-      // No facilities -> fallback to current FY range
+      // No facilities -> fallback to current FY range (include previous year)
       const now = new Date();
       const currentFY = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
-      return NextResponse.json({ fiscalYears: [currentFY - 1, currentFY, currentFY + 1] });
+      return NextResponse.json({ fiscalYears: [currentFY - 2, currentFY - 1, currentFY, currentFY + 1] });
     }
 
     // Get meters for these facilities
@@ -50,7 +50,7 @@ export async function GET(
     if (meterIds.length === 0) {
       const now = new Date();
       const currentFY = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
-      return NextResponse.json({ fiscalYears: [currentFY - 1, currentFY, currentFY + 1] });
+      return NextResponse.json({ fiscalYears: [currentFY - 2, currentFY - 1, currentFY, currentFY + 1] });
     }
 
     // Get earliest period_start_date
@@ -84,7 +84,7 @@ export async function GET(
 
     const minFY = Math.min(
       earliestFY ?? currentFY,
-      currentFY
+      currentFY - 1  // Always include at least one year back
     );
     const maxFY = Math.max(
       latestFY ?? currentFY,
