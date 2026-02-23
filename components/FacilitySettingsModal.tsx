@@ -226,8 +226,7 @@ export default function FacilitySettingsModal({
     { value: 'ACCOUNT_NUMBER', label: 'Account Number' },
     { value: 'METER_NUMBER', label: 'Meter Number' },
     { value: 'REGISTRATION_PLATE', label: 'Registration Plate' },
-    { value: 'CARD_NUMBER', label: 'Card Number' },
-    { value: 'FACILITY_LEVEL', label: 'Facility Level' }
+    { value: 'CARD_NUMBER', label: 'Card Number' }
   ];
 
   const startEditingMeter = (meter: Meter) => {

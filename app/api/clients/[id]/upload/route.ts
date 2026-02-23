@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { parseDateRange } from '@/lib/coverage';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
-import type { CSVRow, UploadResult, IdentifierType } from '@/types';
+import type { CSVRow, MeterSetupRow, UploadResult, IdentifierType } from '@/types';
 
 // POST /api/clients/[id]/upload - Process CSV/XLSX upload
 export async function POST(
@@ -25,7 +25,7 @@ export async function POST(
     }
     
     const fileName = file.name.toLowerCase();
-    let rows: CSVRow[] = [];
+    let rows: Record<string, string>[] = [];
     
     // Handle XLSX files
     if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
@@ -33,12 +33,12 @@ export async function POST(
       const workbook = XLSX.read(buffer, { type: 'array' });
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
-      rows = XLSX.utils.sheet_to_json(worksheet, { raw: false }) as CSVRow[];
+      rows = XLSX.utils.sheet_to_json(worksheet, { raw: false });
     } 
     // Handle CSV files
     else if (fileName.endsWith('.csv')) {
       const text = await file.text();
-      const parseResult = Papa.parse<CSVRow>(text, {
+      const parseResult = Papa.parse<Record<string, string>>(text, {
         header: true,
         skipEmptyLines: true,
         transformHeader: (header) => header.trim()
@@ -59,16 +59,32 @@ export async function POST(
       );
     }
     
+    if (rows.length === 0) {
+      return NextResponse.json(
+        { error: 'File is empty or has no valid data rows' },
+        { status: 400 }
+      );
+    }
+    
+    // Detect format based on column headers
+    const firstRow = rows[0];
+    const headers = Object.keys(firstRow);
+    const isMeterSetupFormat = headers.some(h => h === 'Utility' || h === 'MonthsWithData');
+    
     const errors: string[] = [];
     let imported = 0;
     
-    // Process each row
+    // Process each row based on detected format
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const rowNum = i + 2; // +2 for header row and 1-indexed
       
       try {
-        await processRow(params.id, row, rowNum);
+        if (isMeterSetupFormat) {
+          await processMeterSetupRow(params.id, row as unknown as MeterSetupRow, rowNum);
+        } else {
+          await processRow(params.id, row as unknown as CSVRow, rowNum);
+        }
         imported++;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
@@ -165,27 +181,25 @@ async function processRow(clientId: string, row: CSVRow, rowNum: number): Promis
     supplierId = supplier.id;
   }
   
-  // 5. Find utility category
-  const categoryMap: Record<string, string> = {
-    'ELECTRICITY': 'ELECTRICITY',
-    'GAS': 'GAS',
-    'FUEL': 'FUEL',
-    'OIL': 'OIL'
-  };
+  // 5. Find or create utility category
+  const categoryName = mapUtilityToCategory(row.Category);
   
-  const categoryName = categoryMap[row.Category.toUpperCase()];
-  if (!categoryName) {
-    throw new Error(`Invalid category: ${row.Category}`);
-  }
-  
-  const { data: category } = await supabase
+  let { data: category } = await supabase
     .from('utility_categories')
     .select('id')
     .eq('name', categoryName)
     .single();
   
   if (!category) {
-    throw new Error(`Utility category not found: ${categoryName}`);
+    // Create the category if it doesn't exist
+    const { data: newCategory, error } = await supabase
+      .from('utility_categories')
+      .insert([{ name: categoryName }])
+      .select('id')
+      .single();
+    
+    if (error) throw new Error(`Failed to create utility category: ${error.message}`);
+    category = newCategory;
   }
   
   // 6. Determine identifier type and lookup values
@@ -271,5 +285,243 @@ async function processRow(clientId: string, row: CSVRow, rowNum: number): Promis
   
   if (invoiceError) {
     throw new Error(`Failed to create invoice: ${invoiceError.message}`);
+  }
+}
+
+// Parse month range like "Jul 2025 - Nov 2025" or "Jul 2025 - Jun 2026"
+function parseMonthRange(monthsWithData: string): { startDate: string; endDate: string } | null {
+  if (!monthsWithData || !monthsWithData.trim()) return null;
+  
+  const parts = monthsWithData.split('-').map(p => p.trim());
+  if (parts.length !== 2) return null;
+  
+  const monthMap: Record<string, number> = {
+    'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+    'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+  };
+  
+  const parseMonthYear = (str: string): { month: number; year: number } | null => {
+    const match = str.match(/^(\w{3})\s+(\d{4})$/);
+    if (!match) return null;
+    const month = monthMap[match[1]];
+    if (month === undefined) return null;
+    return { month, year: parseInt(match[2]) };
+  };
+  
+  const start = parseMonthYear(parts[0]);
+  const end = parseMonthYear(parts[1]);
+  
+  if (!start || !end) return null;
+  
+  // Start date is 1st of start month
+  const startDate = `${start.year}-${String(start.month + 1).padStart(2, '0')}-01`;
+  
+  // End date is last day of end month
+  const lastDay = new Date(end.year, end.month + 1, 0).getDate();
+  const endDate = `${end.year}-${String(end.month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  
+  return { startDate, endDate };
+}
+
+// Generate monthly periods between two dates
+function generateMonthlyPeriods(startDate: string, endDate: string): Array<{ start: string; end: string }> {
+  const periods: Array<{ start: string; end: string }> = [];
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  
+  let current = new Date(start.getFullYear(), start.getMonth(), 1);
+  
+  while (current <= end) {
+    const monthStart = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-01`;
+    const lastDay = new Date(current.getFullYear(), current.getMonth() + 1, 0).getDate();
+    const monthEnd = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    
+    periods.push({ start: monthStart, end: monthEnd });
+    
+    // Move to next month
+    current = new Date(current.getFullYear(), current.getMonth() + 1, 1);
+  }
+  
+  return periods;
+}
+
+// Normalize utility names - only map exact matches for base categories
+function mapUtilityToCategory(utility: string): string {
+  const trimmed = utility.trim();
+  const upper = trimmed.toUpperCase();
+  
+  // Only normalize case for the 4 base categories
+  if (upper === 'ELECTRICITY') return 'ELECTRICITY';
+  if (upper === 'GAS') return 'GAS';
+  if (upper === 'FUEL') return 'FUEL';
+  if (upper === 'OIL') return 'OIL';
+  
+  // Keep all other utilities as their own category (preserve original casing)
+  return trimmed;
+}
+
+// Process meter setup format row
+async function processMeterSetupRow(clientId: string, row: MeterSetupRow, rowNum: number): Promise<void> {
+  // 1. Validate required fields
+  if (!row.Facility?.trim()) {
+    throw new Error('Missing Facility name');
+  }
+  if (!row.Utility?.trim()) {
+    throw new Error('Missing Utility type');
+  }
+  
+  const facilityName = row.Facility.trim();
+  const utilityName = row.Utility.trim();
+  const supplierName = row.Supplier?.trim() || null;
+  const address = row.Address?.trim() || null;
+  
+  // 2. Parse month range if provided
+  let dateRange: { startDate: string; endDate: string } | null = null;
+  if (row.MonthsWithData?.trim()) {
+    dateRange = parseMonthRange(row.MonthsWithData);
+    if (!dateRange) {
+      throw new Error(`Invalid MonthsWithData format: ${row.MonthsWithData}`);
+    }
+  }
+  
+  // 3. Find or create facility
+  let { data: facility } = await supabase
+    .from('facilities')
+    .select('id')
+    .eq('client_id', clientId)
+    .eq('name', facilityName)
+    .single();
+  
+  if (!facility) {
+    const { data: newFacility, error } = await supabase
+      .from('facilities')
+      .insert([{
+        client_id: clientId,
+        name: facilityName,
+        address: address
+      }])
+      .select('id')
+      .single();
+    
+    if (error) throw new Error(`Failed to create facility: ${error.message}`);
+    facility = newFacility;
+  } else if (address) {
+    // Update address if facility exists but didn't have one
+    await supabase
+      .from('facilities')
+      .update({ address })
+      .eq('id', facility.id)
+      .is('address', null);
+  }
+  
+  // 4. Find or create supplier (if provided)
+  let supplierId: string | null = null;
+  if (supplierName) {
+    let { data: supplier } = await supabase
+      .from('suppliers')
+      .select('id')
+      .eq('name', supplierName)
+      .single();
+    
+    if (!supplier) {
+      const { data: newSupplier, error } = await supabase
+        .from('suppliers')
+        .insert([{ name: supplierName }])
+        .select('id')
+        .single();
+      
+      if (error) throw new Error(`Failed to create supplier: ${error.message}`);
+      supplier = newSupplier;
+    }
+    
+    supplierId = supplier.id;
+  }
+  
+  // 5. Map utility to category and find/create category
+  const categoryName = mapUtilityToCategory(utilityName);
+  
+  let { data: category } = await supabase
+    .from('utility_categories')
+    .select('id')
+    .eq('name', categoryName)
+    .single();
+  
+  if (!category) {
+    // Create the category if it doesn't exist
+    const { data: newCategory, error } = await supabase
+      .from('utility_categories')
+      .insert([{ name: categoryName }])
+      .select('id')
+      .single();
+    
+    if (error) throw new Error(`Failed to create utility category: ${error.message}`);
+    category = newCategory;
+  }
+  
+  // 6. Find or create meter (use ACCOUNT_NUMBER with utility + supplier as unique identifier)
+  // Build query - match by facility, category, utility name, AND supplier name
+  let meterQuery = supabase
+    .from('meters')
+    .select('id')
+    .eq('facility_id', facility.id)
+    .eq('utility_category_id', category.id)
+    .eq('lookup1', utilityName);
+  
+  // Also match by supplier (lookup2) to allow same utility with different suppliers
+  if (supplierName) {
+    meterQuery = meterQuery.eq('lookup2', supplierName);
+  } else {
+    meterQuery = meterQuery.is('lookup2', null);
+  }
+  
+  let { data: meter } = await meterQuery.single();
+  
+  if (!meter) {
+    const { data: newMeter, error } = await supabase
+      .from('meters')
+      .insert([{
+        facility_id: facility.id,
+        supplier_id: supplierId,
+        utility_category_id: category.id,
+        identifier_type: 'ACCOUNT_NUMBER' as IdentifierType,
+        lookup1: utilityName,
+        lookup2: supplierName
+      }])
+      .select('id')
+      .single();
+    
+    if (error) throw new Error(`Failed to create meter: ${error.message}`);
+    meter = newMeter;
+  }
+  
+  // 7. Create monthly invoices if date range is provided
+  if (dateRange) {
+    const periods = generateMonthlyPeriods(dateRange.startDate, dateRange.endDate);
+    
+    for (const period of periods) {
+      // Check if invoice already exists for this period
+      const { data: existingInvoice } = await supabase
+        .from('actual_invoices')
+        .select('id')
+        .eq('meter_id', meter.id)
+        .eq('period_start_date', period.start)
+        .eq('period_end_date', period.end)
+        .single();
+      
+      if (!existingInvoice) {
+        const { error: invoiceError } = await supabase
+          .from('actual_invoices')
+          .insert([{
+            meter_id: meter.id,
+            period_start_date: period.start,
+            period_end_date: period.end,
+            status: 'IMPORTED'
+          }]);
+        
+        if (invoiceError) {
+          console.error(`Failed to create invoice for period ${period.start} - ${period.end}:`, invoiceError);
+        }
+      }
+    }
   }
 }

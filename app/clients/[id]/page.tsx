@@ -10,6 +10,7 @@ import InvoiceForm, { InvoiceFormData } from '@/components/InvoiceForm';
 import FacilityForm from '@/components/FacilityForm';
 import MeterForm, { MeterFormData } from '@/components/MeterForm';
 import FileUpload from '@/components/FileUpload';
+import ConfirmModal from '@/components/ConfirmModal';
 import type { Client, MeterWithCoverage, ActualInvoice, UploadResult } from '@/types';
 
 interface Facility {
@@ -50,6 +51,11 @@ export default function ClientDetailPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadProcessing, setUploadProcessing] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  
+  // Invoice deletion state
+  const [deletingInvoice, setDeletingInvoice] = useState<ActualInvoice | null>(null);
+  const [deletingInvoiceLoading, setDeletingInvoiceLoading] = useState(false);
+  const [deletingInvoiceError, setDeletingInvoiceError] = useState<string | null>(null);
   
   useEffect(() => {
     let cancelled = false;
@@ -401,9 +407,9 @@ export default function ClientDetailPage() {
       {/* Invoice List Modal */}
       {invoiceListModalOpen && invoiceListForPeriod && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl p-6 max-w-2xl w-full shadow-xl">
+          <div className="bg-white rounded-xl p-6 max-w-2xl w-full shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-xl font-semibold text-gray-900">Invoices for Period</h2>
+              <h2 className="text-xl font-semibold text-gray-900">Invoices for Period ({invoiceListForPeriod.length})</h2>
               <button 
                 onClick={() => { setInvoiceListModalOpen(false); setInvoiceListForPeriod(null); }} 
                 className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
@@ -415,30 +421,65 @@ export default function ClientDetailPage() {
             </div>
             <div className="space-y-3">
               {invoiceListForPeriod.map(inv => (
-                <div key={inv.id} className="border border-gray-100 rounded-lg p-4 flex items-center justify-between hover:border-gray-200 transition-colors">
-                  <div>
-                    <div className="font-medium text-gray-900">{inv.invoice_number || 'No invoice number'}</div>
-                    <div className="text-sm text-gray-500 mt-1">{inv.period_start_date} → {inv.period_end_date} • ${inv.amount ?? '—'}</div>
-                    <div className="text-sm text-gray-400 mt-0.5">Meter: {inv.meter?.lookup1 || String(inv.meter_id)}</div>
+                <div key={inv.id} className="border border-gray-100 rounded-lg p-4 hover:border-gray-200 transition-colors">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="font-medium text-gray-900">{inv.invoice_number || 'No invoice number'}</div>
+                      <div className="text-sm text-gray-500 mt-1">{inv.period_start_date} → {inv.period_end_date}</div>
+                      <div className="text-sm text-gray-400 mt-0.5">
+                        Meter: {inv.meter?.lookup1 || String(inv.meter_id)}
+                        {inv.amount != null && ` • $${inv.amount.toLocaleString()}`}
+                        {inv.consumption != null && ` • ${inv.consumption.toLocaleString()} units`}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 ml-4">
+                      <button
+                        onClick={() => {
+                          setInvoiceInitialData({ 
+                            id: inv.id,
+                            meter_id: String(inv.meter_id),
+                            invoice_number: inv.invoice_number || '',
+                            invoice_date: inv.invoice_date || '',
+                            period_start_date: inv.period_start_date,
+                            period_end_date: inv.period_end_date,
+                            consumption: inv.consumption,
+                            amount: inv.amount,
+                            framework: inv.framework || '',
+                            version: inv.version || '',
+                            input_type: inv.input_type || '',
+                            emissions_factor: inv.emissions_factor,
+                            customer: inv.customer || ''
+                          });
+                          setInvoiceInitialFacilityId(inv.meter?.facility_id ? String(inv.meter.facility_id) : '');
+                          setInvoiceListModalOpen(false);
+                          setInvoiceListForPeriod(null);
+                          setInvoiceModalOpen(true);
+                        }}
+                        className="px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => {
+                          setDeletingInvoice(inv);
+                          setDeletingInvoiceError(null);
+                        }}
+                        className="px-3 py-1.5 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => {
-                      setInvoiceInitialData({ ...inv });
-                      setInvoiceInitialFacilityId(inv.meter?.facility_id ? String(inv.meter.facility_id) : '');
-                      setInvoiceListModalOpen(false);
-                      setInvoiceListForPeriod(null);
-                      setInvoiceModalOpen(true);
-                    }}
-                    className="px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    Edit
-                  </button>
                 </div>
               ))}
               <button
                 onClick={() => {
                   const first = invoiceListForPeriod[0];
-                  setInvoiceInitialData({ meter_id: String(first.meter_id), period_start_date: first.period_start_date, period_end_date: first.period_end_date });
+                  setInvoiceInitialData({ 
+                    meter_id: String(first.meter_id), 
+                    period_start_date: first.period_start_date, 
+                    period_end_date: first.period_end_date 
+                  });
                   setInvoiceInitialFacilityId(first.meter?.facility_id ? String(first.meter.facility_id) : '');
                   setInvoiceListModalOpen(false);
                   setInvoiceListForPeriod(null);
@@ -646,13 +687,25 @@ export default function ClientDetailPage() {
             
             {/* Instructions */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-              <h3 className="font-semibold text-blue-900 mb-2 text-sm">File Format Requirements</h3>
-              <ul className="text-xs text-blue-800 space-y-1 list-disc list-inside">
-                <li>CSV or XLSX file format</li>
-                <li>Must include: Company, Facility, Category, Provider, Date Range</li>
-                <li>Date Range: DD/MM/YYYY-DD/MM/YYYY</li>
-                <li>Category: ELECTRICITY, GAS, FUEL, or OIL</li>
-              </ul>
+              <h3 className="font-semibold text-blue-900 mb-2 text-sm">Supported File Formats</h3>
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs font-medium text-blue-900 mb-1">Format 1: Meter Setup (Quick Import)</p>
+                  <ul className="text-xs text-blue-800 space-y-0.5 list-disc list-inside ml-2">
+                    <li>Columns: Facility, Utility, Supplier, Address, MonthsWithData</li>
+                    <li>MonthsWithData: "Jul 2025 - Nov 2025" format</li>
+                    <li>Auto-creates facilities, meters, and monthly records</li>
+                  </ul>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-blue-900 mb-1">Format 2: Detailed Invoices</p>
+                  <ul className="text-xs text-blue-800 space-y-0.5 list-disc list-inside ml-2">
+                    <li>Columns: Company, Facility, Category, Provider, Date Range, etc.</li>
+                    <li>Date Range: DD/MM/YYYY-DD/MM/YYYY</li>
+                    <li>Includes consumption, amount, and invoice details</li>
+                  </ul>
+                </div>
+              </div>
             </div>
             
             <FileUpload 
@@ -755,6 +808,61 @@ export default function ClientDetailPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Delete Invoice Confirmation Modal */}
+      {deletingInvoice && (
+        <ConfirmModal
+          title="Delete Invoice"
+          message={
+            <>
+              Are you sure you want to delete this invoice?
+              {deletingInvoice.invoice_number && (
+                <span className="font-medium"> ({deletingInvoice.invoice_number})</span>
+              )}
+            </>
+          }
+          subMessage={`Period: ${deletingInvoice.period_start_date} → ${deletingInvoice.period_end_date}`}
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          loading={deletingInvoiceLoading}
+          error={deletingInvoiceError || undefined}
+          onConfirm={async () => {
+            setDeletingInvoiceLoading(true);
+            setDeletingInvoiceError(null);
+            try {
+              const res = await fetch(`/api/clients/${clientId}/invoices/${deletingInvoice.id}`, {
+                method: 'DELETE'
+              });
+              if (!res.ok) {
+                const err = await res.json();
+                setDeletingInvoiceError(err.error || 'Failed to delete invoice');
+                setDeletingInvoiceLoading(false);
+                return;
+              }
+              // Remove from list
+              if (invoiceListForPeriod) {
+                const updated = invoiceListForPeriod.filter(i => i.id !== deletingInvoice.id);
+                if (updated.length === 0) {
+                  setInvoiceListModalOpen(false);
+                  setInvoiceListForPeriod(null);
+                } else {
+                  setInvoiceListForPeriod(updated);
+                }
+              }
+              setDeletingInvoice(null);
+              setDeletingInvoiceLoading(false);
+              fetchCoverage();
+            } catch (err) {
+              setDeletingInvoiceError('Failed to delete invoice');
+              setDeletingInvoiceLoading(false);
+            }
+          }}
+          onCancel={() => {
+            setDeletingInvoice(null);
+            setDeletingInvoiceError(null);
+          }}
+        />
       )}
     </div>
   );

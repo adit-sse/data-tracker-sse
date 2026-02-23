@@ -171,8 +171,7 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
     { value: 'ACCOUNT_NUMBER', label: 'Account Number' },
     { value: 'METER_NUMBER', label: 'Meter Number' },
     { value: 'REGISTRATION_PLATE', label: 'Registration Plate' },
-    { value: 'CARD_NUMBER', label: 'Card Number' },
-    { value: 'FACILITY_LEVEL', label: 'Facility Level' }
+    { value: 'CARD_NUMBER', label: 'Card Number' }
   ];
   
   return (

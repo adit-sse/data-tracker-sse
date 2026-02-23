@@ -17,7 +17,7 @@ export interface Facility {
 
 export interface UtilityCategory {
   id: string;
-  name: 'ELECTRICITY' | 'GAS' | 'FUEL' | 'OIL';
+  name: string;
 }
 
 export interface Supplier {
@@ -31,8 +31,7 @@ export type IdentifierType =
   | 'ACCOUNT_NUMBER' 
   | 'METER_NUMBER' 
   | 'REGISTRATION_PLATE' 
-  | 'CARD_NUMBER' 
-  | 'FACILITY_LEVEL';
+  | 'CARD_NUMBER';
 
 export interface Meter {
   id: string;
@@ -105,7 +104,7 @@ export interface MeterWithCoverage {
   coverage: MonthlyCoverage[];
 }
 
-// CSV Upload types
+// CSV Upload types - Original invoice format
 export interface CSVRow {
   ID?: string;
   Framework?: string;
@@ -130,6 +129,16 @@ export interface CSVRow {
   'Output (tCO2-e)'?: string;
   'Evidence Link'?: string;
   'File ID'?: string;
+}
+
+// CSV Upload types - Simplified meter setup format
+export interface MeterSetupRow {
+  Facility?: string;
+  Utility?: string;
+  Supplier?: string;
+  Address?: string;
+  MonthsWithData?: string;
+  DataPointCount?: string;
 }
 
 export interface UploadResult {

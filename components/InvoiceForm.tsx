@@ -171,10 +171,14 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel, initialData,
     }
   }, [selectedFacilityId, allMeters, formData.meter_id]);
 
-  // Auto-update period_end_date when period_start_date changes.
+  // Auto-update period_end_date when period_start_date changes (only for new invoices).
   // - If start is the 1st of the month -> set end to last day of that same month.
   // - Otherwise -> default to the same day one calendar month later (clamped to month's last day).
+  // Skip this logic when editing an existing invoice to preserve the original dates.
   useEffect(() => {
+    // Don't auto-update end date when editing an existing invoice
+    if (initialData?.id) return;
+    
     const startStr = formData.period_start_date;
     if (!startStr) return;
     const start = new Date(startStr);
@@ -203,7 +207,7 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel, initialData,
       setFormData(prev => ({ ...prev, period_end_date: formattedEnd } as InvoiceFormData));
     }
   // Intentionally only watch the start date string
-  }, [formData.period_start_date]);
+  }, [formData.period_start_date, initialData?.id]);
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -228,22 +232,24 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel, initialData,
     try {
       await onSubmit(formData);
       
-      // Reset form with current month as default
-      setFormData({
-        meter_id: '',
-        invoice_number: '',
-        invoice_date: '',
-        period_start_date: getCurrentMonthStart(),
-        period_end_date: getCurrentMonthEnd(),
-        consumption: undefined,
-        amount: undefined,
-        framework: '',
-        version: '',
-        input_type: '',
-        emissions_factor: undefined,
-        customer: ''
-      });
-      setSelectedFacilityId('');
+      // Only reset form when creating new invoice, not when editing
+      if (!initialData?.id) {
+        setFormData({
+          meter_id: '',
+          invoice_number: '',
+          invoice_date: '',
+          period_start_date: getCurrentMonthStart(),
+          period_end_date: getCurrentMonthEnd(),
+          consumption: undefined,
+          amount: undefined,
+          framework: '',
+          version: '',
+          input_type: '',
+          emissions_factor: undefined,
+          customer: ''
+        });
+        setSelectedFacilityId('');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create invoice');
     } finally {
