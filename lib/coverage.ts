@@ -84,7 +84,7 @@ export function calculateMonthlyCoverage(
     });
     
     const daysCovered = coveredDays.size;
-    const percentage = (daysCovered / daysInMonth) * 100;
+    const percentage = Math.round((daysCovered / daysInMonth) * 1000) / 10;
     
     // Calculate gaps
     const gaps = findGaps(Array.from(coveredDays), monthStart, monthEnd);
@@ -202,7 +202,7 @@ export function calculateCurrentMonthCoverageForClient(
     month: format(now, 'MMM yyyy'),
     daysCovered,
     totalPossibleDays,
-    percentage: totalPossibleDays > 0 ? (daysCovered / totalPossibleDays) * 100 : 0
+    percentage: totalPossibleDays > 0 ? Math.round((daysCovered / totalPossibleDays) * 1000) / 10 : 0
   };
 }
 

@@ -83,7 +83,7 @@ export default function ProgressBarCell({ coverage, onClick, disabled }: Progres
             transform: 'translateX(-50%)',
           }}
         >
-          <div className="font-semibold">{daysCovered}/{daysInMonth} days ({percentage}%)</div>
+          <div className="font-semibold">{daysCovered}/{daysInMonth} days ({percentage.toFixed(1)}%)</div>
           {gaps && gaps.length > 0 && (
             <div className="text-gray-300 text-[11px] mt-0.5">{gaps.length} gap{gaps.length > 1 ? 's' : ''}</div>
           )}

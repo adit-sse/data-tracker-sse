@@ -76,7 +76,7 @@ export default function CoverageSummary({ metersWithCoverage }: CoverageSummaryP
     });
 
     const overallCoverage = totalPossibleDays > 0 
-      ? Math.round((totalDaysCovered / totalPossibleDays) * 100) 
+      ? Math.round((totalDaysCovered / totalPossibleDays) * 1000) / 10
       : 0;
 
     return {
