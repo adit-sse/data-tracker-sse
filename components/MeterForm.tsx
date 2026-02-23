@@ -15,6 +15,8 @@ export interface MeterFormData {
   identifier_type: string;
   lookup1: string;
   lookup2?: string;
+  in_service_start_date?: string;
+  in_service_end_date?: string;
 }
 
 interface Facility {
@@ -43,7 +45,9 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
     utility_category_id: '',
     identifier_type: 'NMI',
     lookup1: '',
-    lookup2: ''
+    lookup2: '',
+    in_service_start_date: '',
+    in_service_end_date: ''
   });
   
   const [newSupplierName, setNewSupplierName] = useState('');
@@ -119,7 +123,9 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
         utility_category_id: '',
         identifier_type: 'NMI',
         lookup1: '',
-        lookup2: ''
+        lookup2: '',
+        in_service_start_date: '',
+        in_service_end_date: ''
       });
     } catch (err) {
       console.error('Form submission error:', err);
@@ -281,6 +287,40 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
           placeholder="e.g., WA - SWIS, LPG"
           disabled={isSubmitting}
         />
+      </div>
+
+      <div className="border-t border-gray-200 pt-4 mt-4">
+        <p className="text-sm font-medium text-gray-700 mb-3">Service Period (Optional)</p>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="in_service_start_date" className="block text-sm text-gray-600 mb-1">
+              In Service From
+            </label>
+            <input
+              type="date"
+              id="in_service_start_date"
+              value={formData.in_service_start_date}
+              onChange={(e) => setFormData({ ...formData, in_service_start_date: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isSubmitting}
+            />
+            <p className="text-xs text-gray-400 mt-1">Leave empty if always in service</p>
+          </div>
+          <div>
+            <label htmlFor="in_service_end_date" className="block text-sm text-gray-600 mb-1">
+              Out of Service From
+            </label>
+            <input
+              type="date"
+              id="in_service_end_date"
+              value={formData.in_service_end_date}
+              onChange={(e) => setFormData({ ...formData, in_service_end_date: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isSubmitting}
+            />
+            <p className="text-xs text-gray-400 mt-1">Leave empty if still active</p>
+          </div>
+        </div>
       </div>
       
       <div className="flex gap-3 pt-2">

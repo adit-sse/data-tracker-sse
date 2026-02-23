@@ -10,7 +10,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     console.log('Received meter data:', body);
     
-    const { facility_id, supplier_id, utility_category_id, identifier_type, lookup1, lookup2 } = body;
+    const { facility_id, supplier_id, utility_category_id, identifier_type, lookup1, lookup2, in_service_start_date, in_service_end_date } = body;
     
     // Supplier is now optional
     if (!facility_id || !utility_category_id || !identifier_type || !lookup1) {
@@ -52,7 +52,9 @@ export async function POST(request: Request) {
         utility_category_id,
         identifier_type,
         lookup1: lookup1.trim(),
-        lookup2: lookup2?.trim() || null
+        lookup2: lookup2?.trim() || null,
+        in_service_start_date: in_service_start_date || null,
+        in_service_end_date: in_service_end_date || null
       }])
       .select()
       .single();

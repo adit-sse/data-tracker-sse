@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS meters (
   identifier_type TEXT NOT NULL CHECK (identifier_type IN ('NMI', 'ACCOUNT_NUMBER', 'METER_NUMBER', 'REGISTRATION_PLATE', 'CARD_NUMBER', 'FACILITY_LEVEL')),
   lookup1 TEXT NOT NULL,
   lookup2 TEXT,
+  in_service_start_date DATE,
+  in_service_end_date DATE,
   created_at TIMESTAMP DEFAULT NOW(),
   UNIQUE (facility_id, utility_category_id, identifier_type, lookup1)
 );
@@ -91,6 +93,8 @@ COMMENT ON TABLE actual_invoices IS 'Stores invoice records with period coverage
 COMMENT ON COLUMN meters.identifier_type IS 'Type of meter identifier: NMI, ACCOUNT_NUMBER, METER_NUMBER, REGISTRATION_PLATE, CARD_NUMBER, FACILITY_LEVEL';
 COMMENT ON COLUMN meters.lookup1 IS 'Primary identifier (e.g., NMI number, account number, meter number)';
 COMMENT ON COLUMN meters.lookup2 IS 'Secondary identifier (e.g., "WA - SWIS" for electricity region, "LPG" for gas type)';
+COMMENT ON COLUMN meters.in_service_start_date IS 'Date when meter came into service (null = always in service from beginning)';
+COMMENT ON COLUMN meters.in_service_end_date IS 'Date when meter went out of service (null = still in service)';
 COMMENT ON COLUMN actual_invoices.period_start_date IS 'Start date of invoice coverage period';
 COMMENT ON COLUMN actual_invoices.period_end_date IS 'End date of invoice coverage period (inclusive)';
 
