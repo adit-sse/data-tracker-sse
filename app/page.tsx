@@ -27,7 +27,53 @@ export default function HomePage() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   
   useEffect(() => {
+    let cancelled = false;
+    
+    const fetchClients = async () => {
+      try {
+        const response = await fetch('/api/clients');
+        const data = await response.json();
+
+        if (cancelled) return;
+
+        if (!response.ok) {
+          const message = (data && (data.error || data.message)) || 'Failed to fetch clients';
+          console.error('Error fetching clients:', message);
+          setFetchError(message);
+          setClients([]);
+          return;
+        }
+
+        setFetchError(null);
+
+        let parsedClients: ClientWithCount[] = [];
+        if (Array.isArray(data)) {
+          parsedClients = data;
+        } else if (data && Array.isArray((data as any).clients)) {
+          parsedClients = (data as any).clients;
+        } else if (data && Array.isArray((data as any).data)) {
+          parsedClients = (data as any).data;
+        } else {
+          console.warn('Unexpected /api/clients response, defaulting to []:', data);
+        }
+
+        setClients(parsedClients);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Error fetching clients:', error);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+    
     fetchClients();
+    
+    return () => {
+      cancelled = true;
+    };
   }, []);
   
   const fetchClients = async () => {

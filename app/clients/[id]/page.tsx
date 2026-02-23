@@ -52,10 +52,22 @@ export default function ClientDetailPage() {
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   
   useEffect(() => {
-    fetchClientData();
-    fetchFacilities();
-    fetchCoverage();
-    fetchFiscalYears();
+    let cancelled = false;
+    
+    const loadData = async () => {
+      await Promise.all([
+        fetchClientData(),
+        fetchFacilities(),
+        fetchCoverage(),
+        fetchFiscalYears()
+      ]);
+    };
+    
+    loadData();
+    
+    return () => {
+      cancelled = true;
+    };
   }, [clientId, fiscalYear]);
 
   const fetchFiscalYears = async () => {

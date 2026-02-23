@@ -115,7 +115,47 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel, initialData,
   const [error, setError] = useState('');
   
   useEffect(() => {
+    let cancelled = false;
+    
+    const fetchData = async () => {
+      try {
+        const [facilitiesRes, metersRes] = await Promise.all([
+          fetch(`/api/clients/${clientId}/facilities`),
+          fetch(`/api/clients/${clientId}/meters`)
+        ]);
+        
+        if (cancelled) return;
+        
+        if (!facilitiesRes.ok) {
+          throw new Error('Failed to fetch facilities');
+        }
+        if (!metersRes.ok) {
+          throw new Error('Failed to fetch meters');
+        }
+        
+        const [facilitiesData, metersData] = await Promise.all([
+          facilitiesRes.json(),
+          metersRes.json()
+        ]);
+        
+        if (cancelled) return;
+        
+        setFacilities(facilitiesData);
+        setAllMeters(metersData);
+        setFilteredMeters(metersData);
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Error fetching data:', err);
+          setError(err instanceof Error ? err.message : 'Failed to load facilities and meters');
+        }
+      }
+    };
+    
     fetchData();
+    
+    return () => {
+      cancelled = true;
+    };
   }, [clientId]);
   
   useEffect(() => {
@@ -164,24 +204,6 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel, initialData,
     }
   // Intentionally only watch the start date string
   }, [formData.period_start_date]);
-  
-  const fetchData = async () => {
-    try {
-      // Fetch facilities
-      const facilitiesRes = await fetch(`/api/clients/${clientId}/facilities`);
-      const facilitiesData = await facilitiesRes.json();
-      setFacilities(facilitiesData);
-      
-      // Fetch all meters for this client
-      const metersRes = await fetch(`/api/clients/${clientId}/meters`);
-      const metersData = await metersRes.json();
-      setAllMeters(metersData);
-      setFilteredMeters(metersData);
-    } catch (err) {
-      console.error('Error fetching data:', err);
-      setError('Failed to load facilities and meters');
-    }
-  };
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -56,29 +56,53 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
   const [error, setError] = useState('');
   
   useEffect(() => {
+    let cancelled = false;
+    
+    const fetchData = async () => {
+      try {
+        const [facilitiesRes, categoriesRes, suppliersRes] = await Promise.all([
+          fetch(`/api/clients/${clientId}/facilities`),
+          fetch('/api/utility-categories'),
+          fetch('/api/suppliers')
+        ]);
+        
+        if (cancelled) return;
+        
+        if (!facilitiesRes.ok) {
+          throw new Error('Failed to fetch facilities');
+        }
+        if (!categoriesRes.ok) {
+          throw new Error('Failed to fetch utility categories');
+        }
+        if (!suppliersRes.ok) {
+          throw new Error('Failed to fetch suppliers');
+        }
+        
+        const [facilitiesData, categoriesData, suppliersData] = await Promise.all([
+          facilitiesRes.json(),
+          categoriesRes.json(),
+          suppliersRes.json()
+        ]);
+        
+        if (cancelled) return;
+        
+        setFacilities(facilitiesData);
+        setUtilityCategories(categoriesData);
+        setSuppliers(suppliersData);
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Error fetching data:', err);
+          setError(err instanceof Error ? err.message : 'Failed to load form data');
+        }
+      }
+    };
+    
     fetchData();
+    
+    return () => {
+      cancelled = true;
+    };
   }, [clientId]);
-  
-  const fetchData = async () => {
-    try {
-      // Fetch facilities
-      const facilitiesRes = await fetch(`/api/clients/${clientId}/facilities`);
-      const facilitiesData = await facilitiesRes.json();
-      setFacilities(facilitiesData);
-      
-      // Fetch utility categories
-      const categoriesRes = await fetch('/api/utility-categories');
-      const categoriesData = await categoriesRes.json();
-      setUtilityCategories(categoriesData);
-      
-      // Fetch suppliers
-      const suppliersRes = await fetch('/api/suppliers');
-      const suppliersData = await suppliersRes.json();
-      setSuppliers(suppliersData);
-    } catch (err) {
-      console.error('Error fetching data:', err);
-    }
-  };
   
   const handleCreateSupplier = async () => {
     if (!newSupplierName.trim()) return;
@@ -90,13 +114,18 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
         body: JSON.stringify({ name: newSupplierName.trim() })
       });
       
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to create supplier');
+      }
+      
       const newSupplier = await response.json();
       setSuppliers([...suppliers, newSupplier]);
       setFormData({ ...formData, supplier_id: newSupplier.id });
       setNewSupplierName('');
       setShowNewSupplier(false);
     } catch (err) {
-      setError('Failed to create supplier');
+      setError(err instanceof Error ? err.message : 'Failed to create supplier');
     }
   };
   
@@ -113,7 +142,6 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
     setIsSubmitting(true);
     
     try {
-      console.log('Submitting meter data:', formData);
       await onSubmit(formData);
       
       // Reset form

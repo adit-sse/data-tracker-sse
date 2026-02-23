@@ -48,7 +48,26 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    // First, delete all meters for this facility (which will cascade to invoices)
+    // First, get all meter IDs for this facility
+    const { data: meters, error: fetchMetersError } = await supabase
+      .from('meters')
+      .select('id')
+      .eq('facility_id', params.id);
+    
+    if (fetchMetersError) throw fetchMetersError;
+    
+    // Delete invoices for all meters in this facility
+    if (meters && meters.length > 0) {
+      const meterIds = meters.map(m => m.id);
+      const { error: invoicesError } = await supabase
+        .from('actual_invoices')
+        .delete()
+        .in('meter_id', meterIds);
+      
+      if (invoicesError) throw invoicesError;
+    }
+    
+    // Delete all meters for this facility
     const { error: metersError } = await supabase
       .from('meters')
       .delete()
@@ -56,7 +75,7 @@ export async function DELETE(
     
     if (metersError) throw metersError;
     
-    // Then delete the facility
+    // Finally delete the facility
     const { error: facilityError } = await supabase
       .from('facilities')
       .delete()

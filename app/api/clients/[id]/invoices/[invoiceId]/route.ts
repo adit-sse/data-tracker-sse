@@ -4,6 +4,21 @@ export const revalidate = 0;
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 
+interface InvoiceUpdatePayload {
+  meter_id?: string;
+  invoice_number?: string | null;
+  invoice_date?: string | null;
+  period_start_date?: string;
+  period_end_date?: string;
+  consumption?: number | null;
+  amount?: number | null;
+  framework?: string | null;
+  version?: string | null;
+  input_type?: string | null;
+  emissions_factor?: number | null;
+  customer?: string | null;
+}
+
 // PATCH /api/clients/[id]/invoices/[invoiceId] - Update invoice
 export async function PATCH(
   request: Request,
@@ -77,7 +92,7 @@ export async function PATCH(
     }
 
     // Build update payload: keep fields if provided, convert empty strings to null where appropriate
-    const payload: any = {};
+    const payload: InvoiceUpdatePayload = {};
     if (meter_id) payload.meter_id = meter_id;
     if (invoice_number !== undefined) payload.invoice_number = invoiceNumberTrimmed;
     if (invoice_date !== undefined) payload.invoice_date = invoice_date ? invoice_date.toString() : null;
