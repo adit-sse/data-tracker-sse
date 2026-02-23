@@ -154,6 +154,9 @@ export default function HomePage() {
         </div>
       </header>
       
+      {/* Blue accent bar */}
+      <div className="h-1 bg-gradient-to-r from-cyan-500 via-blue-500 to-cyan-500" />
+      
       {/* Main Content */}
       <main className="mx-auto px-4 sm:px-6 lg:px-10 max-w-[1600px] py-8">
         {/* Hero Section */}
