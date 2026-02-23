@@ -203,6 +203,7 @@ export default function HomePage() {
                 client={data.client}
                 facilitiesCount={data.facilitiesCount}
                 onDeleted={() => fetchClients()}
+                onUpdated={() => fetchClients()}
               />
             ))}
           </div>

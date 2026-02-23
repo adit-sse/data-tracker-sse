@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import ClientSettingsModal from './ClientSettingsModal';
 
 interface ClientCardProps {
   client: {
@@ -12,11 +13,13 @@ interface ClientCardProps {
   };
   facilitiesCount: number;
   onDeleted?: () => void;
+  onUpdated?: () => void;
 }
 
-export default function ClientCard({ client, facilitiesCount, onDeleted }: ClientCardProps) {
+export default function ClientCard({ client, facilitiesCount, onDeleted, onUpdated }: ClientCardProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
 
@@ -99,6 +102,12 @@ export default function ClientCard({ client, facilitiesCount, onDeleted }: Clien
             aria-orientation="vertical"
           >
             <button
+              onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowEditModal(true); setShowMenu(false); }}
+              className="w-full text-left px-4 py-3 text-base text-gray-700 hover:bg-gray-50"
+            >
+              Edit Client
+            </button>
+            <button
               onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowDeleteModal(true); setShowMenu(false); }}
               className="w-full text-left px-4 py-3 text-base text-red-600 hover:bg-gray-50"
             >
@@ -129,6 +138,18 @@ export default function ClientCard({ client, facilitiesCount, onDeleted }: Clien
             </div>
           </div>
         </div>
+      )}
+
+      {/* Edit Modal */}
+      {showEditModal && (
+        <ClientSettingsModal
+          client={client}
+          onClose={() => setShowEditModal(false)}
+          onUpdated={() => {
+            setShowEditModal(false);
+            onUpdated?.();
+          }}
+        />
       )}
     </div>
   );
