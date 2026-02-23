@@ -22,28 +22,25 @@ export default function CoverageSummary({ metersWithCoverage }: CoverageSummaryP
     }
 
     const today = new Date();
-    const currentMonthLabel = format(today, 'MMM yy');
+    const todayStr = today.toISOString().split('T')[0];
+    
+    // Filter to only include active meters
+    const activeMetersData = metersWithCoverage.filter(({ meter }) => {
+      const isInactive = 
+        (meter.in_service_end_date && meter.in_service_end_date <= todayStr) ||
+        (meter.in_service_start_date && meter.in_service_start_date > todayStr);
+      return !isInactive;
+    });
     
     let totalDaysCovered = 0;
     let totalPossibleDays = 0;
     let metersWithGaps = 0;
-    let activeMeters = 0;
+    const activeMeters = activeMetersData.length;
 
-    metersWithCoverage.forEach(({ meter, coverage }) => {
-      const todayStr = today.toISOString().split('T')[0];
-      const isActive = !(
-        (meter.in_service_end_date && meter.in_service_end_date <= todayStr) ||
-        (meter.in_service_start_date && meter.in_service_start_date > todayStr)
-      );
-      
-      if (isActive) {
-        activeMeters++;
-      }
-
+    activeMetersData.forEach(({ meter, coverage }) => {
       let meterHasGap = false;
       
       coverage.forEach((monthlyCoverage) => {
-        const monthLabel = monthlyCoverage.month;
         const monthDate = typeof monthlyCoverage.monthDate === 'string' 
           ? new Date(monthlyCoverage.monthDate) 
           : monthlyCoverage.monthDate;
@@ -52,20 +49,42 @@ export default function CoverageSummary({ metersWithCoverage }: CoverageSummaryP
           return;
         }
 
-        const monthStart = format(monthDate, 'yyyy-MM-dd');
-        const monthEnd = format(new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0), 'yyyy-MM-dd');
+        const monthStartStr = format(monthDate, 'yyyy-MM-dd');
+        const monthEndDate = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
+        const monthEndStr = format(monthEndDate, 'yyyy-MM-dd');
         
-        const beforeServiceStart = meter.in_service_start_date && monthEnd < meter.in_service_start_date;
-        const afterServiceEnd = meter.in_service_end_date && monthStart >= meter.in_service_end_date;
+        const beforeServiceStart = meter.in_service_start_date && monthEndStr < meter.in_service_start_date;
+        const afterServiceEnd = meter.in_service_end_date && monthStartStr >= meter.in_service_end_date;
         
         if (beforeServiceStart || afterServiceEnd) {
           return;
         }
 
-        totalDaysCovered += monthlyCoverage.daysCovered;
-        totalPossibleDays += monthlyCoverage.daysInMonth;
+        // Calculate actual days the meter should be active this month (for partial months)
+        let activeDaysInMonth = monthlyCoverage.daysInMonth;
         
-        if (monthlyCoverage.percentage < 100) {
+        // If meter started mid-month, reduce expected days
+        if (meter.in_service_start_date && meter.in_service_start_date > monthStartStr && meter.in_service_start_date <= monthEndStr) {
+          const serviceStartDate = new Date(meter.in_service_start_date);
+          const daysBeforeStart = serviceStartDate.getDate() - 1;
+          activeDaysInMonth -= daysBeforeStart;
+        }
+        
+        // If meter ended mid-month, reduce expected days
+        if (meter.in_service_end_date && meter.in_service_end_date > monthStartStr && meter.in_service_end_date <= monthEndStr) {
+          const serviceEndDate = new Date(meter.in_service_end_date);
+          const daysAfterEnd = monthEndDate.getDate() - serviceEndDate.getDate() + 1;
+          activeDaysInMonth -= daysAfterEnd;
+        }
+        
+        // Clamp coverage to active days (in case invoices cover more than active period)
+        const effectiveCoveredDays = Math.min(monthlyCoverage.daysCovered, activeDaysInMonth);
+        
+        totalDaysCovered += effectiveCoveredDays;
+        totalPossibleDays += activeDaysInMonth;
+        
+        // Check for gaps only considering active days
+        if (activeDaysInMonth > 0 && effectiveCoveredDays < activeDaysInMonth) {
           meterHasGap = true;
         }
       });
@@ -80,8 +99,7 @@ export default function CoverageSummary({ metersWithCoverage }: CoverageSummaryP
       : 0;
 
     return {
-      totalMeters: metersWithCoverage.length,
-      activeMeters,
+      totalMeters: activeMeters,
       overallCoverage,
       metersWithGaps,
       totalDaysCovered,
@@ -89,7 +107,7 @@ export default function CoverageSummary({ metersWithCoverage }: CoverageSummaryP
     };
   }, [metersWithCoverage]);
 
-  if (metersWithCoverage.length === 0) {
+  if (metersWithCoverage.length === 0 || stats.totalMeters === 0) {
     return null;
   }
 
@@ -124,7 +142,7 @@ export default function CoverageSummary({ metersWithCoverage }: CoverageSummaryP
         </div>
       </div>
 
-      {/* Total Meters */}
+      {/* Active Meters */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
@@ -132,11 +150,11 @@ export default function CoverageSummary({ metersWithCoverage }: CoverageSummaryP
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
             </svg>
           </div>
-          <span className="text-sm font-medium text-gray-500">Meters</span>
+          <span className="text-sm font-medium text-gray-500">Active Meters</span>
         </div>
         <div className="text-3xl font-bold text-gray-900">{stats.totalMeters}</div>
         <div className="text-xs text-gray-400 mt-1">
-          {stats.activeMeters} active
+          currently in service
         </div>
       </div>
 
