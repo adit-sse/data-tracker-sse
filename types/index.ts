@@ -31,7 +31,8 @@ export type IdentifierType =
   | 'ACCOUNT_NUMBER' 
   | 'METER_NUMBER' 
   | 'REGISTRATION_PLATE' 
-  | 'CARD_NUMBER';
+  | 'CARD_NUMBER'
+  | 'DESCRIPTION';
 
 export interface Meter {
   id: string;

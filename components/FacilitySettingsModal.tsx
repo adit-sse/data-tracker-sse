@@ -88,6 +88,20 @@ export default function FacilitySettingsModal({
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [allFacilities, setAllFacilities] = useState<FacilityOption[]>([]);
   const [utilityCategories, setUtilityCategories] = useState<UtilityCategory[]>([]);
+  
+  // Add new meter state
+  const [showAddMeter, setShowAddMeter] = useState(false);
+  const [newMeterData, setNewMeterData] = useState<MeterEditData>({
+    facility_id: '',
+    utility_category_id: '',
+    identifier_type: '',
+    lookup1: '',
+    lookup2: '',
+    supplier_id: '',
+    in_service_start_date: '',
+    in_service_end_date: ''
+  });
+  const [creatingMeter, setCreatingMeter] = useState(false);
 
   useEffect(() => {
     fetchMeters();
@@ -226,8 +240,23 @@ export default function FacilitySettingsModal({
     { value: 'ACCOUNT_NUMBER', label: 'Account Number' },
     { value: 'METER_NUMBER', label: 'Meter Number' },
     { value: 'REGISTRATION_PLATE', label: 'Registration Plate' },
-    { value: 'CARD_NUMBER', label: 'Card Number' }
+    { value: 'CARD_NUMBER', label: 'Card Number' },
+    { value: 'DESCRIPTION', label: 'Description' }
   ];
+
+  const formatIdentifierType = (type: string | undefined): string => {
+    if (!type) return '';
+    const typeMap: Record<string, string> = {
+      'NMI': 'NMI',
+      'ACCOUNT_NUMBER': 'Account Number',
+      'METER_NUMBER': 'Meter Number',
+      'REGISTRATION_PLATE': 'Rego Plate',
+      'CARD_NUMBER': 'Card Number',
+      'FACILITY_LEVEL': 'Facility Level',
+      'DESCRIPTION': 'Description'
+    };
+    return typeMap[type] || type;
+  };
 
   const startEditingMeter = (meter: Meter) => {
     setEditingMeterId(meter.id);
@@ -330,6 +359,55 @@ export default function FacilitySettingsModal({
     }
   };
 
+  const handleCreateMeter = async () => {
+    if (!newMeterData.utility_category_id || !newMeterData.identifier_type || !newMeterData.lookup1) {
+      return;
+    }
+    
+    setCreatingMeter(true);
+    try {
+      const res = await fetch('/api/meters', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          facility_id: facility.id,
+          utility_category_id: newMeterData.utility_category_id,
+          identifier_type: newMeterData.identifier_type,
+          lookup1: newMeterData.lookup1,
+          lookup2: newMeterData.lookup2 || null,
+          supplier_id: newMeterData.supplier_id || null,
+          in_service_start_date: newMeterData.in_service_start_date || null,
+          in_service_end_date: newMeterData.in_service_end_date || null
+        })
+      });
+      
+      if (res.ok) {
+        // Refresh meters list
+        await fetchMeters();
+        // Reset form and hide it
+        setShowAddMeter(false);
+        setNewMeterData({
+          facility_id: '',
+          utility_category_id: '',
+          identifier_type: '',
+          lookup1: '',
+          lookup2: '',
+          supplier_id: '',
+          in_service_start_date: '',
+          in_service_end_date: ''
+        });
+        onFacilityUpdated?.();
+      } else {
+        const errorData = await res.json();
+        console.error('Failed to create meter:', errorData);
+      }
+    } catch (err) {
+      console.error('Error creating meter:', err);
+    } finally {
+      setCreatingMeter(false);
+    }
+  };
+
   const getMeterServiceStatus = (meter: Meter): { label: string; color: string } => {
     const today = new Date().toISOString().split('T')[0];
     // Mark as inactive if end date is set and is today or in the past
@@ -371,12 +449,142 @@ export default function FacilitySettingsModal({
           </div>
 
           <div>
-            <h3 className="font-medium">Meters ({meters.length})</h3>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-medium">Meters ({meters.length})</h3>
+              {!showAddMeter && (
+                <button
+                  onClick={() => setShowAddMeter(true)}
+                  className="text-sm px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-1"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add Meter
+                </button>
+              )}
+            </div>
+            
+            {/* Add Meter Form */}
+            {showAddMeter && (
+              <div className="border border-blue-200 bg-blue-50 rounded-lg p-3 mb-3">
+                <h4 className="text-sm font-medium text-blue-800 mb-3">Add New Meter</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-500">Utility Category <span className="text-red-500">*</span></label>
+                    <select
+                      value={newMeterData.utility_category_id}
+                      onChange={(e) => setNewMeterData({ ...newMeterData, utility_category_id: e.target.value })}
+                      className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                      required
+                    >
+                      <option value="">Select category</option>
+                      {utilityCategories.map((u) => (
+                        <option key={u.id} value={u.id}>{u.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">Supplier</label>
+                    <select
+                      value={newMeterData.supplier_id}
+                      onChange={(e) => setNewMeterData({ ...newMeterData, supplier_id: e.target.value })}
+                      className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                    >
+                      <option value="">Select supplier</option>
+                      {suppliers.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">Identifier Type <span className="text-red-500">*</span></label>
+                    <select
+                      value={newMeterData.identifier_type}
+                      onChange={(e) => setNewMeterData({ ...newMeterData, identifier_type: e.target.value })}
+                      className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                      required
+                    >
+                      <option value="">Select type</option>
+                      {identifierTypes.map((t) => (
+                        <option key={t.value} value={t.value}>{t.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">Identifier <span className="text-red-500">*</span></label>
+                    <input
+                      type="text"
+                      value={newMeterData.lookup1}
+                      onChange={(e) => setNewMeterData({ ...newMeterData, lookup1: e.target.value })}
+                      placeholder="e.g., 1234567890"
+                      className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">Secondary Identifier</label>
+                    <input
+                      type="text"
+                      value={newMeterData.lookup2}
+                      onChange={(e) => setNewMeterData({ ...newMeterData, lookup2: e.target.value })}
+                      placeholder="Optional"
+                      className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">Service Start Date</label>
+                    <input
+                      type="date"
+                      value={newMeterData.in_service_start_date}
+                      onChange={(e) => setNewMeterData({ ...newMeterData, in_service_start_date: e.target.value })}
+                      className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">Service End Date</label>
+                    <input
+                      type="date"
+                      value={newMeterData.in_service_end_date}
+                      onChange={(e) => setNewMeterData({ ...newMeterData, in_service_end_date: e.target.value })}
+                      className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 mt-3">
+                  <button
+                    onClick={() => {
+                      setShowAddMeter(false);
+                      setNewMeterData({
+                        facility_id: '',
+                        utility_category_id: '',
+                        identifier_type: '',
+                        lookup1: '',
+                        lookup2: '',
+                        supplier_id: '',
+                        in_service_start_date: '',
+                        in_service_end_date: ''
+                      });
+                    }}
+                    className="px-3 py-1 text-sm text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleCreateMeter}
+                    disabled={creatingMeter || !newMeterData.utility_category_id || !newMeterData.identifier_type || !newMeterData.lookup1}
+                    className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {creatingMeter ? 'Creating...' : 'Create Meter'}
+                  </button>
+                </div>
+              </div>
+            )}
+            
             {loadingMeters ? (
               <p className="text-sm text-gray-500 mt-2">Loading meters…</p>
-            ) : meters.length === 0 ? (
+            ) : meters.length === 0 && !showAddMeter ? (
               <p className="text-sm text-gray-500 mt-2">No meters found for this facility.</p>
-            ) : (
+            ) : meters.length > 0 ? (
               <ul className="mt-2 space-y-2">
                 {meters.map((m) => {
                   const status = getMeterServiceStatus(m);
@@ -391,9 +599,9 @@ export default function FacilitySettingsModal({
                             <span className={`text-xs px-2 py-0.5 rounded-full ${status.color}`}>{status.label}</span>
                           </div>
                           <div className="text-xs text-gray-500 mt-1">
-                            {m.lookup1 || '(no id)'} 
-                            <span className="text-xs text-gray-400 ml-1">{m.identifier_type}</span>
-                            {m.lookup2 && <span className="text-xs text-gray-400 ml-1">• {m.lookup2}</span>}
+                            <span className="text-gray-400">{formatIdentifierType(m.identifier_type)}:</span>
+                            {m.lookup1 && <span className="ml-1">{m.lookup1}</span>}
+                            {m.lookup2 && <span className="text-gray-400 ml-1">({m.lookup2})</span>}
                           </div>
                           {(m.in_service_start_date || m.in_service_end_date) && !isEditing && (
                             <div className="text-xs text-gray-400 mt-1">
@@ -552,7 +760,7 @@ export default function FacilitySettingsModal({
                   );
                 })}
               </ul>
-            )}
+            ) : null}
           </div>
 
           <div className="flex items-center gap-3 justify-end mt-4">

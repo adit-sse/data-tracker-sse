@@ -134,73 +134,34 @@ async function processRow(clientId: string, row: CSVRow, rowNum: number): Promis
     throw new Error(`Invalid date range format: ${row['Date Range']}`);
   }
   
-  // 3. Find or create facility
-  let { data: facility } = await supabase
+  // 3. Find or create facility (case-insensitive lookup)
+  const facilityName = row.Facility.trim();
+  const { data: facilityRows } = await supabase
     .from('facilities')
     .select('id')
     .eq('client_id', clientId)
-    .eq('name', row.Facility.trim())
-    .single();
-  
+    .ilike('name', facilityName)
+    .limit(1);
+
+  let facility: { id: string } | null = facilityRows?.[0] || null;
+
   if (!facility) {
     const { data: newFacility, error } = await supabase
       .from('facilities')
-      .insert([{
-        client_id: clientId,
-        name: row.Facility.trim(),
-        address: row['Supply Address']?.trim() || null
-      }])
+      .insert([{ client_id: clientId, name: facilityName, address: row['Supply Address']?.trim() || null }])
       .select('id')
       .single();
-    
     if (error) throw new Error(`Failed to create facility: ${error.message}`);
     facility = newFacility;
   }
-  
+
   // 4. Find or create supplier (OPTIONAL)
-  let supplierId = null;
-  
-  if (providerName) {
-    let { data: supplier } = await supabase
-      .from('suppliers')
-      .select('id')
-      .eq('name', providerName)
-      .single();
-    
-    if (!supplier) {
-      const { data: newSupplier, error } = await supabase
-        .from('suppliers')
-        .insert([{ name: providerName }])
-        .select('id')
-        .single();
-      
-      if (error) throw new Error(`Failed to create supplier: ${error.message}`);
-      supplier = newSupplier;
-    }
-    
-    supplierId = supplier.id;
-  }
-  
+  const supplierId = providerName ? await findOrCreateSupplier(providerName) : null;
+
   // 5. Find or create utility category
   const categoryName = mapUtilityToCategory(row.Category);
-  
-  let { data: category } = await supabase
-    .from('utility_categories')
-    .select('id')
-    .eq('name', categoryName)
-    .single();
-  
-  if (!category) {
-    // Create the category if it doesn't exist
-    const { data: newCategory, error } = await supabase
-      .from('utility_categories')
-      .insert([{ name: categoryName }])
-      .select('id')
-      .single();
-    
-    if (error) throw new Error(`Failed to create utility category: ${error.message}`);
-    category = newCategory;
-  }
+  const categoryId = await findOrCreateCategory(categoryName);
+  const category = { id: categoryId };
   
   // 6. Determine identifier type and lookup values
   let identifierType: IdentifierType;
@@ -345,6 +306,70 @@ function generateMonthlyPeriods(startDate: string, endDate: string): Array<{ sta
   return periods;
 }
 
+// Helper: Find an existing supplier by name (case-insensitive), or create a new one
+async function findOrCreateSupplier(name: string): Promise<string> {
+  const { data: existing } = await supabase
+    .from('suppliers')
+    .select('id')
+    .ilike('name', name)
+    .limit(1);
+
+  if (existing && existing.length > 0) return existing[0].id;
+
+  const { data: created, error } = await supabase
+    .from('suppliers')
+    .insert([{ name }])
+    .select('id')
+    .single();
+
+  if (error) {
+    // If insert failed due to duplicate (race), fetch again
+    if (error.code === '23505' || error.message?.toLowerCase().includes('duplicate')) {
+      const { data: retry } = await supabase
+        .from('suppliers')
+        .select('id')
+        .ilike('name', name)
+        .limit(1);
+      if (retry && retry.length > 0) return retry[0].id;
+    }
+    throw new Error(`Failed to create supplier: ${error.message}`);
+  }
+
+  return created.id;
+}
+
+// Helper: Find an existing utility category by name (case-insensitive), or create a new one
+async function findOrCreateCategory(name: string): Promise<string> {
+  const { data: existing } = await supabase
+    .from('utility_categories')
+    .select('id')
+    .ilike('name', name)
+    .limit(1);
+
+  if (existing && existing.length > 0) return existing[0].id;
+
+  const { data: created, error } = await supabase
+    .from('utility_categories')
+    .insert([{ name }])
+    .select('id')
+    .single();
+
+  if (error) {
+    // If insert failed due to duplicate (race), fetch again
+    if (error.code === '23505' || error.message?.toLowerCase().includes('duplicate')) {
+      const { data: retry } = await supabase
+        .from('utility_categories')
+        .select('id')
+        .ilike('name', name)
+        .limit(1);
+      if (retry && retry.length > 0) return retry[0].id;
+    }
+    throw new Error(`Failed to create utility category: ${error.message}`);
+  }
+
+  return created.id;
+}
+
 // Normalize utility names - only map exact matches for base categories
 function mapUtilityToCategory(utility: string): string {
   const trimmed = utility.trim();
@@ -384,80 +409,36 @@ async function processMeterSetupRow(clientId: string, row: MeterSetupRow, rowNum
     }
   }
   
-  // 3. Find or create facility
-  let { data: facility } = await supabase
+  // 3. Find or create facility (case-insensitive lookup)
+  const { data: facilityRows } = await supabase
     .from('facilities')
     .select('id')
     .eq('client_id', clientId)
-    .eq('name', facilityName)
-    .single();
+    .ilike('name', facilityName)
+    .limit(1);
+  
+  let facility: { id: string } | null = facilityRows?.[0] || null;
   
   if (!facility) {
     const { data: newFacility, error } = await supabase
       .from('facilities')
-      .insert([{
-        client_id: clientId,
-        name: facilityName,
-        address: address
-      }])
+      .insert([{ client_id: clientId, name: facilityName, address }])
       .select('id')
       .single();
-    
     if (error) throw new Error(`Failed to create facility: ${error.message}`);
     facility = newFacility;
   } else if (address) {
-    // Update address if facility exists but didn't have one
-    await supabase
-      .from('facilities')
-      .update({ address })
-      .eq('id', facility.id)
-      .is('address', null);
+    await supabase.from('facilities').update({ address }).eq('id', facility.id).is('address', null);
   }
   
   // 4. Find or create supplier (if provided)
-  let supplierId: string | null = null;
-  if (supplierName) {
-    let { data: supplier } = await supabase
-      .from('suppliers')
-      .select('id')
-      .eq('name', supplierName)
-      .single();
-    
-    if (!supplier) {
-      const { data: newSupplier, error } = await supabase
-        .from('suppliers')
-        .insert([{ name: supplierName }])
-        .select('id')
-        .single();
-      
-      if (error) throw new Error(`Failed to create supplier: ${error.message}`);
-      supplier = newSupplier;
-    }
-    
-    supplierId = supplier.id;
-  }
-  
-  // 5. Map utility to category and find/create category
+  const supplierId: string | null = supplierName ? await findOrCreateSupplier(supplierName) : null;
+
+  // 5. Find or create utility category
   const categoryName = mapUtilityToCategory(utilityName);
-  
-  let { data: category } = await supabase
-    .from('utility_categories')
-    .select('id')
-    .eq('name', categoryName)
-    .single();
-  
-  if (!category) {
-    // Create the category if it doesn't exist
-    const { data: newCategory, error } = await supabase
-      .from('utility_categories')
-      .insert([{ name: categoryName }])
-      .select('id')
-      .single();
-    
-    if (error) throw new Error(`Failed to create utility category: ${error.message}`);
-    category = newCategory;
-  }
-  
+  const categoryId = await findOrCreateCategory(categoryName);
+  const category = { id: categoryId };
+
   // 6. Find or create meter (use ACCOUNT_NUMBER with utility + supplier as unique identifier)
   // Build query - match by facility, category, utility name, AND supplier name
   let meterQuery = supabase

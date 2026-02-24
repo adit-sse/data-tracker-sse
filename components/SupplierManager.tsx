@@ -13,6 +13,7 @@ export default function SupplierManager({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Delete confirmation state
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -118,13 +119,33 @@ export default function SupplierManager({ onClose }: { onClose: () => void }) {
             <button onClick={handleCreate} className="px-3 py-2 bg-blue-600 text-white rounded">Add</button>
           </div>
         </div>
+        
+        {/* Search bar */}
+        <div className="mb-3">
+          <div className="relative">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded text-sm"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search suppliers..."
+            />
+          </div>
+        </div>
+
         <div className="space-y-2 max-h-72 overflow-auto">
           {loading ? (
             <div className="text-gray-500">Loading...</div>
           ) : suppliers.length === 0 ? (
             <div className="text-gray-500">No suppliers found</div>
-          ) : (
-            suppliers.map((s) => (
+          ) : (() => {
+            const filtered = suppliers.filter((s) => s.name.toLowerCase().includes(searchTerm.toLowerCase()));
+            if (filtered.length === 0) {
+              return <div className="text-gray-500 text-sm py-2">No suppliers match &quot;{searchTerm}&quot;</div>;
+            }
+            return filtered.map((s) => (
               <div key={s.id} className="flex items-center gap-2 border border-gray-100 rounded p-2">
                 <input
                   className="flex-1 px-2 py-1 border border-transparent focus:border-gray-300 rounded"
@@ -136,8 +157,8 @@ export default function SupplierManager({ onClose }: { onClose: () => void }) {
                 {savingId === s.id ? <div className="text-sm text-gray-500">Saving...</div> : null}
                 <button onClick={() => promptDelete(s.id)} className="px-3 py-1 bg-red-600 text-white rounded">Delete</button>
               </div>
-            ))
-          )}
+            ));
+          })()}
         </div>
       </div>
 

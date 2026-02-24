@@ -18,6 +18,19 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
   const [filterFacility, setFilterFacility] = useState<string>('ALL');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
 
+  const formatIdentifierType = (type: string): string => {
+    const typeMap: Record<string, string> = {
+      'NMI': 'NMI',
+      'ACCOUNT_NUMBER': 'Account Number',
+      'METER_NUMBER': 'Meter Number',
+      'REGISTRATION_PLATE': 'Rego Plate',
+      'CARD_NUMBER': 'Card Number',
+      'FACILITY_LEVEL': 'Facility Level',
+      'DESCRIPTION': 'Description'
+    };
+    return typeMap[type] || type;
+  };
+
   const getMeterServiceStatus = (meter: MeterWithCoverage['meter']): { label: string; isActive: boolean } => {
     const today = new Date().toISOString().split('T')[0];
     if (meter.in_service_end_date && meter.in_service_end_date <= today) {
@@ -128,17 +141,17 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
         <div className="border-b border-gray-300 bg-gray-100 sticky top-0 z-20">
           <div className="flex">
             {/* Meter info column headers */}
-            <div className="w-[150px] min-w-[150px] px-3 py-3 border-r border-gray-300">
+            <div className="w-[150px] min-w-[150px] px-3 py-3 border-r border-gray-300 text-center">
               <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Facility</span>
             </div>
-            <div className="w-[130px] min-w-[130px] px-3 py-3 border-r border-gray-300">
+            <div className="w-[130px] min-w-[130px] px-3 py-3 border-r border-gray-300 text-center">
               <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Supplier</span>
             </div>
-            <div className="w-[110px] min-w-[110px] px-3 py-3 border-r border-gray-300">
+            <div className="w-[110px] min-w-[110px] px-3 py-3 border-r border-gray-300 text-center">
               <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Type</span>
             </div>
-            <div className="w-[140px] min-w-[140px] px-3 py-3 border-r border-gray-300">
-              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Meter ID</span>
+            <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-300 text-center">
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Identifier</span>
             </div>
             <div className="w-[80px] min-w-[80px] px-2 py-3 border-r border-gray-300 text-center">
               <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Status</span>
@@ -181,23 +194,26 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
           return (
             <div key={meter.id} className="flex border-b border-gray-200 last:border-b-0 hover:bg-gray-50/50">
               {/* Meter info columns */}
-              <div className="w-[150px] min-w-[150px] px-3 py-3 border-r border-gray-200">
-                <div className="font-semibold text-gray-900 text-sm" title={meter.facility?.name}>
+              <div className="w-[150px] min-w-[150px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
+                <div className="font-semibold text-gray-900 text-sm text-center" title={meter.facility?.name}>
                   {meter.facility?.name || 'Unknown'}
                 </div>
               </div>
-              <div className="w-[130px] min-w-[130px] px-3 py-3 border-r border-gray-200">
-                <div className="text-sm text-gray-700" title={meter.supplier?.name}>
+              <div className="w-[130px] min-w-[130px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
+                <div className="text-sm text-gray-700 text-center" title={meter.supplier?.name}>
                   {meter.supplier?.name || '—'}
                 </div>
               </div>
-              <div className="w-[110px] min-w-[110px] px-3 py-3 border-r border-gray-200">
-                <div className="text-sm text-gray-600">
+              <div className="w-[110px] min-w-[110px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
+                <div className="text-sm text-gray-600 text-center">
                   {meter.utility_category?.name || 'N/A'}
                 </div>
               </div>
-              <div className="w-[140px] min-w-[140px] px-3 py-3 border-r border-gray-200">
-                <div className="text-sm text-gray-500 font-mono" title={meter.lookup1}>
+              <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 text-center">
+                <div className="text-xs text-gray-400 mb-0.5">
+                  {formatIdentifierType(meter.identifier_type)}
+                </div>
+                <div className="text-sm text-gray-700 font-medium truncate" title={meter.lookup1}>
                   {meter.lookup1 || '—'}
                 </div>
               </div>
@@ -220,8 +236,8 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
                   const monthStart = period_start_date;
                   const monthEnd = period_end_date;
                   
-                  const beforeServiceStart = meter.in_service_start_date && monthEnd < meter.in_service_start_date;
-                  const afterServiceEnd = meter.in_service_end_date && monthStart >= meter.in_service_end_date;
+                  const beforeServiceStart = !!(meter.in_service_start_date && monthEnd < meter.in_service_start_date);
+                  const afterServiceEnd = !!(meter.in_service_end_date && monthStart >= meter.in_service_end_date);
                   
                   const isMonthDisabled = beforeServiceStart || afterServiceEnd;
                   const isCurrentMonth = monthlyCoverage.month === currentMonthYearLabel;
