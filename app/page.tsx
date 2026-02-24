@@ -14,6 +14,7 @@ interface Client {
 interface ClientWithCount {
   client: Client;
   facilitiesCount: number;
+  coveragePercentage?: number | null;
 }
 
 export default function HomePage() {
@@ -303,6 +304,7 @@ export default function HomePage() {
                   key={data.client.id} 
                   client={data.client}
                   facilitiesCount={data.facilitiesCount}
+                  coveragePercentage={data.coveragePercentage}
                   onDeleted={() => fetchClients()}
                   onUpdated={() => fetchClients()}
                 />

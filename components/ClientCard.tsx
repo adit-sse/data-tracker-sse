@@ -12,6 +12,7 @@ interface ClientCardProps {
     logo_url?: string | null;
   };
   facilitiesCount: number;
+  coveragePercentage?: number | null;
   onDeleted?: () => void;
   onUpdated?: () => void;
 }
@@ -22,12 +23,19 @@ const cardColor = {
   text: 'text-emerald-600'
 };
 
-export default function ClientCard({ client, facilitiesCount, onDeleted, onUpdated }: ClientCardProps) {
+export default function ClientCard({ client, facilitiesCount, coveragePercentage, onDeleted, onUpdated }: ClientCardProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+
+  const getCoverageColor = (percentage: number) => {
+    if (percentage >= 90) return { bg: 'bg-emerald-100', text: 'text-emerald-700' };
+    if (percentage >= 70) return { bg: 'bg-amber-100', text: 'text-amber-700' };
+    if (percentage >= 50) return { bg: 'bg-orange-100', text: 'text-orange-700' };
+    return { bg: 'bg-red-100', text: 'text-red-700' };
+  };
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -59,7 +67,16 @@ export default function ClientCard({ client, facilitiesCount, onDeleted, onUpdat
           {/* Color accent bar */}
           <div className={`h-1.5 bg-gradient-to-r ${cardColor.gradient}`} />
           
-          <div className="p-5">
+          <div className="p-5 relative">
+            {/* Coverage Badge */}
+            {coveragePercentage != null && (
+              <div className="absolute top-2 right-8">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getCoverageColor(coveragePercentage).bg} ${getCoverageColor(coveragePercentage).text}`}>
+                  {coveragePercentage}%
+                </span>
+              </div>
+            )}
+
             {/* Client Logo and Name */}
             <div className="flex items-start gap-4">
               {client.logo_url ? (
