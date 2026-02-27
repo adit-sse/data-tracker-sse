@@ -44,6 +44,7 @@ export interface Meter {
   lookup2?: string; // Secondary identifier (e.g., "WA - SWIS", "LPG")
   in_service_start_date?: string; // Date when meter came into service (null = always in service)
   in_service_end_date?: string;   // Date when meter went out of service (null = still in service)
+  needs_attention?: boolean;      // User-flagged: meter needs attention
   created_at?: string;
   // Joined data
   facility?: Facility;

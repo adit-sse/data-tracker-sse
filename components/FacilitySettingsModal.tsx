@@ -17,6 +17,7 @@ interface Meter {
   identifier_type?: string;
   in_service_start_date?: string | null;
   in_service_end_date?: string | null;
+  needs_attention?: boolean;
   supplier?: { id: string; name: string } | null;
   supplier_id?: string | null;
   utility_category?: { id: string; name: string } | null;
@@ -102,6 +103,28 @@ export default function FacilitySettingsModal({
     in_service_end_date: ''
   });
   const [creatingMeter, setCreatingMeter] = useState(false);
+  const [togglingAttention, setTogglingAttention] = useState<string | null>(null);
+
+  const toggleNeedsAttention = async (meter: Meter) => {
+    setTogglingAttention(meter.id);
+    try {
+      const res = await fetch(`/api/meters/${meter.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ needs_attention: !meter.needs_attention })
+      });
+      if (res.ok) {
+        setMeters((prev) => prev.map((m) =>
+          m.id === meter.id ? { ...m, needs_attention: !m.needs_attention } : m
+        ));
+        onFacilityUpdated?.();
+      }
+    } catch (err) {
+      console.error('Error toggling needs attention:', err);
+    } finally {
+      setTogglingAttention(null);
+    }
+  };
 
   useEffect(() => {
     fetchMeters();
@@ -408,13 +431,12 @@ export default function FacilitySettingsModal({
     }
   };
 
-  const getMeterServiceStatus = (meter: Meter): { label: string; color: string } => {
+  const getMeterDisplayStatus = (meter: Meter): { label: string; color: string } => {
+    if (meter.needs_attention) return { label: 'Needs attention', color: 'bg-amber-100 text-amber-700' };
     const today = new Date().toISOString().split('T')[0];
-    // Mark as inactive if end date is set and is today or in the past
     if (meter.in_service_end_date && meter.in_service_end_date <= today) {
       return { label: 'Inactive', color: 'bg-gray-200 text-gray-600' };
     }
-    // Mark as not yet active if start date is in the future
     if (meter.in_service_start_date && meter.in_service_start_date > today) {
       return { label: 'Not Yet Active', color: 'bg-yellow-100 text-yellow-700' };
     }
@@ -587,7 +609,6 @@ export default function FacilitySettingsModal({
             ) : meters.length > 0 ? (
               <ul className="mt-2 space-y-2">
                 {meters.map((m) => {
-                  const status = getMeterServiceStatus(m);
                   const isEditing = editingMeterId === m.id;
                   
                   return (
@@ -596,7 +617,6 @@ export default function FacilitySettingsModal({
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium">{m.utility_category?.name || 'N/A'}{m.supplier ? ` • ${m.supplier.name}` : ''}</span>
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${status.color}`}>{status.label}</span>
                           </div>
                           <div className="text-xs text-gray-500 mt-1">
                             <span className="text-gray-400">{formatIdentifierType(m.identifier_type)}:</span>
@@ -614,6 +634,14 @@ export default function FacilitySettingsModal({
                         <div className="flex items-center gap-2">
                           {!isEditing && (
                             <>
+                              <button
+                                onClick={() => toggleNeedsAttention(m)}
+                                disabled={togglingAttention === m.id}
+                                title={m.needs_attention ? 'Clear needs attention' : 'Mark as needs attention'}
+                                className={`px-2 py-1 rounded-full text-xs font-semibold ${getMeterDisplayStatus(m).color} hover:opacity-80`}
+                              >
+                                {togglingAttention === m.id ? '…' : getMeterDisplayStatus(m).label}
+                              </button>
                               <button
                                 onClick={() => startEditingMeter(m)}
                                 className="text-blue-600 px-2 py-1 border border-blue-100 rounded-md text-sm hover:bg-blue-50"

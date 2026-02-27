@@ -64,7 +64,7 @@ export default function ClientDetailPage() {
       await Promise.all([
         fetchClientData(),
         fetchFacilities(),
-        fetchCoverage(),
+        fetchCoverage(true), // initial load - show spinner
         fetchFiscalYears()
       ]);
     };
@@ -124,9 +124,9 @@ export default function ClientDetailPage() {
     }
   };
   
-  const fetchCoverage = async () => {
+  const fetchCoverage = async (showLoading = false) => {
     try {
-      setLoading(true);
+      if (showLoading) setLoading(true);
       const response = await fetch(`/api/clients/${clientId}/coverage?fiscalYear=${fiscalYear}`);
       if (!response.ok) {
         setMetersWithCoverage([]);
@@ -138,7 +138,7 @@ export default function ClientDetailPage() {
       console.error('Error fetching coverage:', error);
       setMetersWithCoverage([]);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
   
@@ -389,6 +389,7 @@ export default function ClientDetailPage() {
                     setInvoiceInitialFacilityId(facilityId ? String(facilityId) : '');
                   }
                 }}
+                onMeterUpdated={fetchCoverage}
               />
             </>
           )}

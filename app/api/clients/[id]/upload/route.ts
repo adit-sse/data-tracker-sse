@@ -439,23 +439,17 @@ async function processMeterSetupRow(clientId: string, row: MeterSetupRow, rowNum
   const categoryId = await findOrCreateCategory(categoryName);
   const category = { id: categoryId };
 
-  // 6. Find or create meter (use ACCOUNT_NUMBER with utility + supplier as unique identifier)
-  // Build query - match by facility, category, utility name, AND supplier name
-  let meterQuery = supabase
+  // 6. Find or create meter (use DESCRIPTION with facility + utility as identifier, e.g. "Albany LPG")
+  const identifierValue = `${facilityName} ${utilityName}`;
+  
+  let { data: meter } = await supabase
     .from('meters')
     .select('id')
     .eq('facility_id', facility.id)
     .eq('utility_category_id', category.id)
-    .eq('lookup1', utilityName);
-  
-  // Also match by supplier (lookup2) to allow same utility with different suppliers
-  if (supplierName) {
-    meterQuery = meterQuery.eq('lookup2', supplierName);
-  } else {
-    meterQuery = meterQuery.is('lookup2', null);
-  }
-  
-  let { data: meter } = await meterQuery.single();
+    .eq('identifier_type', 'DESCRIPTION')
+    .eq('lookup1', identifierValue)
+    .maybeSingle();
   
   if (!meter) {
     const { data: newMeter, error } = await supabase
@@ -464,8 +458,8 @@ async function processMeterSetupRow(clientId: string, row: MeterSetupRow, rowNum
         facility_id: facility.id,
         supplier_id: supplierId,
         utility_category_id: category.id,
-        identifier_type: 'ACCOUNT_NUMBER' as IdentifierType,
-        lookup1: utilityName,
+        identifier_type: 'DESCRIPTION' as IdentifierType,
+        lookup1: identifierValue,
         lookup2: supplierName
       }])
       .select('id')

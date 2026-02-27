@@ -19,7 +19,8 @@ export async function PATCH(
       lookup2,
       supplier_id,
       in_service_start_date, 
-      in_service_end_date 
+      in_service_end_date,
+      needs_attention
     } = body;
 
     const updateData: Record<string, unknown> = {};
@@ -47,6 +48,9 @@ export async function PATCH(
     }
     if (in_service_end_date !== undefined) {
       updateData.in_service_end_date = in_service_end_date || null;
+    }
+    if (needs_attention !== undefined) {
+      updateData.needs_attention = !!needs_attention;
     }
 
     if (Object.keys(updateData).length === 0) {

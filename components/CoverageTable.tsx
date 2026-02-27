@@ -10,13 +10,39 @@ interface CoverageTableProps {
   metersWithCoverage: MeterWithCoverage[];
   fiscalYear: number;
   onQuickAddInvoice?: (opts: { meterId: string; facilityId?: string; period_start_date: string; period_end_date: string; invoices?: ActualInvoice[] }) => void;
+  onMeterUpdated?: () => void;
 }
 
-export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickAddInvoice }: CoverageTableProps) {
+export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickAddInvoice, onMeterUpdated }: CoverageTableProps) {
   const [filterUtility, setFilterUtility] = useState<string>('ALL');
   const [filterSupplier, setFilterSupplier] = useState<string>('ALL');
   const [filterFacility, setFilterFacility] = useState<string>('ALL');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
+  const [togglingAttention, setTogglingAttention] = useState<string | null>(null);
+
+  const toggleNeedsAttention = async (meterId: string, currentValue: boolean) => {
+    setTogglingAttention(meterId);
+    try {
+      const res = await fetch(`/api/meters/${meterId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ needs_attention: !currentValue })
+      });
+      if (res.ok) onMeterUpdated?.();
+    } catch (err) {
+      console.error('Error toggling needs attention:', err);
+    } finally {
+      setTogglingAttention(null);
+    }
+  };
+
+  const getDisplayStatus = (meter: MeterWithCoverage['meter']) => {
+    if (meter.needs_attention) return { label: 'Needs attention', color: 'bg-amber-100 text-amber-700' };
+    const status = getMeterServiceStatus(meter);
+    return status.isActive 
+      ? { label: 'Active', color: 'bg-green-100 text-green-700' } 
+      : { label: 'Inactive', color: 'bg-gray-100 text-gray-500' };
+  };
 
   const formatIdentifierType = (type: string): string => {
     const typeMap: Record<string, string> = {
@@ -61,8 +87,9 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
     
     const status = getMeterServiceStatus(m.meter);
     const statusMatch = filterStatus === 'ALL' || 
-      (filterStatus === 'ACTIVE' && status.isActive) ||
-      (filterStatus === 'INACTIVE' && !status.isActive);
+      (filterStatus === 'ACTIVE' && status.isActive && !m.meter.needs_attention) ||
+      (filterStatus === 'INACTIVE' && !status.isActive && !m.meter.needs_attention) ||
+      (filterStatus === 'NEEDS_ATTENTION' && m.meter.needs_attention);
     
     return utilityMatch && supplierMatch && facilityMatch && statusMatch;
   });
@@ -127,6 +154,7 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
             <option value="ALL">All Status</option>
             <option value="ACTIVE">Active</option>
             <option value="INACTIVE">Inactive</option>
+            <option value="NEEDS_ATTENTION">Needs attention</option>
           </select>
           
           <span className="text-sm text-gray-500 ml-auto">
@@ -138,6 +166,7 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
       {/* Scrollable container with sticky header */}
       <div className="max-h-[600px] overflow-y-auto">
         {/* Calendar-style Grid Header */}
+        <div className="border-b border-gray-300 bg-white sticky top-0 z-20 shadow-[0_1px_0_0_rgba(0,0,0,0.05)]">
           <div className="flex">
             {/* Meter info column headers */}
             <div className="w-[150px] min-w-[150px] px-3 py-3 border-r border-gray-300 text-center">
@@ -217,13 +246,16 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
                 </div>
               </div>
               <div className="w-[80px] min-w-[80px] px-2 py-3 border-r border-gray-200 flex items-center justify-center">
-                <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                  status.isActive 
-                    ? 'bg-green-100 text-green-700' 
-                    : 'bg-gray-100 text-gray-500'
-                }`}>
-                  {status.isActive ? 'Active' : 'Inactive'}
-                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleNeedsAttention(meter.id, !!meter.needs_attention); }}
+                  disabled={togglingAttention === meter.id}
+                  title={meter.needs_attention ? 'Clear needs attention' : 'Mark as needs attention'}
+                  className={`px-2 py-1 rounded text-xs font-semibold cursor-pointer ${
+                    getDisplayStatus(meter).color
+                  } ${!meter.needs_attention ? 'hover:bg-amber-50 hover:text-amber-600' : ''}`}
+                >
+                  {togglingAttention === meter.id ? '…' : getDisplayStatus(meter).label}
+                </button>
               </div>
               
               {/* Month cells - calendar event style */}
