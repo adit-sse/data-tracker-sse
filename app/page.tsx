@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import ClientCard from '@/components/ClientCard';
 import SupplierManager from '@/components/SupplierManager';
 import UtilityCategoryManager from '@/components/UtilityCategoryManager';
+import ViewByModal from '@/components/ViewByModal';
 
 interface Client {
   id: number;
@@ -25,6 +26,8 @@ export default function HomePage() {
   const [creating, setCreating] = useState(false);
   const [showSuppliersManager, setShowSuppliersManager] = useState(false);
   const [showUtilitiesManager, setShowUtilitiesManager] = useState(false);
+  const [showViewBySuppliers, setShowViewBySuppliers] = useState(false);
+  const [showViewByUtilities, setShowViewByUtilities] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   
   useEffect(() => {
@@ -231,20 +234,20 @@ export default function HomePage() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm font-medium text-gray-900">Quick Actions</div>
-                  <div className="text-xs text-gray-500 mt-0.5">Manage your data</div>
+                  <div className="text-xs text-gray-500 mt-0.5">View clients by supplier or utility</div>
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setShowSuppliersManager(true)}
+                    onClick={() => setShowViewBySuppliers(true)}
                     className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                   >
-                    Suppliers
+                    View by Suppliers
                   </button>
                   <button
-                    onClick={() => setShowUtilitiesManager(true)}
+                    onClick={() => setShowViewByUtilities(true)}
                     className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                   >
-                    Utilities
+                    View by Utilities
                   </button>
                 </div>
               </div>
@@ -379,6 +382,14 @@ export default function HomePage() {
       )}
       {showUtilitiesManager && (
         <UtilityCategoryManager onClose={() => setShowUtilitiesManager(false)} />
+      )}
+
+      {/* View by Modals */}
+      {showViewBySuppliers && (
+        <ViewByModal type="supplier" onClose={() => setShowViewBySuppliers(false)} />
+      )}
+      {showViewByUtilities && (
+        <ViewByModal type="utility" onClose={() => setShowViewByUtilities(false)} />
       )}
     </div>
   );
