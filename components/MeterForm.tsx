@@ -168,6 +168,7 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
   
   const identifierTypes = [
     { value: 'NMI', label: 'NMI (National Meter Identifier)' },
+    { value: 'MIRN', label: 'MIRN (Meter Installation Registration Number)' },
     { value: 'ACCOUNT_NUMBER', label: 'Account Number' },
     { value: 'METER_NUMBER', label: 'Meter Number' },
     { value: 'REGISTRATION_PLATE', label: 'Registration Plate' },

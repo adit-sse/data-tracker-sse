@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS meters (
   facility_id UUID REFERENCES facilities(id) ON DELETE CASCADE,
   supplier_id UUID REFERENCES suppliers(id),
   utility_category_id UUID REFERENCES utility_categories(id),
-  identifier_type TEXT NOT NULL CHECK (identifier_type IN ('NMI', 'ACCOUNT_NUMBER', 'METER_NUMBER', 'REGISTRATION_PLATE', 'CARD_NUMBER', 'FACILITY_LEVEL', 'DESCRIPTION')),
+  identifier_type TEXT NOT NULL CHECK (identifier_type IN ('NMI', 'MIRN', 'ACCOUNT_NUMBER', 'METER_NUMBER', 'REGISTRATION_PLATE', 'CARD_NUMBER', 'FACILITY_LEVEL', 'DESCRIPTION')),
   lookup1 TEXT NOT NULL,
   lookup2 TEXT,
   in_service_start_date DATE,
@@ -91,7 +91,7 @@ COMMENT ON TABLE suppliers IS 'Stores utility provider/supplier information';
 COMMENT ON TABLE meters IS 'Stores meter/account information with flexible identifier types';
 COMMENT ON TABLE actual_invoices IS 'Stores invoice records with period coverage dates';
 
-COMMENT ON COLUMN meters.identifier_type IS 'Type of meter identifier: NMI, ACCOUNT_NUMBER, METER_NUMBER, REGISTRATION_PLATE, CARD_NUMBER, FACILITY_LEVEL, DESCRIPTION';
+COMMENT ON COLUMN meters.identifier_type IS 'Type of meter identifier: NMI, MIRN, ACCOUNT_NUMBER, METER_NUMBER, REGISTRATION_PLATE, CARD_NUMBER, FACILITY_LEVEL, DESCRIPTION';
 COMMENT ON COLUMN meters.lookup1 IS 'Primary identifier (e.g., NMI number, account number, meter number)';
 COMMENT ON COLUMN meters.lookup2 IS 'Secondary identifier (e.g., "WA - SWIS" for electricity region, "LPG" for gas type)';
 COMMENT ON COLUMN meters.in_service_start_date IS 'Date when meter came into service (null = always in service from beginning)';

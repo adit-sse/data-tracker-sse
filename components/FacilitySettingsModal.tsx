@@ -260,6 +260,7 @@ export default function FacilitySettingsModal({
 
   const identifierTypes = [
     { value: 'NMI', label: 'NMI' },
+    { value: 'MIRN', label: 'MIRN' },
     { value: 'ACCOUNT_NUMBER', label: 'Account Number' },
     { value: 'METER_NUMBER', label: 'Meter Number' },
     { value: 'REGISTRATION_PLATE', label: 'Registration Plate' },
@@ -271,6 +272,7 @@ export default function FacilitySettingsModal({
     if (!type) return '';
     const typeMap: Record<string, string> = {
       'NMI': 'NMI',
+      'MIRN': 'MIRN',
       'ACCOUNT_NUMBER': 'Account Number',
       'METER_NUMBER': 'Meter Number',
       'REGISTRATION_PLATE': 'Rego Plate',

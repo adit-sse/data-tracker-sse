@@ -28,6 +28,7 @@ export interface Supplier {
 
 export type IdentifierType = 
   | 'NMI' 
+  | 'MIRN'
   | 'ACCOUNT_NUMBER' 
   | 'METER_NUMBER' 
   | 'REGISTRATION_PLATE' 
@@ -123,6 +124,7 @@ export interface CSVRow {
   'Meter Number'?: string;
   'Invoice Number'?: string;
   NMI?: string;
+  MIRN?: string;
   'Amount($)'?: string;
   'Consumption Date'?: string;
   'Invoice Date'?: string;

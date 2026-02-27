@@ -172,6 +172,10 @@ async function processRow(clientId: string, row: CSVRow, rowNum: number): Promis
     identifierType = 'NMI';
     lookup1 = row.NMI.trim();
     lookup2 = row['Input Type']?.trim() || null;
+  } else if (row.MIRN && row.MIRN.trim()) {
+    identifierType = 'MIRN';
+    lookup1 = row.MIRN.trim();
+    lookup2 = row['Input Type']?.trim() || null;
   } else if (row['Account Number'] && row['Account Number'].trim()) {
     identifierType = 'ACCOUNT_NUMBER';
     lookup1 = row['Account Number'].trim();
@@ -180,7 +184,7 @@ async function processRow(clientId: string, row: CSVRow, rowNum: number): Promis
     identifierType = 'METER_NUMBER';
     lookup1 = row['Meter Number'].trim();
   } else {
-    throw new Error('No meter identifier found (NMI, Account Number, or Meter Number)');
+    throw new Error('No meter identifier found (NMI, MIRN, Account Number, or Meter Number)');
   }
   
   // 7. Find or create meter

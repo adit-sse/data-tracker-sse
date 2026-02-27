@@ -47,6 +47,7 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
   const formatIdentifierType = (type: string): string => {
     const typeMap: Record<string, string> = {
       'NMI': 'NMI',
+      'MIRN': 'MIRN',
       'ACCOUNT_NUMBER': 'Account Number',
       'METER_NUMBER': 'Meter Number',
       'REGISTRATION_PLATE': 'Rego Plate',
