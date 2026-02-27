@@ -138,7 +138,6 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
       {/* Scrollable container with sticky header */}
       <div className="max-h-[600px] overflow-y-auto">
         {/* Calendar-style Grid Header */}
-        <div className="border-b border-gray-300 bg-gray-100 sticky top-0 z-20">
           <div className="flex">
             {/* Meter info column headers */}
             <div className="w-[150px] min-w-[150px] px-3 py-3 border-r border-gray-300 text-center">
@@ -168,7 +167,7 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
                 return (
                   <div 
                     key={month} 
-                    className={`flex-1 min-w-[60px] py-2 text-center border-r border-gray-200 last:border-r-0 ${isCurrentMonth ? 'bg-orange-100' : ''}`}
+                    className={`flex-1 min-w-[60px] py-2 text-center border-r border-gray-200 last:border-r-0 ${isCurrentMonth ? 'bg-orange-100' : 'bg-white'}`}
                   >
                     <div className={`text-sm font-bold ${isCurrentMonth ? 'text-orange-700' : 'text-gray-700'}`}>
                       {mon}
