@@ -182,6 +182,12 @@ export default function FacilitySettingsModal({
   };
 
   const handleSave = async () => {
+    // If a meter edit is in progress, save it first before saving the facility
+    if (editingMeterId) {
+      const meterSaved = await handleSaveMeter();
+      if (!meterSaved) return;
+    }
+
     setSaving(true);
     try {
       const res = await fetch(`/api/facilities/${facility.id}`, {
@@ -311,11 +317,11 @@ export default function FacilitySettingsModal({
     });
   };
 
-  const handleSaveMeter = async () => {
-    if (!editingMeterId) return;
+  const handleSaveMeter = async (): Promise<boolean> => {
+    if (!editingMeterId) return true;
     
     if (!editMeterData.facility_id || !editMeterData.utility_category_id || !editMeterData.identifier_type || !editMeterData.lookup1) {
-      return;
+      return false;
     }
     
     setSavingMeter(true);
@@ -374,11 +380,14 @@ export default function FacilitySettingsModal({
           in_service_end_date: '' 
         });
         onFacilityUpdated?.();
+        return true;
       } else {
         console.error('Failed to update meter');
+        return false;
       }
     } catch (err) {
       console.error('Error updating meter:', err);
+      return false;
     } finally {
       setSavingMeter(false);
     }

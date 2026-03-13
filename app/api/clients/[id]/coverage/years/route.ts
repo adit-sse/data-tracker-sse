@@ -20,7 +20,6 @@ export async function GET(
   try {
     const clientId = params.id;
 
-    // Get facilities for client
     const { data: facilities, error: facilitiesError } = await supabase
       .from('facilities')
       .select('id')
@@ -31,7 +30,6 @@ export async function GET(
     const facilityIds = (facilities || []).map((f: any) => f.id);
 
     if (facilityIds.length === 0) {
-      // No facilities -> fallback to current FY range (include previous year)
       const now = new Date();
       const currentFY = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
       return NextResponse.json({ fiscalYears: [currentFY - 2, currentFY - 1, currentFY, currentFY + 1] });
@@ -47,51 +45,68 @@ export async function GET(
 
     const meterIds = (meters || []).map((m: any) => m.id);
 
-    if (meterIds.length === 0) {
-      const now = new Date();
-      const currentFY = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
-      return NextResponse.json({ fiscalYears: [currentFY - 2, currentFY - 1, currentFY, currentFY + 1] });
+    // Gather date extremes from actual_invoices (metered)
+    let meteredEarliest: string | null = null;
+    let meteredLatest: string | null = null;
+
+    if (meterIds.length > 0) {
+      const [earliestRes, latestRes] = await Promise.all([
+        supabase
+          .from('actual_invoices')
+          .select('period_start_date')
+          .in('meter_id', meterIds)
+          .order('period_start_date', { ascending: true })
+          .limit(1),
+        supabase
+          .from('actual_invoices')
+          .select('period_end_date')
+          .in('meter_id', meterIds)
+          .order('period_end_date', { ascending: false })
+          .limit(1),
+      ]);
+
+      meteredEarliest = earliestRes.data?.[0]?.period_start_date ?? null;
+      meteredLatest = latestRes.data?.[0]?.period_end_date ?? null;
     }
 
-    // Get earliest period_start_date
-    const { data: earliestData, error: earliestError } = await supabase
-      .from('actual_invoices')
-      .select('period_start_date')
-      .in('meter_id', meterIds)
-      .order('period_start_date', { ascending: true })
-      .limit(1);
+    // Gather date extremes from non_metered_records
+    let nmEarliest: string | null = null;
+    let nmLatest: string | null = null;
 
-    if (earliestError) throw earliestError;
+    const [nmEarliestRes, nmLatestRes] = await Promise.all([
+      supabase
+        .from('non_metered_records')
+        .select('period_start_date')
+        .in('facility_id', facilityIds)
+        .order('period_start_date', { ascending: true })
+        .limit(1),
+      supabase
+        .from('non_metered_records')
+        .select('period_end_date')
+        .in('facility_id', facilityIds)
+        .order('period_end_date', { ascending: false })
+        .limit(1),
+    ]);
 
-    // Get latest period_end_date
-    const { data: latestData, error: latestError } = await supabase
-      .from('actual_invoices')
-      .select('period_end_date')
-      .in('meter_id', meterIds)
-      .order('period_end_date', { ascending: false })
-      .limit(1);
+    nmEarliest = nmEarliestRes.data?.[0]?.period_start_date ?? null;
+    nmLatest = nmLatestRes.data?.[0]?.period_end_date ?? null;
 
-    if (latestError) throw latestError;
+    // Pick the overall earliest and latest across both sources
+    const allEarliest = [meteredEarliest, nmEarliest].filter(Boolean) as string[];
+    const allLatest = [meteredLatest, nmLatest].filter(Boolean) as string[];
 
-    const earliest = earliestData?.[0]?.period_start_date || null;
-    const latest = latestData?.[0]?.period_end_date || null;
-
-    const earliestFY = fiscalYearOf(earliest);
-    const latestFY = fiscalYearOf(latest);
+    const earliest = allEarliest.length ? allEarliest.sort()[0] : null;
+    const latest = allLatest.length ? allLatest.sort().reverse()[0] : null;
 
     const now = new Date();
     const currentFY = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
 
-    const minFY = Math.min(
-      earliestFY ?? currentFY,
-      currentFY - 1  // Always include at least one year back
-    );
-    const maxFY = Math.max(
-      latestFY ?? currentFY,
-      currentFY
-    );
+    const earliestFY = fiscalYearOf(earliest);
+    const latestFY = fiscalYearOf(latest);
 
-    // Build fiscal year array inclusive
+    const minFY = Math.min(earliestFY ?? currentFY, currentFY - 1);
+    const maxFY = Math.max(latestFY ?? currentFY, currentFY);
+
     const fiscalYears: number[] = [];
     for (let fy = minFY; fy <= maxFY; fy++) fiscalYears.push(fy);
 
