@@ -18,6 +18,9 @@ export interface Facility {
 export interface UtilityCategory {
   id: string;
   name: string;
+  scope?: number;        // 1, 2, or 3
+  is_metered?: boolean;
+  needs_review?: boolean;
 }
 
 export interface Supplier {
@@ -118,6 +121,7 @@ export interface CSVRow {
   'Input Type'?: string;
   Consumption?: string;
   'Unit Type'?: string;
+  'Sub-category'?: string;
   Provider?: string;
   'Supply Address'?: string;
   'Account Number'?: string;
@@ -143,6 +147,7 @@ export interface MeterSetupRow {
   Address?: string;
   MonthsWithData?: string;
   DataPointCount?: string;
+  Identifier?: string; // optional meter identifier (NMI, account number, etc.)
 }
 
 export interface UploadResult {
@@ -150,4 +155,82 @@ export interface UploadResult {
   imported: number;
   errors: string[];
   warnings?: string[];
+}
+
+// -------------------------------------------------------
+// Facility Groups (non-metered Scope 1 inference)
+// -------------------------------------------------------
+
+export interface FacilityGroup {
+  id: string;
+  client_id: string;
+  supplier_id: string;
+  utility_category_id: string | null;
+  name: string;
+  supplier?: Supplier;
+  utility_category?: UtilityCategory;
+  members?: FacilityGroupMember[];
+}
+
+export interface FacilityGroupMember {
+  id: string;
+  group_id: string;
+  facility_id: string;
+  facility?: Facility;
+}
+
+// -------------------------------------------------------
+// Non-metered records (Scope 1 non-metered, Scope 3)
+// -------------------------------------------------------
+
+export type NonMeteredStatus =
+  | 'IMPORTED'
+  | 'INFERRED_EMPTY'
+  | 'MANUAL'
+  | 'PENDING'
+  | 'ERROR'
+  | 'CONFIRMED';
+
+export interface NonMeteredRecord {
+  id: string;
+  facility_id: string;
+  supplier_id: string | null;
+  utility_category_id: string;
+  invoice_number?: string | null;
+  invoice_date?: string | null;
+  period_start_date: string;
+  period_end_date: string;
+  consumption?: number | null;
+  unit?: string | null;
+  amount?: number | null;
+  sub_category?: string | null;
+  input_type?: string | null;
+  framework?: string | null;
+  version?: string | null;
+  customer?: string | null;
+  status: NonMeteredStatus;
+  inferred_from_id?: string | null;
+  // Joined
+  facility?: Facility;
+  supplier?: Supplier;
+  utility_category?: UtilityCategory;
+}
+
+// UI types for non-metered coverage grid
+
+export interface NonMeteredMonthlyCoverage {
+  month: string;         // e.g. "Jul 25"
+  monthDate: Date;
+  status: NonMeteredStatus | null;
+  record?: NonMeteredRecord;
+}
+
+export interface NonMeteredRowWithCoverage {
+  facilityId: string;
+  facilityName: string;
+  supplierId: string | null;
+  supplierName: string;
+  categoryId: string;
+  categoryName: string;
+  coverage: NonMeteredMonthlyCoverage[];
 }

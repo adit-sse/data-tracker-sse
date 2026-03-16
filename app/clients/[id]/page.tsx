@@ -1,17 +1,30 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import CoverageTable from '@/components/CoverageTable';
 import CoverageSummary from '@/components/CoverageSummary';
+import NonMeteredCoverageTable from '@/components/NonMeteredCoverageTable';
 import FacilitySettingsModal from '@/components/FacilitySettingsModal';
 import InvoiceForm, { InvoiceFormData } from '@/components/InvoiceForm';
 import FacilityForm from '@/components/FacilityForm';
 import MeterForm, { MeterFormData } from '@/components/MeterForm';
 import FileUpload from '@/components/FileUpload';
 import ConfirmModal from '@/components/ConfirmModal';
-import type { Client, MeterWithCoverage, ActualInvoice, UploadResult } from '@/types';
+import FacilityGroupManager from '@/components/FacilityGroupManager';
+import NeedsReviewBanner from '@/components/NeedsReviewBanner';
+import type {
+  Client,
+  MeterWithCoverage,
+  ActualInvoice,
+  UploadResult,
+  NonMeteredRowWithCoverage,
+  NonMeteredMonthlyCoverage,
+  NonMeteredRecord,
+} from '@/types';
+
+type ScopeTab = 'scope2' | 'scope1-metered' | 'scope1-non-metered' | 'scope3';
 
 interface Facility {
   id: string;
@@ -23,19 +36,26 @@ interface Facility {
 export default function ClientDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const clientId = params.id as string;
-  
+
   const [client, setClient] = useState<Client | null>(null);
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [metersWithCoverage, setMetersWithCoverage] = useState<MeterWithCoverage[]>([]);
+  const [nonMeteredRows, setNonMeteredRows] = useState<NonMeteredRowWithCoverage[]>([]);
+  const [scope3Rows, setScope3Rows] = useState<NonMeteredRowWithCoverage[]>([]);
   const [fiscalYears, setFiscalYears] = useState<number[]>([]);
   const [fiscalYear, setFiscalYear] = useState<number>(() => {
     const now = new Date();
     return now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
   });
   const [loading, setLoading] = useState(true);
-  const [editingFacility, setEditingFacility] = useState<Facility | null>(null);
-  const [deletingFacility, setDeletingFacility] = useState<Facility | null>(null);
+  const [activeTab, setActiveTab] = useState<ScopeTab>(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'scope1-metered' || tab === 'scope1-non-metered' || tab === 'scope3') return tab;
+    return 'scope2';
+  });
+
   const [settingsFacility, setSettingsFacility] = useState<Facility | null>(null);
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
   const [invoiceInitialData, setInvoiceInitialData] = useState<any | null>(null);
@@ -43,37 +63,46 @@ export default function ClientDetailPage() {
   const [invoiceListModalOpen, setInvoiceListModalOpen] = useState(false);
   const [invoiceListForPeriod, setInvoiceListForPeriod] = useState<ActualInvoice[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
-  // New modal states
+
   const [addFacilityModalOpen, setAddFacilityModalOpen] = useState(false);
   const [addMeterModalOpen, setAddMeterModalOpen] = useState(false);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadProcessing, setUploadProcessing] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
-  
-  // Invoice deletion state
+  const [groupManagerOpen, setGroupManagerOpen] = useState(false);
+
   const [deletingInvoice, setDeletingInvoice] = useState<ActualInvoice | null>(null);
   const [deletingInvoiceLoading, setDeletingInvoiceLoading] = useState(false);
   const [deletingInvoiceError, setDeletingInvoiceError] = useState<string | null>(null);
-  
+
+  // Non-metered record detail modal
+  const [nmRecordModal, setNmRecordModal] = useState<NonMeteredRecord | null>(null);
+
+  // Non-metered empty cell "mark as received" modal
+  const [nmMarkEmptyModal, setNmMarkEmptyModal] = useState<{
+    row: NonMeteredRowWithCoverage;
+    cell: NonMeteredMonthlyCoverage;
+  } | null>(null);
+
   useEffect(() => {
-    let cancelled = false;
-    
-    const loadData = async () => {
-      await Promise.all([
-        fetchClientData(),
-        fetchFacilities(),
-        fetchCoverage(true), // initial load - show spinner
-        fetchFiscalYears()
-      ]);
-    };
-    
-    loadData();
-    
-    return () => {
-      cancelled = true;
-    };
+    // Persist active tab in URL
+    const current = searchParams.get('tab');
+    if (current !== activeTab) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', activeTab);
+      router.replace(url.pathname + url.search, { scroll: false });
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    Promise.all([
+      fetchClientData(),
+      fetchFacilities(),
+      fetchCoverage(true),
+      fetchNonMeteredCoverage(),
+      fetchFiscalYears(),
+    ]);
   }, [clientId, fiscalYear]);
 
   const fetchFiscalYears = async () => {
@@ -81,7 +110,7 @@ export default function ClientDetailPage() {
       const response = await fetch(`/api/clients/${clientId}/coverage/years`);
       if (!response.ok) return;
       const data = await response.json();
-      if (data.fiscalYears && Array.isArray(data.fiscalYears) && data.fiscalYears.length > 0) {
+      if (data.fiscalYears?.length > 0) {
         setFiscalYears(data.fiscalYears);
         if (!data.fiscalYears.includes(fiscalYear)) {
           setFiscalYear(data.fiscalYears[data.fiscalYears.length - 1]);
@@ -96,85 +125,78 @@ export default function ClientDetailPage() {
       console.error('Error fetching fiscal years:', error);
     }
   };
-  
+
   const fetchClientData = async () => {
     try {
       const response = await fetch(`/api/clients/${clientId}`);
-      if (!response.ok) {
-        setError('Failed to load client');
-        return;
-      }
+      if (!response.ok) { setError('Failed to load client'); return; }
       const data = await response.json();
       setClient(data);
       setError(null);
-    } catch (error) {
-      console.error('Error fetching client:', error);
+    } catch {
       setError('Failed to load client');
     }
   };
-  
+
   const fetchFacilities = async () => {
     try {
       const response = await fetch(`/api/clients/${clientId}/facilities`);
       if (!response.ok) return;
       const data = await response.json();
       setFacilities(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error('Error fetching facilities:', error);
-    }
+    } catch {}
   };
-  
+
   const fetchCoverage = async (showLoading = false) => {
     try {
       if (showLoading) setLoading(true);
       const response = await fetch(`/api/clients/${clientId}/coverage?fiscalYear=${fiscalYear}`);
-      if (!response.ok) {
-        setMetersWithCoverage([]);
-        return;
-      }
+      if (!response.ok) { setMetersWithCoverage([]); return; }
       const data = await response.json();
       setMetersWithCoverage(data.meters || []);
-    } catch (error) {
-      console.error('Error fetching coverage:', error);
+    } catch {
       setMetersWithCoverage([]);
     } finally {
       if (showLoading) setLoading(false);
     }
   };
-  
-  const handleEditFacility = async (name: string, address: string) => {
-    if (!editingFacility) return;
+
+  const fetchNonMeteredCoverage = async () => {
     try {
-      const response = await fetch(`/api/facilities/${editingFacility.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, address })
-      });
-      if (response.ok) {
-        setEditingFacility(null);
-        fetchFacilities();
-      }
-    } catch (error) {
-      console.error('Error updating facility:', error);
+      const [scope1Res, scope3Res] = await Promise.all([
+        fetch(`/api/clients/${clientId}/coverage/non-metered?fiscalYear=${fiscalYear}&scope=1`),
+        fetch(`/api/clients/${clientId}/coverage/non-metered?fiscalYear=${fiscalYear}&scope=3`),
+      ]);
+      const scope1Data = scope1Res.ok ? await scope1Res.json() : { rows: [] };
+      const scope3Data = scope3Res.ok ? await scope3Res.json() : { rows: [] };
+      setNonMeteredRows(scope1Data.rows || []);
+      setScope3Rows(scope3Data.rows || []);
+    } catch {
+      setNonMeteredRows([]);
+      setScope3Rows([]);
     }
   };
-  
-  const handleDeleteFacility = async () => {
-    if (!deletingFacility) return;
-    try {
-      const response = await fetch(`/api/facilities/${deletingFacility.id}`, {
-        method: 'DELETE'
-      });
-      if (response.ok) {
-        setDeletingFacility(null);
-        fetchFacilities();
-        fetchCoverage();
-      }
-    } catch (error) {
-      console.error('Error deleting facility:', error);
-    }
+
+  // Filter metered coverage by scope
+  const scope2Meters = metersWithCoverage.filter(
+    (m) => (m.meter.utility_category as any)?.scope === 2
+  );
+  const scope1MeteredMeters = metersWithCoverage.filter(
+    (m) =>
+      (m.meter.utility_category as any)?.scope === 1 &&
+      (m.meter.utility_category as any)?.is_metered === true
+  );
+
+  const handleTabChange = (tab: ScopeTab) => {
+    setActiveTab(tab);
   };
-  
+
+  const refreshAll = () => {
+    fetchFacilities();
+    fetchCoverage();
+    fetchNonMeteredCoverage();
+  };
+
   if (error) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 flex items-center justify-center">
@@ -186,10 +208,7 @@ export default function ClientDetailPage() {
           </div>
           <h3 className="text-lg font-semibold text-gray-900">{error}</h3>
           <div className="mt-6 flex gap-3 justify-center">
-            <button
-              onClick={() => { setError(null); fetchClientData(); }}
-              className="bg-emerald-600 text-white px-5 py-2.5 rounded-lg hover:bg-emerald-700 font-medium transition-colors"
-            >
+            <button onClick={() => { setError(null); fetchClientData(); }} className="bg-emerald-600 text-white px-5 py-2.5 rounded-lg hover:bg-emerald-700 font-medium transition-colors">
               Try Again
             </button>
             <Link href="/" className="px-5 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors">
@@ -200,7 +219,7 @@ export default function ClientDetailPage() {
       </div>
     );
   }
-  
+
   if (!client) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 flex items-center justify-center">
@@ -214,7 +233,7 @@ export default function ClientDetailPage() {
       </div>
     );
   }
-  
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50">
       {/* Header */}
@@ -222,20 +241,15 @@ export default function ClientDetailPage() {
         <div className="mx-auto px-4 sm:px-6 lg:px-10 max-w-[1600px]">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-3">
-              <Link
-                href="/"
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-              >
+              <Link href="/" className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
               </Link>
               <div className="w-px h-6 bg-gray-200" />
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">{client.name}</h1>
-              </div>
+              <h1 className="text-xl font-bold text-gray-900">{client.name}</h1>
             </div>
-            
+
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setAddFacilityModalOpen(true)}
@@ -256,11 +270,7 @@ export default function ClientDetailPage() {
                 Add Meter
               </button>
               <button
-                onClick={() => {
-                  setInvoiceInitialData(null);
-                  setInvoiceInitialFacilityId(null);
-                  setInvoiceModalOpen(true);
-                }}
+                onClick={() => { setInvoiceInitialData(null); setInvoiceInitialFacilityId(null); setInvoiceModalOpen(true); }}
                 className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -268,13 +278,19 @@ export default function ClientDetailPage() {
                 </svg>
                 Add Invoice
               </button>
+              <button
+                onClick={() => setGroupManagerOpen(true)}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
+                title="Manage facility groups for non-metered inference"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Groups
+              </button>
               <div className="w-px h-6 bg-gray-200 mx-1" />
               <button
-                onClick={() => {
-                  setUploadFile(null);
-                  setUploadResult(null);
-                  setUploadModalOpen(true);
-                }}
+                onClick={() => { setUploadFile(null); setUploadResult(null); setUploadModalOpen(true); }}
                 className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors font-medium text-sm flex items-center gap-1.5"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -286,12 +302,13 @@ export default function ClientDetailPage() {
           </div>
         </div>
       </header>
-      
-      {/* Blue accent bar */}
+
       <div className="h-1 bg-gradient-to-r from-cyan-500 via-blue-500 to-cyan-500" />
-      
-      {/* Main Content */}
+
       <main className="mx-auto px-4 sm:px-6 lg:px-10 max-w-[1600px] py-8 space-y-6">
+        {/* Needs-review banner */}
+        <NeedsReviewBanner />
+
         {/* Facilities Section */}
         {facilities.length > 0 && (
           <section>
@@ -342,7 +359,7 @@ export default function ClientDetailPage() {
             </div>
           </section>
         )}
-        
+
         {/* Coverage Dashboard */}
         <section>
           <div className="flex items-center justify-between mb-4">
@@ -364,7 +381,35 @@ export default function ClientDetailPage() {
               </select>
             </div>
           </div>
-          
+
+          {/* Scope tabs */}
+          <div className="flex gap-1 mb-4 bg-gray-100 rounded-lg p-1 w-fit">
+            <TabButton active={activeTab === 'scope2'} onClick={() => handleTabChange('scope2')}>
+              Scope 2 — Electricity
+              {scope2Meters.length > 0 && (
+                <span className="ml-1.5 text-xs bg-white/60 rounded px-1.5 py-0.5">{scope2Meters.length}</span>
+              )}
+            </TabButton>
+            <TabButton active={activeTab === 'scope1-metered'} onClick={() => handleTabChange('scope1-metered')}>
+              Scope 1 — Gas
+              {scope1MeteredMeters.length > 0 && (
+                <span className="ml-1.5 text-xs bg-white/60 rounded px-1.5 py-0.5">{scope1MeteredMeters.length}</span>
+              )}
+            </TabButton>
+            <TabButton active={activeTab === 'scope1-non-metered'} onClick={() => handleTabChange('scope1-non-metered')}>
+              Scope 1 — Non-Metered
+              {nonMeteredRows.length > 0 && (
+                <span className="ml-1.5 text-xs bg-white/60 rounded px-1.5 py-0.5">{nonMeteredRows.length}</span>
+              )}
+            </TabButton>
+            <TabButton active={activeTab === 'scope3'} onClick={() => handleTabChange('scope3')}>
+              Scope 3
+              {scope3Rows.length > 0 && (
+                <span className="ml-1.5 text-xs bg-white/60 rounded px-1.5 py-0.5">{scope3Rows.length}</span>
+              )}
+            </TabButton>
+          </div>
+
           {loading ? (
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
               <div className="relative w-12 h-12 mx-auto">
@@ -375,35 +420,69 @@ export default function ClientDetailPage() {
             </div>
           ) : (
             <>
-              <CoverageSummary metersWithCoverage={metersWithCoverage} />
-              <CoverageTable 
-                metersWithCoverage={metersWithCoverage} 
-                fiscalYear={fiscalYear}
-                onQuickAddInvoice={({ meterId, facilityId, period_start_date, period_end_date, invoices }) => {
-                  if (invoices && invoices.length > 0) {
-                    setInvoiceListForPeriod(invoices);
-                    setInvoiceListModalOpen(true);
-                  } else {
-                    setInvoiceModalOpen(true);
-                    setInvoiceInitialData({ meter_id: String(meterId), period_start_date, period_end_date });
-                    setInvoiceInitialFacilityId(facilityId ? String(facilityId) : '');
-                  }
-                }}
-                onMeterUpdated={fetchCoverage}
-              />
+              {activeTab === 'scope2' && (
+                <>
+                  <CoverageSummary metersWithCoverage={scope2Meters} />
+                  <CoverageTable
+                    metersWithCoverage={scope2Meters}
+                    fiscalYear={fiscalYear}
+                    onQuickAddInvoice={({ meterId, facilityId, period_start_date, period_end_date, invoices }) => {
+                      if (invoices && invoices.length > 0) {
+                        setInvoiceListForPeriod(invoices);
+                        setInvoiceListModalOpen(true);
+                      } else {
+                        setInvoiceModalOpen(true);
+                        setInvoiceInitialData({ meter_id: String(meterId), period_start_date, period_end_date });
+                        setInvoiceInitialFacilityId(facilityId ? String(facilityId) : '');
+                      }
+                    }}
+                    onMeterUpdated={fetchCoverage}
+                  />
+                </>
+              )}
+
+              {activeTab === 'scope1-metered' && (
+                <>
+                  <CoverageSummary metersWithCoverage={scope1MeteredMeters} />
+                  <CoverageTable
+                    metersWithCoverage={scope1MeteredMeters}
+                    fiscalYear={fiscalYear}
+                    onQuickAddInvoice={({ meterId, facilityId, period_start_date, period_end_date, invoices }) => {
+                      if (invoices && invoices.length > 0) {
+                        setInvoiceListForPeriod(invoices);
+                        setInvoiceListModalOpen(true);
+                      } else {
+                        setInvoiceModalOpen(true);
+                        setInvoiceInitialData({ meter_id: String(meterId), period_start_date, period_end_date });
+                        setInvoiceInitialFacilityId(facilityId ? String(facilityId) : '');
+                      }
+                    }}
+                    onMeterUpdated={fetchCoverage}
+                  />
+                </>
+              )}
+
+              {activeTab === 'scope1-non-metered' && (
+                <NonMeteredCoverageTable
+                  rows={nonMeteredRows}
+                  fiscalYear={fiscalYear}
+                  onCellClick={(record) => setNmRecordModal(record)}
+                  onEmptyCellClick={(row, cell) => setNmMarkEmptyModal({ row, cell })}
+                />
+              )}
+
+              {activeTab === 'scope3' && (
+                <NonMeteredCoverageTable
+                  rows={scope3Rows}
+                  fiscalYear={fiscalYear}
+                  onCellClick={(record) => setNmRecordModal(record)}
+                  onEmptyCellClick={(row, cell) => setNmMarkEmptyModal({ row, cell })}
+                />
+              )}
             </>
           )}
         </section>
       </main>
-      
-      {/* Edit Facility Modal */}
-      {editingFacility && (
-        <EditFacilityModal
-          facility={editingFacility}
-          onSave={handleEditFacility}
-          onCancel={() => setEditingFacility(null)}
-        />
-      )}
 
       {/* Invoice List Modal */}
       {invoiceListModalOpen && invoiceListForPeriod && (
@@ -411,17 +490,14 @@ export default function ClientDetailPage() {
           <div className="bg-white rounded-xl p-6 max-w-2xl w-full shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-xl font-semibold text-gray-900">Invoices for Period ({invoiceListForPeriod.length})</h2>
-              <button 
-                onClick={() => { setInvoiceListModalOpen(false); setInvoiceListForPeriod(null); }} 
-                className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
-              >
+              <button onClick={() => { setInvoiceListModalOpen(false); setInvoiceListForPeriod(null); }} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
             <div className="space-y-3">
-              {invoiceListForPeriod.map(inv => (
+              {invoiceListForPeriod.map((inv) => (
                 <div key={inv.id} className="border border-gray-100 rounded-lg p-4 hover:border-gray-200 transition-colors">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
@@ -436,7 +512,7 @@ export default function ClientDetailPage() {
                     <div className="flex items-center gap-2 ml-4">
                       <button
                         onClick={() => {
-                          setInvoiceInitialData({ 
+                          setInvoiceInitialData({
                             id: inv.id,
                             meter_id: String(inv.meter_id),
                             invoice_number: inv.invoice_number || '',
@@ -449,7 +525,7 @@ export default function ClientDetailPage() {
                             version: inv.version || '',
                             input_type: inv.input_type || '',
                             emissions_factor: inv.emissions_factor,
-                            customer: inv.customer || ''
+                            customer: inv.customer || '',
                           });
                           setInvoiceInitialFacilityId(inv.meter?.facility_id ? String(inv.meter.facility_id) : '');
                           setInvoiceListModalOpen(false);
@@ -461,10 +537,7 @@ export default function ClientDetailPage() {
                         Edit
                       </button>
                       <button
-                        onClick={() => {
-                          setDeletingInvoice(inv);
-                          setDeletingInvoiceError(null);
-                        }}
+                        onClick={() => { setDeletingInvoice(inv); setDeletingInvoiceError(null); }}
                         className="px-3 py-1.5 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
                       >
                         Delete
@@ -476,11 +549,7 @@ export default function ClientDetailPage() {
               <button
                 onClick={() => {
                   const first = invoiceListForPeriod[0];
-                  setInvoiceInitialData({ 
-                    meter_id: String(first.meter_id), 
-                    period_start_date: first.period_start_date, 
-                    period_end_date: first.period_end_date 
-                  });
+                  setInvoiceInitialData({ meter_id: String(first.meter_id), period_start_date: first.period_start_date, period_end_date: first.period_end_date });
                   setInvoiceInitialFacilityId(first.meter?.facility_id ? String(first.meter.facility_id) : '');
                   setInvoiceListModalOpen(false);
                   setInvoiceListForPeriod(null);
@@ -501,10 +570,7 @@ export default function ClientDetailPage() {
           <div className="bg-white rounded-xl p-6 max-w-2xl w-full shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-xl font-semibold text-gray-900">{invoiceInitialData?.id ? 'Edit Invoice' : 'Add Invoice'}</h2>
-              <button 
-                onClick={() => setInvoiceModalOpen(false)} 
-                className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
-              >
+              <button onClick={() => setInvoiceModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -520,22 +586,16 @@ export default function ClientDetailPage() {
                     const res = await fetch(`/api/clients/${clientId}/invoices/${data.id}`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(data)
+                      body: JSON.stringify(data),
                     });
-                    if (!res.ok) {
-                      const err = await res.json();
-                      throw new Error(err.error || 'Failed to update invoice');
-                    }
+                    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to update invoice'); }
                   } else {
                     const res = await fetch(`/api/clients/${clientId}/invoices`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(data)
+                      body: JSON.stringify(data),
                     });
-                    if (!res.ok) {
-                      const err = await res.json();
-                      throw new Error(err.error || 'Failed to create invoice');
-                    }
+                    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to create invoice'); }
                   }
                   setInvoiceModalOpen(false);
                   setInvoiceInitialData(null);
@@ -551,52 +611,49 @@ export default function ClientDetailPage() {
           </div>
         </div>
       )}
-      
+
+      {/* Non-metered record detail modal */}
+      {nmRecordModal && (
+        <NonMeteredRecordModal
+          record={nmRecordModal}
+          onClose={() => setNmRecordModal(null)}
+          onMarkedReceived={() => {
+            setNmRecordModal(null);
+            fetchNonMeteredCoverage();
+          }}
+          onUnmarked={() => {
+            setNmRecordModal(null);
+            fetchNonMeteredCoverage();
+          }}
+          onStatusChanged={() => {
+            setNmRecordModal(null);
+            fetchNonMeteredCoverage();
+          }}
+        />
+      )}
+
+      {/* Non-metered empty cell — mark as received modal */}
+      {nmMarkEmptyModal && (
+        <NmMarkEmptyModal
+          row={nmMarkEmptyModal.row}
+          cell={nmMarkEmptyModal.cell}
+          onClose={() => setNmMarkEmptyModal(null)}
+          onMarked={() => {
+            setNmMarkEmptyModal(null);
+            fetchNonMeteredCoverage();
+          }}
+        />
+      )}
+
       {/* Facility Settings Modal */}
       {settingsFacility && (
         <FacilitySettingsModal
           facility={settingsFacility}
           clientId={clientId}
           onClose={() => setSettingsFacility(null)}
-          onFacilityDeleted={() => { setSettingsFacility(null); fetchFacilities(); fetchCoverage(); }}
+          onFacilityDeleted={() => { setSettingsFacility(null); refreshAll(); }}
           onFacilityUpdated={() => { fetchFacilities(); fetchCoverage(); }}
         />
-      )}
-
-      {/* Delete Facility Modal */}
-      {deletingFacility && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
-                <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-              </div>
-              <h2 className="text-xl font-semibold text-gray-900">Delete Facility</h2>
-            </div>
-            <p className="text-gray-600 mb-2">
-              Are you sure you want to delete <span className="font-medium text-gray-900">{deletingFacility.name}</span>?
-            </p>
-            <p className="text-sm text-gray-500 mb-5">
-              This will also delete {deletingFacility.meterCount} meter(s) and their invoices.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setDeletingFacility(null)}
-                className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDeleteFacility}
-                className="flex-1 bg-red-600 text-white px-4 py-2.5 rounded-lg hover:bg-red-700 font-medium transition-colors"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Add Facility Modal */}
@@ -605,10 +662,7 @@ export default function ClientDetailPage() {
           <div className="bg-white rounded-xl p-6 max-w-lg w-full shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-xl font-semibold text-gray-900">Add New Facility</h2>
-              <button
-                onClick={() => setAddFacilityModalOpen(false)}
-                className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
-              >
+              <button onClick={() => setAddFacilityModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -620,7 +674,7 @@ export default function ClientDetailPage() {
                 const response = await fetch(`/api/clients/${clientId}/facilities`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(data)
+                  body: JSON.stringify(data),
                 });
                 if (!response.ok) throw new Error('Failed to create facility');
                 setAddFacilityModalOpen(false);
@@ -639,10 +693,7 @@ export default function ClientDetailPage() {
           <div className="bg-white rounded-xl p-6 max-w-lg w-full shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-xl font-semibold text-gray-900">Add New Meter</h2>
-              <button
-                onClick={() => setAddMeterModalOpen(false)}
-                className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
-              >
+              <button onClick={() => setAddMeterModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -654,7 +705,7 @@ export default function ClientDetailPage() {
                 const response = await fetch('/api/meters', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(data)
+                  body: JSON.stringify(data),
                 });
                 if (!response.ok) {
                   const result = await response.json();
@@ -676,17 +727,13 @@ export default function ClientDetailPage() {
           <div className="bg-white rounded-xl p-6 max-w-2xl w-full shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-xl font-semibold text-gray-900">Upload Invoices</h2>
-              <button
-                onClick={() => setUploadModalOpen(false)}
-                className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
-              >
+              <button onClick={() => setUploadModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
-            
-            {/* Instructions */}
+
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
               <h3 className="font-semibold text-blue-900 mb-2 text-sm">Supported File Formats</h3>
               <div className="space-y-3">
@@ -699,24 +746,22 @@ export default function ClientDetailPage() {
                   </ul>
                 </div>
                 <div>
-                  <p className="text-xs font-medium text-blue-900 mb-1">Format 2: Detailed Invoices</p>
+                  <p className="text-xs font-medium text-blue-900 mb-1">Format 2: Detailed Invoices / NGERS</p>
                   <ul className="text-xs text-blue-800 space-y-0.5 list-disc list-inside ml-2">
                     <li>Columns: Company, Facility, Category, Provider, Date Range, etc.</li>
+                    <li>Metered (Electricity, Gas): NMI / MIRN / Account Number required</li>
+                    <li>Non-metered (Diesel, LPG, Fuel, Oil etc.): no identifier needed</li>
                     <li>Date Range: DD/MM/YYYY-DD/MM/YYYY</li>
-                    <li>Includes consumption, amount, and invoice details</li>
                   </ul>
                 </div>
               </div>
             </div>
-            
-            <FileUpload 
-              onFileSelect={(file) => {
-                setUploadFile(file);
-                setUploadResult(null);
-              }}
+
+            <FileUpload
+              onFileSelect={(file) => { setUploadFile(file); setUploadResult(null); }}
               isProcessing={uploadProcessing}
             />
-            
+
             {uploadFile && !uploadResult && (
               <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
                 <div className="flex items-center justify-between">
@@ -735,22 +780,12 @@ export default function ClientDetailPage() {
                       try {
                         const formData = new FormData();
                         formData.append('file', uploadFile);
-                        const response = await fetch(`/api/clients/${clientId}/upload`, {
-                          method: 'POST',
-                          body: formData
-                        });
+                        const response = await fetch(`/api/clients/${clientId}/upload`, { method: 'POST', body: formData });
                         const data = await response.json();
                         setUploadResult(data);
-                        if (data.success) {
-                          fetchFacilities();
-                          fetchCoverage();
-                        }
-                      } catch (error) {
-                        setUploadResult({
-                          success: false,
-                          imported: 0,
-                          errors: ['Failed to process file. Please try again.']
-                        });
+                        if (data.success) refreshAll();
+                      } catch {
+                        setUploadResult({ success: false, imported: 0, errors: ['Failed to process file. Please try again.'] });
                       } finally {
                         setUploadProcessing(false);
                       }
@@ -763,11 +798,9 @@ export default function ClientDetailPage() {
                 </div>
               </div>
             )}
-            
+
             {uploadResult && (
-              <div className={`mt-4 rounded-lg p-4 ${
-                uploadResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
-              }`}>
+              <div className={`mt-4 rounded-lg p-4 ${uploadResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
                 <div className="flex items-start gap-3">
                   {uploadResult.success ? (
                     <svg className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -783,9 +816,9 @@ export default function ClientDetailPage() {
                       {uploadResult.success ? 'Import Complete' : 'Import Failed'}
                     </h3>
                     <p className={`mt-1 text-sm ${uploadResult.success ? 'text-green-800' : 'text-red-800'}`}>
-                      {uploadResult.imported} invoice{uploadResult.imported !== 1 ? 's' : ''} imported
+                      {uploadResult.imported} record{uploadResult.imported !== 1 ? 's' : ''} imported
                     </p>
-                    {uploadResult.errors && uploadResult.errors.length > 0 && (
+                    {uploadResult.errors?.length > 0 && (
                       <div className="mt-2 bg-white rounded border border-red-200 p-2 max-h-32 overflow-y-auto">
                         {uploadResult.errors.slice(0, 5).map((error, idx) => (
                           <p key={idx} className="text-xs text-red-800">{error}</p>
@@ -796,10 +829,7 @@ export default function ClientDetailPage() {
                       </div>
                     )}
                     {uploadResult.success && (
-                      <button
-                        onClick={() => setUploadModalOpen(false)}
-                        className="mt-3 text-sm text-emerald-600 hover:text-emerald-700 font-medium"
-                      >
+                      <button onClick={() => setUploadModalOpen(false)} className="mt-3 text-sm text-emerald-600 hover:text-emerald-700 font-medium">
                         Close
                       </button>
                     )}
@@ -811,18 +841,21 @@ export default function ClientDetailPage() {
         </div>
       )}
 
+      {/* Facility Group Manager */}
+      {groupManagerOpen && (
+        <FacilityGroupManager
+          clientId={clientId}
+          facilities={facilities}
+          onClose={() => setGroupManagerOpen(false)}
+          onGroupSaved={fetchNonMeteredCoverage}
+        />
+      )}
+
       {/* Delete Invoice Confirmation Modal */}
       {deletingInvoice && (
         <ConfirmModal
           title="Delete Invoice"
-          message={
-            <>
-              Are you sure you want to delete this invoice?
-              {deletingInvoice.invoice_number && (
-                <span className="font-medium"> ({deletingInvoice.invoice_number})</span>
-              )}
-            </>
-          }
+          message={<>Are you sure you want to delete this invoice?{deletingInvoice.invoice_number && <span className="font-medium"> ({deletingInvoice.invoice_number})</span>}</>}
           subMessage={`Period: ${deletingInvoice.period_start_date} → ${deletingInvoice.period_end_date}`}
           confirmLabel="Delete"
           cancelLabel="Cancel"
@@ -832,123 +865,393 @@ export default function ClientDetailPage() {
             setDeletingInvoiceLoading(true);
             setDeletingInvoiceError(null);
             try {
-              const res = await fetch(`/api/clients/${clientId}/invoices/${deletingInvoice.id}`, {
-                method: 'DELETE'
-              });
+              const res = await fetch(`/api/clients/${clientId}/invoices/${deletingInvoice.id}`, { method: 'DELETE' });
               if (!res.ok) {
                 const err = await res.json();
                 setDeletingInvoiceError(err.error || 'Failed to delete invoice');
                 setDeletingInvoiceLoading(false);
                 return;
               }
-              // Remove from list
               if (invoiceListForPeriod) {
-                const updated = invoiceListForPeriod.filter(i => i.id !== deletingInvoice.id);
-                if (updated.length === 0) {
-                  setInvoiceListModalOpen(false);
-                  setInvoiceListForPeriod(null);
-                } else {
-                  setInvoiceListForPeriod(updated);
-                }
+                const updated = invoiceListForPeriod.filter((i) => i.id !== deletingInvoice.id);
+                if (updated.length === 0) { setInvoiceListModalOpen(false); setInvoiceListForPeriod(null); }
+                else setInvoiceListForPeriod(updated);
               }
               setDeletingInvoice(null);
               setDeletingInvoiceLoading(false);
               fetchCoverage();
-            } catch (err) {
+            } catch {
               setDeletingInvoiceError('Failed to delete invoice');
               setDeletingInvoiceLoading(false);
             }
           }}
-          onCancel={() => {
-            setDeletingInvoice(null);
-            setDeletingInvoiceError(null);
-          }}
+          onCancel={() => { setDeletingInvoice(null); setDeletingInvoiceError(null); }}
         />
       )}
     </div>
   );
 }
 
-function EditFacilityModal({ 
-  facility, 
-  onSave, 
-  onCancel 
-}: { 
-  facility: Facility; 
-  onSave: (name: string, address: string) => void; 
-  onCancel: () => void;
+// -------------------------------------------------------
+// Tab button
+// -------------------------------------------------------
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
 }) {
-  const [name, setName] = useState(facility.name);
-  const [address, setAddress] = useState(facility.address || '');
-  const [saving, setSaving] = useState(false);
-  
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    await onSave(name, address);
-    setSaving(false);
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+        active
+          ? 'bg-white text-gray-900 shadow-sm'
+          : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// -------------------------------------------------------
+// Non-metered record detail modal
+// -------------------------------------------------------
+function NonMeteredRecordModal({
+  record,
+  onClose,
+  onMarkedReceived,
+  onUnmarked,
+  onStatusChanged,
+}: {
+  record: NonMeteredRecord;
+  onClose: () => void;
+  onMarkedReceived?: () => void;
+  onUnmarked?: () => void;
+  onStatusChanged?: () => void;
+}) {
+  const [acting, setActing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const statusLabel: Record<string, string> = {
+    IMPORTED: 'Imported',
+    INFERRED_EMPTY: 'Inferred Empty',
+    MANUAL: 'Marked as Received',
   };
-  
+
+  const statusColor: Record<string, string> = {
+    IMPORTED: 'bg-green-100 text-green-700',
+    INFERRED_EMPTY: 'bg-slate-100 text-slate-700',
+    MANUAL: 'bg-green-100 text-green-700',
+  };
+
+  const handleMarkReceived = async () => {
+    setActing(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/non-metered-records/${record.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'MANUAL' }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        setActionError(err.error || 'Failed to update record');
+        return;
+      }
+      onMarkedReceived?.();
+    } catch {
+      setActionError('Failed to update record');
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const handleChangeToInferredEmpty = async () => {
+    setActing(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/non-metered-records/${record.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'INFERRED_EMPTY' }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        setActionError(err.error || 'Failed to update record');
+        return;
+      }
+      onStatusChanged?.();
+    } catch {
+      setActionError('Failed to update record');
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const handleUnmark = async () => {
+    setActing(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/non-metered-records/${record.id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        setActionError(err.error || 'Failed to remove record');
+        return;
+      }
+      onUnmarked?.();
+    } catch {
+      setActionError('Failed to remove record');
+    } finally {
+      setActing(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-xl font-semibold text-gray-900">Edit Facility</h2>
-          <button
-            onClick={onCancel}
-            className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
-          >
+          <h2 className="text-xl font-semibold text-gray-900">Record Details</h2>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
-        <form onSubmit={handleSubmit}>
-          <div className="mb-4">
-            <label htmlFor="facilityName" className="block text-sm font-medium text-gray-700 mb-1.5">
-              Facility Name <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              id="facilityName"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
-              required
-              autoFocus
-            />
+
+        <div className="space-y-3 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-500">Status</span>
+            <span className={`px-2 py-0.5 rounded text-xs font-semibold ${statusColor[record.status] || ''}`}>
+              {statusLabel[record.status] || record.status}
+            </span>
           </div>
-          <div className="mb-5">
-            <label htmlFor="facilityAddress" className="block text-sm font-medium text-gray-700 mb-1.5">
-              Address
-            </label>
-            <input
-              type="text"
-              id="facilityAddress"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
-              placeholder="Optional"
-            />
+          <div className="flex justify-between">
+            <span className="text-gray-500">Period</span>
+            <span className="text-gray-900 font-medium">{record.period_start_date} → {record.period_end_date}</span>
           </div>
-          <div className="flex gap-3">
+          {record.invoice_number && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Invoice No.</span>
+              <span className="text-gray-900">{record.invoice_number}</span>
+            </div>
+          )}
+          {record.invoice_date && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Invoice Date</span>
+              <span className="text-gray-900">{record.invoice_date}</span>
+            </div>
+          )}
+          {record.consumption != null && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Consumption</span>
+              <span className="text-gray-900">{record.consumption.toLocaleString()} {record.unit || ''}</span>
+            </div>
+          )}
+          {record.amount != null && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Amount</span>
+              <span className="text-gray-900">${record.amount.toLocaleString()}</span>
+            </div>
+          )}
+          {record.sub_category && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Sub-category</span>
+              <span className="text-gray-900">{record.sub_category}</span>
+            </div>
+          )}
+          {record.input_type && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Input Type</span>
+              <span className="text-gray-900">{record.input_type}</span>
+            </div>
+          )}
+          {record.framework && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Framework</span>
+              <span className="text-gray-900">{record.framework} {record.version}</span>
+            </div>
+          )}
+          {record.customer && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Customer</span>
+              <span className="text-gray-900">{record.customer}</span>
+            </div>
+          )}
+          {record.status === 'INFERRED_EMPTY' && (
+            <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <p className="text-xs text-slate-600">
+                This record was automatically inferred. The facility had zero consumption for this period based on other facilities in the same group receiving invoices.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {actionError && (
+          <div className="mt-4 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+            {actionError}
+          </div>
+        )}
+
+        <div className="mt-5 flex flex-col gap-2">
+          {record.status === 'INFERRED_EMPTY' && (
             <button
-              type="button"
-              onClick={onCancel}
-              disabled={saving}
-              className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors disabled:opacity-50"
+              onClick={handleMarkReceived}
+              disabled={acting}
+              className="w-full bg-green-600 text-white px-4 py-2.5 rounded-lg hover:bg-green-700 font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              Cancel
+              {acting ? 'Saving…' : (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Mark as Received
+                </>
+              )}
             </button>
+          )}
+          {record.status !== 'INFERRED_EMPTY' && (
             <button
-              type="submit"
-              disabled={saving}
-              className="flex-1 bg-emerald-600 text-white px-4 py-2.5 rounded-lg hover:bg-emerald-700 font-medium transition-colors disabled:opacity-50"
+              onClick={handleChangeToInferredEmpty}
+              disabled={acting}
+              className="w-full bg-slate-500 text-white px-4 py-2.5 rounded-lg hover:bg-slate-600 font-medium transition-colors disabled:opacity-50"
             >
-              {saving ? 'Saving...' : 'Save Changes'}
+              {acting ? 'Saving…' : 'Change to Inferred Empty'}
             </button>
+          )}
+          <button
+            onClick={handleUnmark}
+            disabled={acting}
+            className="w-full px-4 py-2.5 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-medium transition-colors disabled:opacity-50"
+          >
+            {acting ? 'Removing…' : 'Remove Record (No Data)'}
+          </button>
+          <button
+            onClick={onClose}
+            disabled={acting}
+            className="w-full px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// -------------------------------------------------------
+// Non-metered empty cell — mark as received modal
+// -------------------------------------------------------
+function NmMarkEmptyModal({
+  row,
+  cell,
+  onClose,
+  onMarked,
+}: {
+  row: NonMeteredRowWithCoverage;
+  cell: NonMeteredMonthlyCoverage;
+  onClose: () => void;
+  onMarked: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Derive first/last day of the month from cell.monthDate
+  // monthDate may be a plain string after JSON serialisation — always re-wrap
+  const monthDate = new Date(cell.monthDate);
+  const periodStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1)
+    .toISOString().split('T')[0];
+  const periodEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0)
+    .toISOString().split('T')[0];
+
+  const handleMark = async (status: 'MANUAL' | 'INFERRED_EMPTY') => {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/non-metered-records', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          facility_id: row.facilityId,
+          supplier_id: row.supplierId,
+          utility_category_id: row.categoryId,
+          period_start_date: periodStart,
+          period_end_date: periodEnd,
+          status,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        setError(err.error || 'Failed to create record');
+        return;
+      }
+      onMarked();
+    } catch {
+      setError('Failed to create record');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-xl p-6 max-w-sm w-full shadow-xl">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Update Coverage</h2>
+          <button onClick={onClose} disabled={saving} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <p className="text-sm text-gray-600 mb-1">
+          Set status for <span className="font-medium text-gray-900">{cell.month}</span>:
+        </p>
+        <ul className="text-sm text-gray-700 mb-5 space-y-0.5 pl-4 list-disc">
+          <li>{row.facilityName}</li>
+          <li>{row.supplierName}</li>
+          <li>{row.categoryName}</li>
+        </ul>
+
+        {error && (
+          <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-4">
+            {error}
           </div>
-        </form>
+        )}
+
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={() => handleMark('MANUAL')}
+            disabled={saving}
+            className="w-full bg-green-600 text-white px-4 py-2.5 rounded-lg hover:bg-green-700 font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            {saving ? 'Saving…' : 'Mark as Received'}
+          </button>
+          <button
+            onClick={() => handleMark('INFERRED_EMPTY')}
+            disabled={saving}
+            className="w-full bg-slate-500 text-white px-4 py-2.5 rounded-lg hover:bg-slate-600 font-medium transition-colors disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Mark as Inferred Empty'}
+          </button>
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="w-full px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );
