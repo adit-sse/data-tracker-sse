@@ -621,6 +621,14 @@ export default function ClientDetailPage() {
             setNmRecordModal(null);
             fetchNonMeteredCoverage();
           }}
+          onUnmarked={() => {
+            setNmRecordModal(null);
+            fetchNonMeteredCoverage();
+          }}
+          onStatusChanged={() => {
+            setNmRecordModal(null);
+            fetchNonMeteredCoverage();
+          }}
         />
       )}
 
@@ -917,13 +925,17 @@ function NonMeteredRecordModal({
   record,
   onClose,
   onMarkedReceived,
+  onUnmarked,
+  onStatusChanged,
 }: {
   record: NonMeteredRecord;
   onClose: () => void;
   onMarkedReceived?: () => void;
+  onUnmarked?: () => void;
+  onStatusChanged?: () => void;
 }) {
-  const [marking, setMarking] = useState(false);
-  const [markError, setMarkError] = useState<string | null>(null);
+  const [acting, setActing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const statusLabel: Record<string, string> = {
     IMPORTED: 'Imported',
@@ -938,8 +950,8 @@ function NonMeteredRecordModal({
   };
 
   const handleMarkReceived = async () => {
-    setMarking(true);
-    setMarkError(null);
+    setActing(true);
+    setActionError(null);
     try {
       const res = await fetch(`/api/non-metered-records/${record.id}`, {
         method: 'PATCH',
@@ -948,14 +960,56 @@ function NonMeteredRecordModal({
       });
       if (!res.ok) {
         const err = await res.json();
-        setMarkError(err.error || 'Failed to update record');
+        setActionError(err.error || 'Failed to update record');
         return;
       }
       onMarkedReceived?.();
     } catch {
-      setMarkError('Failed to update record');
+      setActionError('Failed to update record');
     } finally {
-      setMarking(false);
+      setActing(false);
+    }
+  };
+
+  const handleChangeToInferredEmpty = async () => {
+    setActing(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/non-metered-records/${record.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'INFERRED_EMPTY' }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        setActionError(err.error || 'Failed to update record');
+        return;
+      }
+      onStatusChanged?.();
+    } catch {
+      setActionError('Failed to update record');
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const handleUnmark = async () => {
+    setActing(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/non-metered-records/${record.id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        setActionError(err.error || 'Failed to remove record');
+        return;
+      }
+      onUnmarked?.();
+    } catch {
+      setActionError('Failed to remove record');
+    } finally {
+      setActing(false);
     }
   };
 
@@ -1039,22 +1093,20 @@ function NonMeteredRecordModal({
           )}
         </div>
 
-        {markError && (
+        {actionError && (
           <div className="mt-4 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-            {markError}
+            {actionError}
           </div>
         )}
 
-        <div className="mt-5 flex gap-3">
-          {record.status === 'INFERRED_EMPTY' && onMarkedReceived && (
+        <div className="mt-5 flex flex-col gap-2">
+          {record.status === 'INFERRED_EMPTY' && (
             <button
               onClick={handleMarkReceived}
-              disabled={marking}
-              className="flex-1 bg-green-600 text-white px-4 py-2.5 rounded-lg hover:bg-green-700 font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              disabled={acting}
+              className="w-full bg-green-600 text-white px-4 py-2.5 rounded-lg hover:bg-green-700 font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {marking ? (
-                'Saving…'
-              ) : (
+              {acting ? 'Saving…' : (
                 <>
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -1064,9 +1116,26 @@ function NonMeteredRecordModal({
               )}
             </button>
           )}
+          {record.status !== 'INFERRED_EMPTY' && (
+            <button
+              onClick={handleChangeToInferredEmpty}
+              disabled={acting}
+              className="w-full bg-slate-500 text-white px-4 py-2.5 rounded-lg hover:bg-slate-600 font-medium transition-colors disabled:opacity-50"
+            >
+              {acting ? 'Saving…' : 'Change to Inferred Empty'}
+            </button>
+          )}
+          <button
+            onClick={handleUnmark}
+            disabled={acting}
+            className="w-full px-4 py-2.5 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-medium transition-colors disabled:opacity-50"
+          >
+            {acting ? 'Removing…' : 'Remove Record (No Data)'}
+          </button>
           <button
             onClick={onClose}
-            className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors"
+            disabled={acting}
+            className="w-full px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors"
           >
             Close
           </button>
@@ -1101,7 +1170,7 @@ function NmMarkEmptyModal({
   const periodEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0)
     .toISOString().split('T')[0];
 
-  const handleMark = async () => {
+  const handleMark = async (status: 'MANUAL' | 'INFERRED_EMPTY') => {
     setSaving(true);
     setError(null);
     try {
@@ -1114,7 +1183,7 @@ function NmMarkEmptyModal({
           utility_category_id: row.categoryId,
           period_start_date: periodStart,
           period_end_date: periodEnd,
-          status: 'MANUAL',
+          status,
         }),
       });
       if (!res.ok) {
@@ -1133,19 +1202,19 @@ function NmMarkEmptyModal({
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-xl p-6 max-w-sm w-full shadow-xl">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
-            <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Update Coverage</h2>
+          <button onClick={onClose} disabled={saving} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
-          </div>
-          <h2 className="text-lg font-semibold text-gray-900">Mark as Received</h2>
+          </button>
         </div>
 
         <p className="text-sm text-gray-600 mb-1">
-          Mark <span className="font-medium text-gray-900">{cell.month}</span> as data received for:
+          Set status for <span className="font-medium text-gray-900">{cell.month}</span>:
         </p>
-        <ul className="text-sm text-gray-700 mb-4 space-y-0.5 pl-4 list-disc">
+        <ul className="text-sm text-gray-700 mb-5 space-y-0.5 pl-4 list-disc">
           <li>{row.facilityName}</li>
           <li>{row.supplierName}</li>
           <li>{row.categoryName}</li>
@@ -1157,18 +1226,28 @@ function NmMarkEmptyModal({
           </div>
         )}
 
-        <div className="flex gap-3">
+        <div className="flex flex-col gap-2">
           <button
-            onClick={handleMark}
+            onClick={() => handleMark('MANUAL')}
             disabled={saving}
-            className="flex-1 bg-green-600 text-white px-4 py-2.5 rounded-lg hover:bg-green-700 font-medium transition-colors disabled:opacity-50"
+            className="w-full bg-green-600 text-white px-4 py-2.5 rounded-lg hover:bg-green-700 font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {saving ? 'Saving…' : 'Confirm'}
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            {saving ? 'Saving…' : 'Mark as Received'}
+          </button>
+          <button
+            onClick={() => handleMark('INFERRED_EMPTY')}
+            disabled={saving}
+            className="w-full bg-slate-500 text-white px-4 py-2.5 rounded-lg hover:bg-slate-600 font-medium transition-colors disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Mark as Inferred Empty'}
           </button>
           <button
             onClick={onClose}
             disabled={saving}
-            className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors"
+            className="w-full px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors"
           >
             Cancel
           </button>

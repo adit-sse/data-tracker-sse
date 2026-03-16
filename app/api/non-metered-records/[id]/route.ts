@@ -38,3 +38,23 @@ export async function PATCH(
     return NextResponse.json({ error: 'Failed to update record' }, { status: 500 });
   }
 }
+
+// DELETE /api/non-metered-records/[id] - Remove a manually-set or inferred-empty record
+export async function DELETE(
+  _request: Request,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const { error } = await supabase
+      .from('non_metered_records')
+      .delete()
+      .eq('id', params.id);
+
+    if (error) throw error;
+
+    return new NextResponse(null, { status: 204 });
+  } catch (error) {
+    console.error('Error deleting non-metered record:', error);
+    return NextResponse.json({ error: 'Failed to delete record' }, { status: 500 });
+  }
+}

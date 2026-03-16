@@ -165,8 +165,10 @@ export interface FacilityGroup {
   id: string;
   client_id: string;
   supplier_id: string;
+  utility_category_id: string | null;
   name: string;
   supplier?: Supplier;
+  utility_category?: UtilityCategory;
   members?: FacilityGroupMember[];
 }
 
@@ -181,7 +183,13 @@ export interface FacilityGroupMember {
 // Non-metered records (Scope 1 non-metered, Scope 3)
 // -------------------------------------------------------
 
-export type NonMeteredStatus = 'IMPORTED' | 'INFERRED_EMPTY' | 'MANUAL';
+export type NonMeteredStatus =
+  | 'IMPORTED'
+  | 'INFERRED_EMPTY'
+  | 'MANUAL'
+  | 'PENDING'
+  | 'ERROR'
+  | 'CONFIRMED';
 
 export interface NonMeteredRecord {
   id: string;
