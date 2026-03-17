@@ -28,17 +28,21 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { name } = body;
+    const { name, scope, is_metered } = body;
 
     if (!name || !name.trim()) {
       return NextResponse.json({ error: 'Category name is required' }, { status: 400 });
     }
 
+    const record: Record<string, unknown> = { name: name.trim() };
+    if (scope !== undefined) record.scope = Number(scope);
+    if (is_metered !== undefined) record.is_metered = Boolean(is_metered);
+
     // Use upsert to handle race conditions
     const { data, error } = await supabase
       .from('utility_categories')
       .upsert(
-        [{ name: name.trim() }],
+        [record],
         { onConflict: 'name', ignoreDuplicates: false }
       )
       .select()

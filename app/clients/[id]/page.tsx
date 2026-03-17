@@ -941,12 +941,18 @@ function NonMeteredRecordModal({
     IMPORTED: 'Imported',
     INFERRED_EMPTY: 'Inferred Empty',
     MANUAL: 'Marked as Received',
+    PENDING: 'Pending',
+    CONFIRMED: 'Confirmed',
+    ERROR: 'Error',
   };
 
   const statusColor: Record<string, string> = {
     IMPORTED: 'bg-green-100 text-green-700',
     INFERRED_EMPTY: 'bg-slate-100 text-slate-700',
     MANUAL: 'bg-green-100 text-green-700',
+    PENDING: 'bg-amber-100 text-amber-700',
+    CONFIRMED: 'bg-green-100 text-green-700',
+    ERROR: 'bg-red-100 text-red-700',
   };
 
   const handleMarkReceived = async () => {
@@ -1100,7 +1106,7 @@ function NonMeteredRecordModal({
         )}
 
         <div className="mt-5 flex flex-col gap-2">
-          {record.status === 'INFERRED_EMPTY' && (
+          {(record.status === 'INFERRED_EMPTY' || record.status === 'PENDING' || record.status === 'ERROR') && (
             <button
               onClick={handleMarkReceived}
               disabled={acting}

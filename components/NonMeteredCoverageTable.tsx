@@ -20,16 +20,19 @@ export default function NonMeteredCoverageTable({
   const [filterSupplier, setFilterSupplier] = useState<string>('ALL');
   const [filterFacility, setFilterFacility] = useState<string>('ALL');
   const [filterCategory, setFilterCategory] = useState<string>('ALL');
+  const [filterGroup, setFilterGroup] = useState<string>('ALL');
 
   const suppliers = Array.from(new Set(rows.map((r) => r.supplierName))).sort();
   const facilityNames = Array.from(new Set(rows.map((r) => r.facilityName))).sort();
   const categories = Array.from(new Set(rows.map((r) => r.categoryName))).sort();
+  const groups = Array.from(new Set(rows.filter((r) => r.groupName).map((r) => r.groupName!))).sort();
 
   const filteredRows = rows.filter((r) => {
     const s = filterSupplier === 'ALL' || r.supplierName === filterSupplier;
     const f = filterFacility === 'ALL' || r.facilityName === filterFacility;
     const c = filterCategory === 'ALL' || r.categoryName === filterCategory;
-    return s && f && c;
+    const g = filterGroup === 'ALL' || r.groupName === filterGroup;
+    return s && f && c && g;
   });
 
   if (rows.length === 0) {
@@ -54,6 +57,19 @@ export default function NonMeteredCoverageTable({
           <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
             Filters:
           </span>
+
+          {groups.length > 0 && (
+            <select
+              value={filterGroup}
+              onChange={(e) => setFilterGroup(e.target.value)}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+            >
+              <option value="ALL">All Groups</option>
+              {groups.map((g) => (
+                <option key={g} value={g}>{g}</option>
+              ))}
+            </select>
+          )}
 
           <select
             value={filterCategory}
@@ -141,49 +157,71 @@ export default function NonMeteredCoverageTable({
               No rows match your filters.
             </div>
           ) : (
-            filteredRows.map((row, rowIdx) => (
-              <div
-                key={`${row.facilityId}-${row.supplierId}-${row.categoryId}`}
-                className="flex border-b border-gray-200 last:border-b-0 hover:bg-gray-50/50"
-              >
-                <div className="w-[150px] min-w-[150px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
-                  <div className="font-semibold text-gray-900 text-sm text-center" title={row.facilityName}>
-                    {row.facilityName}
-                  </div>
-                </div>
-                <div className="w-[130px] min-w-[130px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
-                  <div className="text-sm text-gray-700 text-center" title={row.supplierName}>
-                    {row.supplierName}
-                  </div>
-                </div>
-                <div className="w-[120px] min-w-[120px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
-                  <div className="text-sm text-gray-600 text-center">{row.categoryName}</div>
-                </div>
+            filteredRows.map((row, rowIdx) => {
+              const prevRow = filteredRows[rowIdx - 1];
+              const showGroupHeader = row.groupName && row.groupName !== prevRow?.groupName;
+              const showUngroupedHeader = !row.groupName && prevRow?.groupName;
 
-                {/* Month cells */}
-                <div className="flex-1 flex items-center py-1.5">
-                  {row.coverage.map((cell, idx) => {
-                    const isCurrentMonth = cell.month === currentMonthLabel;
-                    const clickHandler = cell.record
-                      ? () => onCellClick?.(cell.record!)
-                      : onEmptyCellClick
-                        ? () => onEmptyCellClick(row, cell)
-                        : undefined;
-                    return (
-                      <div
-                        key={idx}
-                        className={`flex-1 min-w-[60px] px-1 ${isCurrentMonth ? 'bg-orange-50/50' : ''}`}
-                      >
-                        <NonMeteredCell
-                          cell={cell}
-                          onClick={clickHandler}
-                        />
+              return (
+                <div key={`${row.facilityId}-${row.supplierId}-${row.categoryId}`}>
+                  {/* Group separator / header */}
+                  {showGroupHeader && (
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 border-b border-slate-200 sticky top-[49px] z-10">
+                      <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">
+                        {row.groupName}
+                      </span>
+                      <span className="text-xs text-slate-400">· {row.supplierName}</span>
+                    </div>
+                  )}
+                  {showUngroupedHeader && (
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-200 sticky top-[49px] z-10">
+                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                        Other
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex border-b border-gray-200 last:border-b-0 hover:bg-gray-50/50">
+                    <div className="w-[150px] min-w-[150px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
+                      <div className="font-semibold text-gray-900 text-sm text-center" title={row.facilityName}>
+                        {row.facilityName}
                       </div>
-                    );
-                  })}
+                    </div>
+                    <div className="w-[130px] min-w-[130px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
+                      <div className="text-sm text-gray-700 text-center" title={row.supplierName}>
+                        {row.supplierName}
+                      </div>
+                    </div>
+                    <div className="w-[120px] min-w-[120px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
+                      <div className="text-sm text-gray-600 text-center">{row.categoryName}</div>
+                    </div>
+
+                    {/* Month cells */}
+                    <div className="flex-1 flex items-center py-1.5">
+                      {row.coverage.map((cell, idx) => {
+                        const isCurrentMonth = cell.month === currentMonthLabel;
+                        const clickHandler = cell.record
+                          ? () => onCellClick?.(cell.record!)
+                          : onEmptyCellClick
+                            ? () => onEmptyCellClick(row, cell)
+                            : undefined;
+                        return (
+                          <div
+                            key={idx}
+                            className={`flex-1 min-w-[60px] px-1 ${isCurrentMonth ? 'bg-orange-50/50' : ''}`}
+                          >
+                            <NonMeteredCell
+                              cell={cell}
+                              onClick={clickHandler}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -195,6 +233,14 @@ export default function NonMeteredCoverageTable({
           <div className="flex items-center gap-2">
             <div className="w-8 h-5 bg-green-500 border border-green-600 rounded"></div>
             <span className="text-gray-700">Received</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-5 bg-amber-400 border border-amber-500 rounded"></div>
+            <span className="text-gray-700">Pending</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-5 bg-red-500 border border-red-600 rounded"></div>
+            <span className="text-gray-700">Error</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-8 h-5 bg-slate-400 border border-slate-500 rounded"></div>
@@ -223,30 +269,38 @@ function NonMeteredCell({ cell, onClick }: NonMeteredCellProps) {
   const btnRef = useRef<HTMLButtonElement>(null);
 
   const getBgColor = () => {
-    if (cell.status === 'IMPORTED' || cell.status === 'MANUAL')
+    if (cell.status === 'IMPORTED' || cell.status === 'MANUAL' || cell.status === 'CONFIRMED')
       return 'bg-green-500 border-green-600';
     if (cell.status === 'INFERRED_EMPTY')
       return 'bg-slate-400 border-slate-500';
+    if (cell.status === 'PENDING')
+      return 'bg-amber-400 border-amber-500';
+    if (cell.status === 'ERROR')
+      return 'bg-red-500 border-red-600';
     return 'bg-gray-200 border-gray-300';
   };
 
   const getLabel = () => {
-    if (cell.status === 'IMPORTED' || cell.status === 'MANUAL') return '✓';
+    if (cell.status === 'IMPORTED' || cell.status === 'MANUAL' || cell.status === 'CONFIRMED') return '✓';
     if (cell.status === 'INFERRED_EMPTY') return '0';
+    if (cell.status === 'PENDING') return '…';
+    if (cell.status === 'ERROR') return '!';
     if (!cell.status && onClick) return '+';
     return '—';
   };
 
   const getTextColor = () => {
     if (!cell.status) return onClick ? 'text-gray-400 group-hover:text-gray-600' : 'text-gray-400';
-    if (cell.status === 'INFERRED_EMPTY') return 'text-white';
     return 'text-white';
   };
 
   const getTooltip = () => {
     if (cell.status === 'IMPORTED') return 'Invoice received';
     if (cell.status === 'MANUAL') return 'Marked as received';
+    if (cell.status === 'CONFIRMED') return 'Confirmed from invoice';
     if (cell.status === 'INFERRED_EMPTY') return 'Inferred empty — click to mark as received';
+    if (cell.status === 'PENDING') return 'Invoice received — awaiting confirmation';
+    if (cell.status === 'ERROR') return 'Ingestion error — manual fix needed';
     if (onClick) return 'No data — click to mark as received';
     return 'No data';
   };

@@ -6,6 +6,8 @@ import ConfirmModal from './ConfirmModal';
 interface Category {
   id: string;
   name: string;
+  scope: number | null;
+  is_metered: boolean;
 }
 
 export default function UtilityCategoryManager({ onClose }: { onClose: () => void }) {
@@ -13,6 +15,8 @@ export default function UtilityCategoryManager({ onClose }: { onClose: () => voi
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
+  const [newScope, setNewScope] = useState<number>(1);
+  const [newIsMetered, setNewIsMetered] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
   // Delete confirmation state
@@ -44,7 +48,7 @@ export default function UtilityCategoryManager({ onClose }: { onClose: () => voi
       const res = await fetch(`/api/utility-categories/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: item.name })
+        body: JSON.stringify({ name: item.name, scope: item.scope, is_metered: item.is_metered })
       });
       if (res.ok) await fetchItems();
     } catch (err) {
@@ -88,10 +92,12 @@ export default function UtilityCategoryManager({ onClose }: { onClose: () => voi
       const res = await fetch('/api/utility-categories', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim() })
+        body: JSON.stringify({ name: newName.trim(), scope: newScope, is_metered: newIsMetered })
       });
       if (res.ok) {
         setNewName('');
+        setNewScope(1);
+        setNewIsMetered(false);
         await fetchItems();
       }
     } catch (err) {
@@ -106,15 +112,34 @@ export default function UtilityCategoryManager({ onClose }: { onClose: () => voi
           <h2 className="text-lg font-semibold">Manage Utility Categories</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700">Close</button>
         </div>
-        <div className="mb-4">
+        <div className="mb-4 space-y-2">
           <div className="flex gap-2">
             <input
-              className="flex-1 px-3 py-2 border border-gray-300 rounded"
+              className="flex-1 px-3 py-2 border border-gray-300 rounded text-sm"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreate(); }}
               placeholder="New category name"
             />
-            <button onClick={handleCreate} className="px-3 py-2 bg-blue-600 text-white rounded">Add</button>
+            <select
+              className="px-3 py-2 border border-gray-300 rounded text-sm bg-white"
+              value={newScope}
+              onChange={(e) => setNewScope(Number(e.target.value))}
+            >
+              <option value={1}>Scope 1</option>
+              <option value={2}>Scope 2</option>
+              <option value={3}>Scope 3</option>
+            </select>
+            <label className="flex items-center gap-1.5 px-3 py-2 border border-gray-300 rounded text-sm bg-white cursor-pointer select-none whitespace-nowrap">
+              <input
+                type="checkbox"
+                checked={newIsMetered}
+                onChange={(e) => setNewIsMetered(e.target.checked)}
+                className="accent-blue-600"
+              />
+              Metered
+            </label>
+            <button onClick={handleCreate} className="px-3 py-2 bg-blue-600 text-white rounded text-sm">Add</button>
           </div>
         </div>
         
@@ -146,14 +171,40 @@ export default function UtilityCategoryManager({ onClose }: { onClose: () => voi
             return filtered.map((i) => (
               <div key={i.id} className="flex items-center gap-2 border border-gray-100 rounded p-2">
                 <input
-                  className="flex-1 px-2 py-1 border border-transparent focus:border-gray-300 rounded"
+                  className="flex-1 px-2 py-1 border border-transparent focus:border-gray-300 rounded text-sm"
                   value={i.name}
                   onChange={(e) => setItems((prev) => prev.map((p) => p.id === i.id ? { ...p, name: e.target.value } : p))}
                   onBlur={() => handleSave(i.id)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
                 />
-                {savingId === i.id ? <div className="text-sm text-gray-500">Saving...</div> : null}
-                <button onClick={() => promptDelete(i.id)} className="px-3 py-1 bg-red-600 text-white rounded">Delete</button>
+                <select
+                  className="px-2 py-1 border border-gray-200 rounded text-sm bg-white"
+                  value={i.scope ?? ''}
+                  onChange={(e) => {
+                    const val = e.target.value ? Number(e.target.value) : null;
+                    setItems((prev) => prev.map((p) => p.id === i.id ? { ...p, scope: val } : p));
+                  }}
+                  onBlur={() => handleSave(i.id)}
+                >
+                  <option value="">—</option>
+                  <option value={1}>Scope 1</option>
+                  <option value={2}>Scope 2</option>
+                  <option value={3}>Scope 3</option>
+                </select>
+                <label className="flex items-center gap-1 text-sm cursor-pointer select-none whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={i.is_metered}
+                    onChange={(e) => {
+                      setItems((prev) => prev.map((p) => p.id === i.id ? { ...p, is_metered: e.target.checked } : p));
+                      setTimeout(() => handleSave(i.id), 0);
+                    }}
+                    className="accent-blue-600"
+                  />
+                  Metered
+                </label>
+                {savingId === i.id ? <div className="text-xs text-gray-500">Saving...</div> : null}
+                <button onClick={() => promptDelete(i.id)} className="px-3 py-1 bg-red-600 text-white rounded text-sm">Delete</button>
               </div>
             ));
           })()}

@@ -176,7 +176,9 @@ export interface FacilityGroupMember {
   id: string;
   group_id: string;
   facility_id: string;
+  utility_category_id?: string | null;
   facility?: Facility;
+  utility_category?: UtilityCategory;
 }
 
 // -------------------------------------------------------
@@ -232,5 +234,7 @@ export interface NonMeteredRowWithCoverage {
   supplierName: string;
   categoryId: string;
   categoryName: string;
+  groupId?: string;
+  groupName?: string;
   coverage: NonMeteredMonthlyCoverage[];
 }

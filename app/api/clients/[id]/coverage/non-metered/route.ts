@@ -63,6 +63,27 @@ export async function GET(
       return NextResponse.json({ rows: [], fiscalYear });
     }
 
+    // Fetch group memberships for this client so we can attach groupId/groupName to rows.
+    // Members now carry their own utility_category_id; we match on (facility_id, utility_category_id, supplier).
+    const { data: groupMembers } = await supabase
+      .from('facility_group_members')
+      .select(`
+        facility_id,
+        utility_category_id,
+        group:facility_groups!inner(id, name, supplier_id, client_id)
+      `)
+      .eq('facility_groups.client_id', clientId);
+
+    // Build a map: "facility_id__utility_category_id__supplier_id" → { groupId, groupName }
+    type GroupInfo = { groupId: string; groupName: string };
+    const groupByMemberKey = new Map<string, GroupInfo>();
+    for (const gm of groupMembers ?? []) {
+      const g = (gm as any).group;
+      if (!g) continue;
+      const key = `${gm.facility_id}__${gm.utility_category_id}__${g.supplier_id}`;
+      groupByMemberKey.set(key, { groupId: String(g.id), groupName: String(g.name) });
+    }
+
     // Generate the 12 months for this fiscal year
     const fyMonths = generateFiscalYearMonths(fiscalYear);
 
@@ -117,6 +138,9 @@ export async function GET(
         };
       });
 
+      const memberKey = `${sample.facility_id}__${sample.utility_category_id}__${sample.supplier_id}`;
+      const groupInfo = groupByMemberKey.get(memberKey);
+
       rows.push({
         facilityId: String(sample.facility_id),
         facilityName: facilityNameById[sample.facility_id] || 'Unknown',
@@ -124,12 +148,24 @@ export async function GET(
         supplierName: sample.supplier?.name || '—',
         categoryId: String(sample.utility_category_id),
         categoryName: sample.utility_category?.name || 'Unknown',
+        groupId: groupInfo?.groupId,
+        groupName: groupInfo?.groupName,
         coverage,
       });
     }
 
-    // Sort by facilityName, then supplierName, then categoryName
+    // Sort: grouped rows first (by group name), then ungrouped rows by facility/supplier/category.
+    // Within a group, sort by facility name then category name.
     rows.sort((a, b) => {
+      const aGroup = a.groupName ?? '';
+      const bGroup = b.groupName ?? '';
+
+      // Ungrouped rows sink to the bottom
+      if (aGroup && !bGroup) return -1;
+      if (!aGroup && bGroup) return 1;
+
+      if (aGroup !== bGroup) return aGroup.localeCompare(bGroup);
+
       const f = a.facilityName.localeCompare(b.facilityName);
       if (f !== 0) return f;
       const s = a.supplierName.localeCompare(b.supplierName);

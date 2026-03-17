@@ -1,11 +1,19 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { FacilityGroup, Supplier } from '@/types';
+import type { FacilityGroup, Supplier, UtilityCategory } from '@/types';
 
 interface FacilityStub {
   id: string;
   name: string;
+}
+
+interface FacilityCategoryOption {
+  id: string;
+  name: string;
+  scope: number;
+  supplierId: string | null;
+  supplierName: string | null;
 }
 
 interface FacilityGroupManagerProps {
@@ -23,6 +31,9 @@ export default function FacilityGroupManager({
 }: FacilityGroupManagerProps) {
   const [groups, setGroups] = useState<FacilityGroup[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [utilityCategories, setUtilityCategories] = useState<UtilityCategory[]>([]);
+  // facilityId → scope-1 (category + supplier) combos that already have records for that facility
+  const [facilityCategoryMap, setFacilityCategoryMap] = useState<Record<string, FacilityCategoryOption[]>>({});
   const [loading, setLoading] = useState(true);
   const [showNewForm, setShowNewForm] = useState(false);
   const [editingGroup, setEditingGroup] = useState<FacilityGroup | null>(null);
@@ -30,7 +41,7 @@ export default function FacilityGroupManager({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([fetchGroups(), fetchSuppliers()]);
+    Promise.all([fetchGroups(), fetchSuppliers(), fetchUtilityCategories(), fetchFacilityCategoryMap()]);
   }, []);
 
   const fetchGroups = async () => {
@@ -53,6 +64,24 @@ export default function FacilityGroupManager({
       if (!res.ok) return;
       const data = await res.json();
       setSuppliers(data);
+    } catch {}
+  };
+
+  const fetchUtilityCategories = async () => {
+    try {
+      const res = await fetch('/api/utility-categories');
+      if (!res.ok) return;
+      const data = await res.json();
+      setUtilityCategories(data);
+    } catch {}
+  };
+
+  const fetchFacilityCategoryMap = async () => {
+    try {
+      const res = await fetch(`/api/clients/${clientId}/facility-utility-categories?scope=1`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setFacilityCategoryMap(data);
     } catch {}
   };
 
@@ -117,6 +146,8 @@ export default function FacilityGroupManager({
                       clientId={clientId}
                       facilities={facilities}
                       suppliers={suppliers}
+                      utilityCategories={utilityCategories}
+                      facilityCategoryMap={facilityCategoryMap}
                       initial={group}
                       onSaved={handleGroupSaved}
                       onCancel={() => setEditingGroup(null)}
@@ -125,11 +156,20 @@ export default function FacilityGroupManager({
                     <div className="p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
                             <span className="font-semibold text-gray-900">{group.name}</span>
                             <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
                               {group.supplier?.name || 'No supplier'}
                             </span>
+                            {group.utility_category ? (
+                              <span className="text-xs bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded">
+                                {group.utility_category.name}
+                              </span>
+                            ) : (
+                              <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded">
+                                No utility — edit to set
+                              </span>
+                            )}
                           </div>
                           <div className="flex flex-wrap gap-1 mt-2">
                             {(group.members || []).length === 0 ? (
@@ -138,9 +178,15 @@ export default function FacilityGroupManager({
                               (group.members || []).map((m) => (
                                 <span
                                   key={m.id}
-                                  className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded"
+                                  className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded flex items-center gap-1"
                                 >
                                   {m.facility?.name || m.facility_id}
+                                  {m.utility_category && (
+                                    <span className="text-emerald-500">· {m.utility_category.name}</span>
+                                  )}
+                                  {!m.utility_category && (
+                                    <span className="text-amber-500">· no type</span>
+                                  )}
                                 </span>
                               ))
                             )}
@@ -193,6 +239,8 @@ export default function FacilityGroupManager({
                 clientId={clientId}
                 facilities={facilities}
                 suppliers={suppliers}
+                utilityCategories={utilityCategories}
+                facilityCategoryMap={facilityCategoryMap}
                 onSaved={handleGroupSaved}
                 onCancel={() => setShowNewForm(false)}
               />
@@ -218,6 +266,8 @@ interface GroupFormProps {
   clientId: string;
   facilities: FacilityStub[];
   suppliers: Supplier[];
+  utilityCategories: UtilityCategory[];
+  facilityCategoryMap: Record<string, FacilityCategoryOption[]>;
   initial?: FacilityGroup;
   onSaved: () => void;
   onCancel: () => void;
@@ -227,23 +277,46 @@ function GroupForm({
   clientId,
   facilities,
   suppliers,
+  utilityCategories,
+  facilityCategoryMap,
   initial,
   onSaved,
   onCancel,
 }: GroupFormProps) {
   const [name, setName] = useState(initial?.name || '');
   const [supplierId, setSupplierId] = useState(initial?.supplier_id || '');
-  const [selectedFacilityIds, setSelectedFacilityIds] = useState<Set<string>>(
-    new Set((initial?.members || []).map((m) => m.facility_id))
-  );
+  const [utilityCategoryId, setUtilityCategoryId] = useState(initial?.utility_category_id || '');
+
+  // Map of facilityId → Set<utility_category_id> (multiple types per facility allowed)
+  const [memberCategories, setMemberCategories] = useState<Map<string, Set<string>>>(() => {
+    const map = new Map<string, Set<string>>();
+    for (const m of initial?.members || []) {
+      const fid = String(m.facility_id);
+      if (!map.has(fid)) map.set(fid, new Set());
+      if (m.utility_category_id) map.get(fid)!.add(String(m.utility_category_id));
+    }
+    return map;
+  });
+
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const toggleFacility = (id: string) => {
-    setSelectedFacilityIds((prev) => {
-      const next = new Set(prev);
+    setMemberCategories((prev) => {
+      const next = new Map(prev);
       if (next.has(id)) next.delete(id);
-      else next.add(id);
+      else next.set(id, new Set());
+      return next;
+    });
+  };
+
+  const toggleMemberCategory = (facilityId: string, categoryId: string) => {
+    setMemberCategories((prev) => {
+      const next = new Map(prev);
+      const cats = new Set(next.get(facilityId) ?? []);
+      if (cats.has(categoryId)) cats.delete(categoryId);
+      else cats.add(categoryId);
+      next.set(facilityId, cats);
       return next;
     });
   };
@@ -252,35 +325,40 @@ function GroupForm({
     setFormError(null);
     if (!name.trim()) { setFormError('Group name is required'); return; }
     if (!supplierId) { setFormError('Please select a supplier'); return; }
-    if (selectedFacilityIds.size < 2) { setFormError('A group needs at least 2 facilities'); return; }
+    if (!utilityCategoryId) { setFormError('Please select a group utility type'); return; }
+    if (memberCategories.size < 2) { setFormError('A group needs at least 2 facilities'); return; }
+    const missingCategory = Array.from(memberCategories.values()).some((cats) => cats.size === 0);
+    if (missingCategory) { setFormError('All facilities must have at least one utility type selected'); return; }
 
     setSaving(true);
     try {
-      const facilityIds = Array.from(selectedFacilityIds);
+      // Flatten: one entry per (facility, category) pair
+      const facilityIds: { facility_id: string; utility_category_id: string }[] = [];
+      for (const [facility_id, cats] of memberCategories.entries()) {
+        for (const utility_category_id of cats) {
+          facilityIds.push({ facility_id, utility_category_id });
+        }
+      }
 
       if (initial) {
-        // Update existing group
         const res = await fetch(`/api/facility-groups/${initial.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), facility_ids: facilityIds }),
+          body: JSON.stringify({ name: name.trim(), utility_category_id: utilityCategoryId, facility_ids: facilityIds }),
         });
         if (!res.ok) throw new Error('Failed to update group');
       } else {
-        // Create new group
         const res = await fetch(`/api/clients/${clientId}/facility-groups`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), supplier_id: supplierId, facility_ids: facilityIds }),
+          body: JSON.stringify({ name: name.trim(), supplier_id: supplierId, utility_category_id: utilityCategoryId, facility_ids: facilityIds }),
         });
         if (!res.ok) throw new Error('Failed to create group');
       }
 
-      // Backfill runs server-side within the facility-groups API routes
       onSaved();
     } catch (e) {
       setFormError(e instanceof Error ? e.message : 'Save failed');
-      onBackfillStatus(null);
     } finally {
       setSaving(false);
     }
@@ -323,30 +401,96 @@ function GroupForm({
       )}
 
       <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Group Type
+          <span className="ml-1.5 text-xs font-normal text-gray-400">Used to identify this group in the ingestion workflow</span>
+        </label>
+        <select
+          value={utilityCategoryId}
+          onChange={(e) => setUtilityCategoryId(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+        >
+          <option value="">Select group type...</option>
+          {utilityCategories.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+      </div>
+
+      <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Member Facilities
-          <span className="ml-1.5 text-xs font-normal text-gray-400">({selectedFacilityIds.size} selected)</span>
+          <span className="ml-1.5 text-xs font-normal text-gray-400">
+            ({memberCategories.size} selected) — tick a facility then tick the utility types to track
+          </span>
         </label>
-        <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+        <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
           {facilities.map((f) => {
-            const checked = selectedFacilityIds.has(f.id);
+            const checked = memberCategories.has(f.id);
+            const selectedCats = memberCategories.get(f.id) ?? new Set<string>();
+            const facilityOptions = facilityCategoryMap[f.id] ?? [];
             return (
-              <label
+              <div
                 key={f.id}
-                className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${
-                  checked
-                    ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
-                    : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'
+                className={`rounded-lg border transition-colors ${
+                  checked ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-gray-200'
                 }`}
               >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggleFacility(f.id)}
-                  className="accent-emerald-600 w-4 h-4 flex-shrink-0"
-                />
-                <span className="text-sm font-medium truncate">{f.name}</span>
-              </label>
+                {/* Facility row */}
+                <label className="flex items-center gap-2 p-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleFacility(f.id)}
+                    className="accent-emerald-600 w-4 h-4 flex-shrink-0"
+                  />
+                  <span className={`text-sm font-medium flex-1 ${checked ? 'text-emerald-900' : 'text-gray-700'}`}>
+                    {f.name}
+                  </span>
+                  {checked && selectedCats.size > 0 && (
+                    <span className="text-xs text-emerald-600 font-medium">
+                      {selectedCats.size} type{selectedCats.size > 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {checked && selectedCats.size === 0 && (
+                    <span className="text-xs text-amber-500">none selected</span>
+                  )}
+                </label>
+
+                {/* Per-facility utility type checkboxes */}
+                {checked && (
+                  <div className="px-3 pb-2.5 pt-0">
+                    {facilityOptions.length === 0 ? (
+                      <p className="text-xs text-amber-600 italic">No scope 1 records yet for this facility</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {facilityOptions.map((c, i) => {
+                          const label = c.supplierName ? `${c.name} (${c.supplierName})` : c.name;
+                          const isCatChecked = selectedCats.has(c.id);
+                          return (
+                            <label
+                              key={`${c.id}__${c.supplierId ?? i}`}
+                              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs cursor-pointer transition-colors ${
+                                isCatChecked
+                                  ? 'bg-emerald-600 border-emerald-600 text-white'
+                                  : 'bg-white border-gray-300 text-gray-600 hover:border-emerald-400'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isCatChecked}
+                                onChange={() => toggleMemberCategory(f.id, c.id)}
+                                className="sr-only"
+                              />
+                              {label}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
