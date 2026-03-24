@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // PUT /api/facilities/[id] - Update facility
 export async function PUT(
@@ -10,6 +10,7 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const { name, address } = body;
     
@@ -48,6 +49,7 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     // First, get all meter IDs for this facility
     const { data: meters, error: fetchMetersError } = await supabase
       .from('meters')

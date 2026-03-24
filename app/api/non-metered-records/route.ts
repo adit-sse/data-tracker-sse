@@ -2,11 +2,12 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // POST /api/non-metered-records - Create a new manual non-metered record
 export async function POST(request: Request) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const {
       facility_id,

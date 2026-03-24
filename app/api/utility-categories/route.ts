@@ -2,11 +2,12 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // GET /api/utility-categories - List all utility categories
 export async function GET() {
   try {
+    const supabase = createSupabaseServerClient();
     const { data, error } = await supabase
       .from('utility_categories')
       .select('*')
@@ -27,6 +28,7 @@ export async function GET() {
 // POST /api/utility-categories - Create new category (using upsert to avoid race conditions)
 export async function POST(request: Request) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const { name, scope, is_metered } = body;
 

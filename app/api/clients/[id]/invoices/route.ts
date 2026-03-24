@@ -3,7 +3,7 @@ export const revalidate = 0;
 
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // POST /api/clients/[id]/invoices - Create new invoice manually
 export async function POST(
@@ -11,6 +11,7 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const {
       meter_id,

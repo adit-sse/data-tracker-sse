@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // PATCH /api/meters/[id] - Update a meter
 export async function PATCH(
@@ -10,6 +10,7 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const { 
       facility_id,
@@ -85,6 +86,7 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     // Delete invoices for this meter
     const { error: invoicesError } = await supabase
       .from('actual_invoices')

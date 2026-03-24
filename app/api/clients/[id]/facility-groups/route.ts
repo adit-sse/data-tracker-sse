@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { runGroupBackfill } from '@/lib/facility-group-backfill';
 
 // GET /api/clients/[id]/facility-groups — list all groups with members
@@ -11,6 +11,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const { data, error } = await supabase
       .from('facility_groups')
       .select(`
@@ -44,6 +45,7 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const { name, supplier_id, utility_category_id, facility_ids } = body;
 
@@ -84,7 +86,7 @@ export async function POST(
     // Retroactive inference backfill for existing records
     const memberIds = members.map((m) => m.facility_id);
     if (memberIds.length > 0) {
-      await runGroupBackfill(supplier_id, memberIds);
+      await runGroupBackfill(supabase, supplier_id, memberIds);
     }
 
     // Return full group with members

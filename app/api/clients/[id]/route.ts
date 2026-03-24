@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // GET /api/clients/[id] - Get client details
 export async function GET(
@@ -10,6 +10,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const { data, error } = await supabase
       .from('clients')
       .select('*')
@@ -41,6 +42,7 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const { name, logo_url } = body;
     
@@ -76,6 +78,7 @@ export async function DELETE(
   const clientId = params.id;
 
   try {
+    const supabase = createSupabaseServerClient();
     // 1. Get all facility IDs for this client
     const { data: facilities, error: facilitiesError } = await supabase
       .from('facilities')

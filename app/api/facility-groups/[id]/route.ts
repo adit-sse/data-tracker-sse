@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { runGroupBackfill } from '@/lib/facility-group-backfill';
 
 // PUT /api/facility-groups/[id] — update group name and/or members + run backfill
@@ -12,6 +12,7 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const groupId = params.id;
     const body = await request.json();
     const { name, utility_category_id, facility_ids } = body;
@@ -71,7 +72,7 @@ export async function PUT(
 
     // Run backfill for the updated member set
     if (memberIds && memberIds.length > 0 && group.supplier_id) {
-      await runGroupBackfill(group.supplier_id, memberIds);
+      await runGroupBackfill(supabase, group.supplier_id, memberIds);
     }
 
     const { data, error } = await supabase
@@ -106,6 +107,7 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const { error } = await supabase
       .from('facility_groups')
       .delete()

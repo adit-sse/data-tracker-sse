@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 interface Usage {
   clientId: string;
@@ -14,6 +14,7 @@ interface Usage {
 // GET /api/view-by?type=supplier|utility - Get clients/facilities grouped by supplier or utility
 export async function GET(request: Request) {
   try {
+    const supabase = createSupabaseServerClient();
     const { searchParams } = new URL(request.url);
     const type = searchParams.get('type'); // 'supplier' | 'utility'
 
@@ -30,13 +31,17 @@ export async function GET(request: Request) {
 
     if (metersErr) throw metersErr;
 
-    const facilityIds = [...new Set((metersData || []).map((m: any) => m.facility_id).filter(Boolean))];
+    const facilityIds = Array.from(
+      new Set((metersData || []).map((m: any) => m.facility_id).filter(Boolean)),
+    );
     const { data: facilities } = await supabase
       .from('facilities')
       .select('id, name, client_id')
       .in('id', facilityIds);
 
-    const clientIds = [...new Set((facilities || []).map((f: any) => f.client_id).filter(Boolean))];
+    const clientIds = Array.from(
+      new Set((facilities || []).map((f: any) => f.client_id).filter(Boolean)),
+    );
     const { data: clients } = await supabase
       .from('clients')
       .select('id, name')

@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * Retroactive inference backfill for a facility group.
@@ -12,6 +12,7 @@ import { supabase } from '@/lib/supabase';
  * ignoreDuplicates: true ensures we never overwrite IMPORTED or MANUAL records.
  */
 export async function runGroupBackfill(
+  supabase: SupabaseClient,
   supplierId: string,
   memberFacilityIds: string[]
 ): Promise<void> {
@@ -59,7 +60,7 @@ export async function runGroupBackfill(
 
   const memberIdSet = new Set(memberFacilityIds.map(String));
 
-  for (const slice of slices.values()) {
+  for (const slice of Array.from(slices.values())) {
     const absentIds = Array.from(memberIdSet).filter(
       (fid) => !slice.presentFacilityIds.has(fid)
     );

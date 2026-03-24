@@ -2,13 +2,14 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { calculateMonthlyCoverage } from '@/lib/coverage';
 import { format } from 'date-fns';
 
 // GET /api/clients - List all clients with facility count and coverage
 export async function GET() {
   try {
+    const supabase = createSupabaseServerClient();
     const now = new Date();
     const currentFY = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
     const todayStr = format(now, 'yyyy-MM-dd');
@@ -128,6 +129,7 @@ export async function GET() {
 // POST /api/clients - Create new client
 export async function POST(request: Request) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const { name } = body;
     

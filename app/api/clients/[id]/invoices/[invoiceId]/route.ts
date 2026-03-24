@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 interface InvoiceUpdatePayload {
   meter_id?: string;
@@ -25,6 +25,7 @@ export async function PATCH(
   { params }: { params: { id: string; invoiceId: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const { invoiceId } = params;
     const {
@@ -128,6 +129,7 @@ export async function DELETE(
   { params }: { params: { id: string; invoiceId: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const { invoiceId } = params;
     if (!invoiceId) {
       return NextResponse.json({ error: 'Missing invoice id parameter' }, { status: 400 });

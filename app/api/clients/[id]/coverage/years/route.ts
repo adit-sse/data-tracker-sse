@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 function fiscalYearOf(dateString: string | null | undefined): number | null {
   if (!dateString) return null;
@@ -18,6 +18,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const clientId = params.id;
 
     const { data: facilities, error: facilitiesError } = await supabase

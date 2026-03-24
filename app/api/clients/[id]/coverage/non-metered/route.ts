@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { generateFiscalYearMonths } from '@/lib/coverage';
 import { format, parseISO, isValid } from 'date-fns';
 import type { NonMeteredRowWithCoverage, NonMeteredMonthlyCoverage, NonMeteredRecord } from '@/types';
@@ -13,6 +13,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const { searchParams } = new URL(request.url);
     const fiscalYearParam = searchParams.get('fiscalYear');
     const scope = parseInt(searchParams.get('scope') || '1', 10);
@@ -100,7 +101,7 @@ export async function GET(
 
     const rows: NonMeteredRowWithCoverage[] = [];
 
-    for (const [key, groupRecords] of grouped.entries()) {
+    for (const [key, groupRecords] of Array.from(grouped.entries())) {
       const sample = groupRecords[0];
 
       const coverage: NonMeteredMonthlyCoverage[] = fyMonths.map((monthDate) => {

@@ -334,8 +334,8 @@ function GroupForm({
     try {
       // Flatten: one entry per (facility, category) pair
       const facilityIds: { facility_id: string; utility_category_id: string }[] = [];
-      for (const [facility_id, cats] of memberCategories.entries()) {
-        for (const utility_category_id of cats) {
+      for (const [facility_id, cats] of Array.from(memberCategories.entries())) {
+        for (const utility_category_id of Array.from(cats)) {
           facilityIds.push({ facility_id, utility_category_id });
         }
       }
