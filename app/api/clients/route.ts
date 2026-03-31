@@ -2,13 +2,14 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { calculateMonthlyCoverage } from '@/lib/coverage';
 import { format } from 'date-fns';
 
 // GET /api/clients - List all clients with facility count and coverage
 export async function GET() {
   try {
+    const supabase = createSupabaseServerClient();
     const now = new Date();
     const currentFY = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
     const todayStr = format(now, 'yyyy-MM-dd');
@@ -51,7 +52,7 @@ export async function GET() {
               // Fetch invoices for active meters
               const { data: invoices } = await supabase
                 .from('actual_invoices')
-                .select('meter_id, period_start_date, period_end_date')
+                .select('meter_id, period_start_date, period_end_date, status')
                 .in('meter_id', meterIds);
 
               // Group invoices by meter
@@ -90,8 +91,16 @@ export async function GET() {
                     activeDaysInMonth -= monthEndDate.getDate() - endDay + 1;
                   }
 
-                  totalDaysCovered += Math.min(mc.daysCovered, activeDaysInMonth);
-                  totalPossibleDays += activeDaysInMonth;
+                  if (mc.isDeactivatedMonth) {
+                    continue;
+                  }
+
+                  const calendarExpect = mc.effectiveDaysInMonth ?? mc.daysInMonth;
+                  const scale = mc.daysInMonth > 0 ? activeDaysInMonth / mc.daysInMonth : 1;
+                  const expectedApiDays = Math.max(0, Math.min(activeDaysInMonth, Math.round(calendarExpect * scale)));
+
+                  totalDaysCovered += Math.min(mc.daysCovered, expectedApiDays);
+                  totalPossibleDays += expectedApiDays;
                 }
               }
 
@@ -128,6 +137,7 @@ export async function GET() {
 // POST /api/clients - Create new client
 export async function POST(request: Request) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const { name } = body;
     

@@ -2,11 +2,12 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // PUT /api/suppliers/:id - Update supplier
 export async function PUT(request: Request, { params }: { params: { id: string } }) {
   try {
+    const supabase = createSupabaseServerClient();
     const id = params.id;
     const body = await request.json();
     const { name } = body;
@@ -34,6 +35,7 @@ export async function PUT(request: Request, { params }: { params: { id: string }
 // DELETE /api/suppliers/:id - Delete supplier
 export async function DELETE(request: Request, { params }: { params: { id: string } }) {
   try {
+    const supabase = createSupabaseServerClient();
     const id = params.id;
 
     const { error } = await supabase.from('suppliers').delete().eq('id', id);

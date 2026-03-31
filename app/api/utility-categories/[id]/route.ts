@@ -2,12 +2,13 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // PUT /api/utility-categories/:id — update category
 // Accepts: name, scope, is_metered, needs_review
 export async function PUT(request: Request, { params }: { params: { id: string } }) {
   try {
+    const supabase = createSupabaseServerClient();
     const id = params.id;
     const body = await request.json();
     const { name, scope, is_metered, needs_review } = body;
@@ -52,6 +53,7 @@ export async function PUT(request: Request, { params }: { params: { id: string }
 // DELETE /api/utility-categories/:id — delete category
 export async function DELETE(request: Request, { params }: { params: { id: string } }) {
   try {
+    const supabase = createSupabaseServerClient();
     const { error } = await supabase.from('utility_categories').delete().eq('id', params.id);
     if (error) throw error;
     return NextResponse.json({ success: true });

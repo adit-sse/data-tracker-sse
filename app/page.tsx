@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import ClientCard from '@/components/ClientCard';
 import SupplierManager from '@/components/SupplierManager';
 import UtilityCategoryManager from '@/components/UtilityCategoryManager';
@@ -19,6 +21,7 @@ interface ClientWithCount {
 }
 
 export default function HomePage() {
+  const router = useRouter();
   const [clients, setClients] = useState<ClientWithCount[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -190,6 +193,18 @@ export default function HomePage() {
                 <span className="hidden sm:inline">Manage Utilities</span>
               </button>
               <div className="w-px h-6 bg-gray-200 mx-1" />
+              <button
+                type="button"
+                onClick={async () => {
+                  const supabase = createSupabaseBrowserClient();
+                  await supabase.auth.signOut();
+                  router.push('/login');
+                  router.refresh();
+                }}
+                className="px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors text-sm font-medium"
+              >
+                Sign out
+              </button>
               <button
                 onClick={() => setShowAddModal(true)}
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all font-medium text-sm flex items-center gap-1.5"

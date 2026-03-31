@@ -14,6 +14,7 @@ import FileUpload from '@/components/FileUpload';
 import ConfirmModal from '@/components/ConfirmModal';
 import FacilityGroupManager from '@/components/FacilityGroupManager';
 import NeedsReviewBanner from '@/components/NeedsReviewBanner';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import type {
   Client,
   MeterWithCoverage,
@@ -71,6 +72,10 @@ export default function ClientDetailPage() {
   const [uploadProcessing, setUploadProcessing] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [groupManagerOpen, setGroupManagerOpen] = useState(false);
+
+  const [facilitySearch, setFacilitySearch] = useState('');
+  const [showAllFacilities, setShowAllFacilities] = useState(false);
+  const FACILITY_PREVIEW_LIMIT = 3;
 
   const [deletingInvoice, setDeletingInvoice] = useState<ActualInvoice | null>(null);
   const [deletingInvoiceLoading, setDeletingInvoiceLoading] = useState(false);
@@ -290,7 +295,19 @@ export default function ClientDetailPage() {
               </button>
               <div className="w-px h-6 bg-gray-200 mx-1" />
               <button
-                onClick={() => { setUploadFile(null); setUploadResult(null); setUploadModalOpen(true); }}
+                type="button"
+                onClick={async () => {
+                  const supabase = createSupabaseBrowserClient();
+                  await supabase.auth.signOut();
+                  router.push('/login');
+                  router.refresh();
+                }}
+                className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                Sign out
+              </button>
+              <button
+                onClick={() => { setUploadFile(null); setUploadResult(null); setUploadProcessing(false); setUploadModalOpen(true); }}
                 className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors font-medium text-sm flex items-center gap-1.5"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -310,55 +327,123 @@ export default function ClientDetailPage() {
         <NeedsReviewBanner />
 
         {/* Facilities Section */}
-        {facilities.length > 0 && (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Facilities</h2>
-              <button
-                onClick={() => setAddFacilityModalOpen(true)}
-                className="text-sm text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1.5 px-3 py-1.5 border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                Add Facility
-              </button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {facilities.map((facility) => (
-                <div key={facility.id} className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-gray-200 transition-all p-4 group">
-                  <div className="flex justify-between items-start">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0">
-                        <span className="text-sm font-bold text-emerald-600">{facility.name.charAt(0).toUpperCase()}</span>
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-gray-900">{facility.name}</h3>
-                        {facility.address && (
-                          <p className="text-sm text-gray-500 mt-0.5 line-clamp-1">{facility.address}</p>
-                        )}
-                        <div className="flex items-center gap-1.5 mt-2">
-                          <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+        {facilities.length > 0 && (() => {
+          const searchTerm = facilitySearch.toLowerCase();
+          const filtered = searchTerm
+            ? facilities.filter(f =>
+                f.name.toLowerCase().includes(searchTerm) ||
+                (f.address && f.address.toLowerCase().includes(searchTerm))
+              )
+            : facilities;
+          const isExpanded = showAllFacilities || searchTerm.length > 0;
+          const visible = isExpanded ? filtered : filtered.slice(0, FACILITY_PREVIEW_LIMIT);
+          const hiddenCount = filtered.length - visible.length;
+
+          return (
+            <section>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-lg font-semibold text-gray-900">Facilities</h2>
+                  <span className="text-sm text-gray-400">({facilities.length})</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {facilities.length > FACILITY_PREVIEW_LIMIT && (
+                    <div className="relative">
+                      <svg className="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                      <input
+                        type="text"
+                        placeholder="Search facilities..."
+                        value={facilitySearch}
+                        onChange={(e) => setFacilitySearch(e.target.value)}
+                        className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent w-48"
+                      />
+                      {facilitySearch && (
+                        <button
+                          onClick={() => setFacilitySearch('')}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                           </svg>
-                          <span className="text-sm text-gray-500">{facility.meterCount} {facility.meterCount === 1 ? 'meter' : 'meters'}</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => setAddFacilityModalOpen(true)}
+                    className="text-sm text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1.5 px-3 py-1.5 border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Add Facility
+                  </button>
+                </div>
+              </div>
+
+              {searchTerm && filtered.length === 0 ? (
+                <div className="bg-white rounded-xl border border-gray-100 p-6 text-center">
+                  <p className="text-sm text-gray-500">No facilities matching &ldquo;{facilitySearch}&rdquo;</p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {visible.map((facility) => (
+                      <div key={facility.id} className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-gray-200 transition-all p-4 group">
+                        <div className="flex justify-between items-start">
+                          <div className="flex items-start gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0">
+                              <span className="text-sm font-bold text-emerald-600">{facility.name.charAt(0).toUpperCase()}</span>
+                            </div>
+                            <div>
+                              <h3 className="font-medium text-gray-900">{facility.name}</h3>
+                              {facility.address && (
+                                <p className="text-sm text-gray-500 mt-0.5 line-clamp-1">{facility.address}</p>
+                              )}
+                              <div className="flex items-center gap-1.5 mt-2">
+                                <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                </svg>
+                                <span className="text-sm text-gray-500">{facility.meterCount} {facility.meterCount === 1 ? 'meter' : 'meters'}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setSettingsFacility(facility); }}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 opacity-0 group-hover:opacity-100 transition-all"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                            </svg>
+                          </button>
                         </div>
                       </div>
-                    </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setSettingsFacility(facility); }}
-                      className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 opacity-0 group-hover:opacity-100 transition-all"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-                      </svg>
-                    </button>
+                    ))}
                   </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+
+                  {!searchTerm && hiddenCount > 0 && !showAllFacilities && (
+                    <button
+                      onClick={() => setShowAllFacilities(true)}
+                      className="mt-3 w-full py-2 text-sm font-medium text-emerald-600 hover:text-emerald-700 bg-emerald-50/50 hover:bg-emerald-50 border border-emerald-100 rounded-lg transition-colors"
+                    >
+                      View all {facilities.length} facilities
+                    </button>
+                  )}
+                  {!searchTerm && showAllFacilities && facilities.length > FACILITY_PREVIEW_LIMIT && (
+                    <button
+                      onClick={() => setShowAllFacilities(false)}
+                      className="mt-3 w-full py-2 text-sm font-medium text-gray-500 hover:text-gray-700 bg-gray-50/50 hover:bg-gray-50 border border-gray-100 rounded-lg transition-colors"
+                    >
+                      Show less
+                    </button>
+                  )}
+                </>
+              )}
+            </section>
+          );
+        })()}
 
         {/* Coverage Dashboard */}
         <section>
@@ -727,7 +812,7 @@ export default function ClientDetailPage() {
           <div className="bg-white rounded-xl p-6 max-w-2xl w-full shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-xl font-semibold text-gray-900">Upload Invoices</h2>
-              <button onClick={() => setUploadModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
+              <button onClick={() => { setUploadModalOpen(false); setUploadProcessing(false); setUploadFile(null); setUploadResult(null); }} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -777,23 +862,42 @@ export default function ClientDetailPage() {
                   <button
                     onClick={async () => {
                       setUploadProcessing(true);
+                      setUploadResult(null);
+                      const controller = new AbortController();
+                      const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
                       try {
                         const formData = new FormData();
                         formData.append('file', uploadFile);
-                        const response = await fetch(`/api/clients/${clientId}/upload`, { method: 'POST', body: formData });
+                        const response = await fetch(`/api/clients/${clientId}/upload`, {
+                          method: 'POST',
+                          body: formData,
+                          signal: controller.signal,
+                        });
                         const data = await response.json();
                         setUploadResult(data);
                         if (data.success) refreshAll();
-                      } catch {
-                        setUploadResult({ success: false, imported: 0, errors: ['Failed to process file. Please try again.'] });
+                      } catch (err) {
+                        const message = err instanceof DOMException && err.name === 'AbortError'
+                          ? 'Upload timed out. The file may be too large — try splitting it into smaller batches.'
+                          : 'Failed to process file. Please try again.';
+                        setUploadResult({ success: false, imported: 0, errors: [message] });
                       } finally {
+                        clearTimeout(timeoutId);
                         setUploadProcessing(false);
                       }
                     }}
                     disabled={uploadProcessing}
                     className="bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
                   >
-                    {uploadProcessing ? 'Processing...' : 'Import'}
+                    {uploadProcessing ? (
+                      <span className="flex items-center gap-2">
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Processing...
+                      </span>
+                    ) : 'Import'}
                   </button>
                 </div>
               </div>
@@ -941,12 +1045,18 @@ function NonMeteredRecordModal({
     IMPORTED: 'Imported',
     INFERRED_EMPTY: 'Inferred Empty',
     MANUAL: 'Marked as Received',
+    PENDING: 'Pending',
+    CONFIRMED: 'Confirmed',
+    ERROR: 'Error',
   };
 
   const statusColor: Record<string, string> = {
     IMPORTED: 'bg-green-100 text-green-700',
     INFERRED_EMPTY: 'bg-slate-100 text-slate-700',
     MANUAL: 'bg-green-100 text-green-700',
+    PENDING: 'bg-amber-100 text-amber-700',
+    CONFIRMED: 'bg-green-100 text-green-700',
+    ERROR: 'bg-red-100 text-red-700',
   };
 
   const handleMarkReceived = async () => {
@@ -1100,7 +1210,7 @@ function NonMeteredRecordModal({
         )}
 
         <div className="mt-5 flex flex-col gap-2">
-          {record.status === 'INFERRED_EMPTY' && (
+          {(record.status === 'INFERRED_EMPTY' || record.status === 'PENDING' || record.status === 'ERROR') && (
             <button
               onClick={handleMarkReceived}
               disabled={acting}

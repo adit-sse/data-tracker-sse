@@ -2,11 +2,12 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // POST /api/meters - Create new meter
 export async function POST(request: Request) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     
     const { facility_id, supplier_id, utility_category_id, identifier_type, lookup1, lookup2, in_service_start_date, in_service_end_date } = body;

@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { generateFiscalYearMonths } from '@/lib/coverage';
 import { format, parseISO, isValid } from 'date-fns';
 import type { NonMeteredRowWithCoverage, NonMeteredMonthlyCoverage, NonMeteredRecord } from '@/types';
@@ -13,6 +13,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const { searchParams } = new URL(request.url);
     const fiscalYearParam = searchParams.get('fiscalYear');
     const scope = parseInt(searchParams.get('scope') || '1', 10);
@@ -63,6 +64,27 @@ export async function GET(
       return NextResponse.json({ rows: [], fiscalYear });
     }
 
+    // Fetch group memberships for this client so we can attach groupId/groupName to rows.
+    // Members now carry their own utility_category_id; we match on (facility_id, utility_category_id, supplier).
+    const { data: groupMembers } = await supabase
+      .from('facility_group_members')
+      .select(`
+        facility_id,
+        utility_category_id,
+        group:facility_groups!inner(id, name, supplier_id, client_id)
+      `)
+      .eq('facility_groups.client_id', clientId);
+
+    // Build a map: "facility_id__utility_category_id__supplier_id" → { groupId, groupName }
+    type GroupInfo = { groupId: string; groupName: string };
+    const groupByMemberKey = new Map<string, GroupInfo>();
+    for (const gm of groupMembers ?? []) {
+      const g = (gm as any).group;
+      if (!g) continue;
+      const key = `${gm.facility_id}__${gm.utility_category_id}__${g.supplier_id}`;
+      groupByMemberKey.set(key, { groupId: String(g.id), groupName: String(g.name) });
+    }
+
     // Generate the 12 months for this fiscal year
     const fyMonths = generateFiscalYearMonths(fiscalYear);
 
@@ -79,7 +101,7 @@ export async function GET(
 
     const rows: NonMeteredRowWithCoverage[] = [];
 
-    for (const [key, groupRecords] of grouped.entries()) {
+    for (const [key, groupRecords] of Array.from(grouped.entries())) {
       const sample = groupRecords[0];
 
       const coverage: NonMeteredMonthlyCoverage[] = fyMonths.map((monthDate) => {
@@ -103,11 +125,15 @@ export async function GET(
           };
         }
 
-        // Prefer IMPORTED/MANUAL over INFERRED_EMPTY
+        // Prefer real data, then deactivated (explicitly marked off), then inferred
         const real = overlapping.find(
-          (r: any) => r.status === 'IMPORTED' || r.status === 'MANUAL'
+          (r: any) =>
+            r.status === 'IMPORTED' ||
+            r.status === 'MANUAL' ||
+            r.status === 'CONFIRMED',
         );
-        const best = real ?? overlapping[0];
+        const deactivated = overlapping.find((r: any) => r.status === 'DEACTIVATED');
+        const best = real ?? deactivated ?? overlapping[0];
 
         return {
           month: format(monthDate, 'MMM yy'),
@@ -117,6 +143,9 @@ export async function GET(
         };
       });
 
+      const memberKey = `${sample.facility_id}__${sample.utility_category_id}__${sample.supplier_id}`;
+      const groupInfo = groupByMemberKey.get(memberKey);
+
       rows.push({
         facilityId: String(sample.facility_id),
         facilityName: facilityNameById[sample.facility_id] || 'Unknown',
@@ -124,12 +153,24 @@ export async function GET(
         supplierName: sample.supplier?.name || '—',
         categoryId: String(sample.utility_category_id),
         categoryName: sample.utility_category?.name || 'Unknown',
+        groupId: groupInfo?.groupId,
+        groupName: groupInfo?.groupName,
         coverage,
       });
     }
 
-    // Sort by facilityName, then supplierName, then categoryName
+    // Sort: grouped rows first (by group name), then ungrouped rows by facility/supplier/category.
+    // Within a group, sort by facility name then category name.
     rows.sort((a, b) => {
+      const aGroup = a.groupName ?? '';
+      const bGroup = b.groupName ?? '';
+
+      // Ungrouped rows sink to the bottom
+      if (aGroup && !bGroup) return -1;
+      if (!aGroup && bGroup) return 1;
+
+      if (aGroup !== bGroup) return aGroup.localeCompare(bGroup);
+
       const f = a.facilityName.localeCompare(b.facilityName);
       if (f !== 0) return f;
       const s = a.supplierName.localeCompare(b.supplierName);

@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // POST /api/facility-groups/[id]/members — add a facility to the group
 // Body: { facility_id: string }
@@ -11,6 +11,7 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const { facility_id } = body;
 
@@ -45,6 +46,7 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const { facility_id } = body;
 

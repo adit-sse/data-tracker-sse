@@ -2,11 +2,12 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // GET /api/utility-categories - List all utility categories
 export async function GET() {
   try {
+    const supabase = createSupabaseServerClient();
     const { data, error } = await supabase
       .from('utility_categories')
       .select('*')
@@ -27,18 +28,23 @@ export async function GET() {
 // POST /api/utility-categories - Create new category (using upsert to avoid race conditions)
 export async function POST(request: Request) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
-    const { name } = body;
+    const { name, scope, is_metered } = body;
 
     if (!name || !name.trim()) {
       return NextResponse.json({ error: 'Category name is required' }, { status: 400 });
     }
 
+    const record: Record<string, unknown> = { name: name.trim() };
+    if (scope !== undefined) record.scope = Number(scope);
+    if (is_metered !== undefined) record.is_metered = Boolean(is_metered);
+
     // Use upsert to handle race conditions
     const { data, error } = await supabase
       .from('utility_categories')
       .upsert(
-        [{ name: name.trim() }],
+        [record],
         { onConflict: 'name', ignoreDuplicates: false }
       )
       .select()

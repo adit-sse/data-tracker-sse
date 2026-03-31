@@ -324,6 +324,10 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
             <div className="w-8 h-5 bg-gray-200 border border-gray-300 rounded"></div>
             <span className="text-gray-700">0%</span>
           </div>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-5 bg-slate-500 border border-slate-600 rounded"></div>
+            <span className="text-gray-700">Deactivated</span>
+          </div>
         </div>
       </div>
     </div>
