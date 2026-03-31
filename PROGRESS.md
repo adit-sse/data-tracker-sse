@@ -63,20 +63,26 @@ ALTER TABLE public.non_metered_records
 
 ---
 
-### 4. Two new API routes built (branch: `feature/ingestion-api`)
+### 4. Ingestion API routes (branch: `feature/ingestion-api`)
 
 **`POST /api/ingestion/pending`**
-- Body: `{ "client_name": "...", "supplier_name": "...", "utility_name": "..." }`
-- Finds the group for that combination, creates PENDING records for all months in current FY
-- Returns: `{ "created": N, "skipped": N }`
+- **Group** body: `{ "client_name", "supplier_name", "utility_name" }` — `utility_name` = group type (e.g. Transport Fuels). Creates PENDING for every group member × their member category.
+- **Line** body: `{ "mode": "line", "client_name", "facility_name", "supplier_name", "utility_name" }` — `utility_name` = record category (e.g. GREASE). No facility group required.
+- Returns: `{ "created": N, "skipped": N }` (line responses also include `"mode": "line"`).
 
 **`POST /api/ingestion/confirm`**
-- Body: JSON array of NGERS output rows (the format the workflow already produces)
-- Parses `Date Range` field to extract confirmed months
-- Facilities in output → CONFIRMED; group members absent → INFERRED_EMPTY; unmatched PENDING months → deleted
-- Returns: `{ "confirmed": N, "inferred_empty": N, "deleted_pending": N, "warnings": [...] }`
+- **Group** body: JSON **array** of NGERS rows — `Category` = group type; inference + INFERRED_EMPTY for absent members.
+- **Line** body: `{ "mode": "line", "rows": [ ... NGERS rows ... ] }` — `Category` = record utility; `Facility` = site name; **no** INFERRED_EMPTY; only deletes orphaned PENDING for that facility+supplier+category.
+- Returns: `{ "confirmed", "inferred_empty", "deleted_pending", "warnings" }` (responses include `"mode": "group"` or `"mode": "line"`; line always has `inferred_empty: 0`).
 
-Both endpoints require the header: `Authorization: Bearer <INGESTION_API_KEY>`
+**`POST /api/ingestion/error`**
+- **Group** body: `{ "client_name", "supplier_name", "utility_name", "date_range" }` — group type + month.
+- **Line** body: `{ "mode": "line", "client_name", "facility_name", "supplier_name", "utility_name", "date_range" }` — record category + month.
+- Returns: `{ "updated", "period_start_date" }` (and `"mode"`).
+
+All three ingestion endpoints require: `Authorization: Bearer <INGESTION_API_KEY>`
+
+**Demo script (ordered PowerShell):** see `docs/ingestion-demo-commands.md`.
 
 ---
 

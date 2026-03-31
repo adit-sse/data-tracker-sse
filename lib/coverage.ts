@@ -31,8 +31,13 @@ export function generateFiscalYearMonths(fiscalYear: number): Date[] {
   return months;
 }
 
+function isDeactivatedInvoiceStatus(status: string | null | undefined): boolean {
+  return (status || '').trim().toUpperCase() === 'DEACTIVATED';
+}
+
 /**
- * Calculate coverage for a meter across all months in the fiscal year
+ * Calculate coverage for a meter across all months in the fiscal year.
+ * Invoices with status DEACTIVATED count as "no API data expected" for those days, not as gaps.
  */
 export function calculateMonthlyCoverage(
   invoices: ActualInvoice[], 
@@ -45,56 +50,68 @@ export function calculateMonthlyCoverage(
     const monthEnd = endOfMonth(monthDate);
     const daysInMonth = getDaysInMonth(monthDate);
     
-    // Set to store unique days covered in this month
-    const coveredDays = new Set<string>();
-    // Collect invoices that overlap this month
+    /** Per calendar day: active invoice data wins over deactivated-only. */
+    const dayState = new Map<string, 'active' | 'deactivated'>();
     const monthlyInvoices: ActualInvoice[] = [];
 
-    // For each invoice, add covered days in this month
     invoices.forEach(invoice => {
       const periodStart = parseISO(invoice.period_start_date);
       const periodEnd = parseISO(invoice.period_end_date);
 
-      // Skip invalid dates
       if (!isValid(periodStart) || !isValid(periodEnd)) {
         console.warn('Skipping invoice with invalid dates', invoice.id, invoice.period_start_date, invoice.period_end_date);
         return;
       }
 
-      // Compute overlap with this month
       const start = periodStart > monthStart ? periodStart : monthStart;
       const end = periodEnd < monthEnd ? periodEnd : monthEnd;
 
-      // If invoice does not overlap this month, skip
       if (start > end) {
         return;
       }
 
-      // record that this invoice overlaps this month
       monthlyInvoices.push(invoice);
 
-      // Get all days in the overlapping interval
       const daysInPeriod = eachDayOfInterval({ start, end });
+      const invDeactivated = isDeactivatedInvoiceStatus(invoice.status);
 
       daysInPeriod.forEach(day => {
-        if (isWithinInterval(day, { start: monthStart, end: monthEnd })) {
-          coveredDays.add(format(day, 'yyyy-MM-dd'));
+        if (!isWithinInterval(day, { start: monthStart, end: monthEnd })) return;
+        const key = format(day, 'yyyy-MM-dd');
+        if (invDeactivated) {
+          if (dayState.get(key) !== 'active') dayState.set(key, 'deactivated');
+        } else {
+          dayState.set(key, 'active');
         }
       });
     });
-    
-    const daysCovered = coveredDays.size;
-    const percentage = Math.round((daysCovered / daysInMonth) * 1000) / 10;
-    
-    // Calculate gaps
-    const gaps = findGaps(Array.from(coveredDays), monthStart, monthEnd);
-    
+
+    let daysCovered = 0;
+    let daysDeactivated = 0;
+    for (const st of Array.from(dayState.values())) {
+      if (st === 'active') daysCovered++;
+      else daysDeactivated++;
+    }
+
+    const effectiveDaysInMonth = daysInMonth - daysDeactivated;
+    const isDeactivatedMonth = daysDeactivated === daysInMonth && daysCovered === 0;
+    const percentage =
+      effectiveDaysInMonth > 0
+        ? Math.round((daysCovered / effectiveDaysInMonth) * 1000) / 10
+        : 0;
+
+    const resolvedForGaps = Array.from(dayState.keys());
+    const gaps = findGaps(resolvedForGaps, monthStart, monthEnd);
+
     return {
       month: format(monthDate, 'MMM yy'),
       monthDate,
       daysInMonth,
       daysCovered,
       percentage,
+      daysDeactivated: daysDeactivated > 0 ? daysDeactivated : undefined,
+      isDeactivatedMonth: isDeactivatedMonth || undefined,
+      effectiveDaysInMonth: daysDeactivated > 0 ? effectiveDaysInMonth : undefined,
       gaps: gaps.length > 0 ? gaps : undefined,
       invoices: monthlyInvoices.length > 0 ? monthlyInvoices : undefined
     };

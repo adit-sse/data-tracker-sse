@@ -56,12 +56,19 @@ export default function CoverageSummary({ metersWithCoverage }: CoverageSummaryP
           activeDaysInMonth -= monthEndDate.getDate() - endDay + 1;
         }
 
-        const effectiveCovered = Math.min(mc.daysCovered, activeDaysInMonth);
-        totalDaysCovered += effectiveCovered;
-        totalPossibleDays += activeDaysInMonth;
+        if (mc.isDeactivatedMonth) {
+          continue;
+        }
 
-        // Check for gaps in this month
-        if (effectiveCovered < activeDaysInMonth) {
+        const calendarExpect = mc.effectiveDaysInMonth ?? mc.daysInMonth;
+        const scale = mc.daysInMonth > 0 ? activeDaysInMonth / mc.daysInMonth : 1;
+        const expectedApiDays = Math.max(0, Math.min(activeDaysInMonth, Math.round(calendarExpect * scale)));
+
+        const effectiveCovered = Math.min(mc.daysCovered, expectedApiDays);
+        totalDaysCovered += effectiveCovered;
+        totalPossibleDays += expectedApiDays;
+
+        if (effectiveCovered < expectedApiDays) {
           meterHasGap = true;
         }
       }

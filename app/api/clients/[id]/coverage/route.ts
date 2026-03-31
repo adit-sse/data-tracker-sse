@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { calculateMonthlyCoverage } from '@/lib/coverage';
 
 // GET /api/clients/[id]/coverage - Get full coverage data for fiscal year
@@ -11,6 +11,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const { searchParams } = new URL(request.url);
     const fiscalYearParam = searchParams.get('fiscalYear');
     
@@ -58,15 +59,33 @@ export async function GET(
     let invoices: any[] = [];
     
     if (meterIds.length > 0) {
-      const { data: invoicesData, error: invoicesError } = await supabase
-        .from('actual_invoices')
-        .select('*')
-        .in('meter_id', meterIds);
-      
-      if (invoicesError) throw invoicesError;
-      
-      invoices = invoicesData || [];
+      // Fetch in chunks to handle large meter counts, with explicit limit
+      // to avoid PostgREST's default 1000-row truncation
+      for (let i = 0; i < meterIds.length; i += 200) {
+        const chunk = meterIds.slice(i, i + 200);
+        
+        console.log(`Chunk ${i/200 + 1}: fetching ${chunk.length} meters, contains 3096: ${chunk.includes(3096)}`);
+        
+        const { data: invoicesData, error: invoicesError } = await supabase
+          .from('actual_invoices')
+          .select('*')
+          .in('meter_id', chunk)
+          .limit(10000);
+        
+        if (invoicesError) throw invoicesError;
+        console.log(`Chunk ${i/200 + 1}: returned ${invoicesData?.length ?? 0} invoices`);
+        
+        invoices.push(...(invoicesData || []));
+      }
     }
+
+    console.log('Total invoices fetched:', invoices.length);
+    console.log(
+      'Unique meter IDs in fetched invoices:',
+      Array.from(new Set(invoices.map((i) => i.meter_id))),
+    );
+    console.log('Meter 3096 invoices:', invoices.filter(i => i.meter_id === 3096 || i.meter_id === '3096'));
+
     
     // Group invoices by meter
     const invoicesByMeter = (invoices || []).reduce((acc, invoice) => {

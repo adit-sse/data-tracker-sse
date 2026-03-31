@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
+import { resolveIngestionLine } from '@/lib/ingestion-line';
+import { findOrCreateUtilityCategoryForIngestion } from '@/lib/ingestion-utility-category';
+import {
+  getCurrentFiscalYearMonthsThroughNow,
+  seedIngestionPendingNonMeteredLineMonths,
+} from '@/lib/non-metered-pending-seed';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -10,47 +16,25 @@ function checkApiKey(request: Request): boolean {
   return authHeader.slice(7) === process.env.INGESTION_API_KEY;
 }
 
-// Returns all months from the start of the current fiscal year (July) up to
-// and including the current month.
-function getCurrentFiscalYearMonths(): Array<{ start: string; end: string }> {
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth(); // 0-indexed; July = 6
-
-  const fyStartYear = currentMonth >= 6 ? currentYear : currentYear - 1;
-  const cursor = new Date(fyStartYear, 6, 1); // July 1
-  const endMonth = new Date(currentYear, currentMonth, 1);
-
-  const months: Array<{ start: string; end: string }> = [];
-  while (cursor <= endMonth) {
-    const y = cursor.getFullYear();
-    const m = cursor.getMonth();
-    const lastDay = new Date(y, m + 1, 0).getDate();
-    months.push({
-      start: `${y}-${String(m + 1).padStart(2, '0')}-01`,
-      end: `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
-    });
-    cursor.setMonth(cursor.getMonth() + 1);
-  }
-  return months;
-}
-
 // POST /api/ingestion/pending
 // Called by the ingestion workflow when an invoice email is received.
 // Marks all months in the current fiscal year as PENDING for every facility
 // in the matching group, using each member's specific utility_category_id.
 //
-// Body: { client_name, supplier_name, utility_name }
-// utility_name matches the group-level type (e.g. "Transport Fuels") — not the
-// individual member sub-category.
+// Body (group): { client_name, supplier_name, utility_name }
+//   utility_name = group-level type (e.g. "Transport Fuels").
+// Body (line): { mode: "line", client_name, supplier_name, utility_name [, facility_name] }
+//   utility_name = the record category (e.g. "GREASE"). No facility group required.
+//   facility_name optional for Scope 3 (uses "(Client-wide)"); required for Scope 1 / 2.
 export async function POST(request: Request) {
   if (!checkApiKey(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
+    const supabase = createSupabaseServiceRoleClient();
     const body = await request.json();
-    const { client_name, supplier_name, utility_name } = body;
+    const { client_name, supplier_name, utility_name, mode, facility_name } = body;
 
     if (!client_name || !supplier_name || !utility_name) {
       return NextResponse.json(
@@ -59,15 +43,57 @@ export async function POST(request: Request) {
       );
     }
 
-    const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
+    // ----- Standalone line (not in a facility group) -----
+    if (mode === 'line') {
+      const resolved = await resolveIngestionLine(
+        supabase,
+        client_name,
+        typeof facility_name === 'string' ? facility_name.trim() : '',
+        supplier_name,
+        utility_name
+      );
+      if (!resolved.ok) {
+        return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+      }
+
+      const { facilityId, facilityName, supplierId, categoryId } = resolved;
+      const months = getCurrentFiscalYearMonthsThroughNow();
+      const created = await seedIngestionPendingNonMeteredLineMonths(supabase, {
+        facilityId,
+        supplierId,
+        categoryId,
+      });
+
+      return NextResponse.json({
+        mode: 'line',
+        /** Only this facility receives PENDING rows (never other sites). */
+        resolved: {
+          facility_id: facilityId,
+          facility_name: facilityName,
+          supplier_id: supplierId,
+          utility_category_id: categoryId,
+        },
+        created,
+        skipped: months.length - created,
+      });
+    }
+
+    // ----- Facility group -----
+    const [{ data: client }, { data: supplier }] = await Promise.all([
       supabase.from('clients').select('id').ilike('name', client_name).single(),
       supabase.from('suppliers').select('id').ilike('name', supplier_name).single(),
-      supabase.from('utility_categories').select('id').ilike('name', utility_name).single(),
     ]);
 
     if (!client) return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
     if (!supplier) return NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 });
-    if (!groupCategory) return NextResponse.json({ error: `Utility type "${utility_name}" not found` }, { status: 404 });
+
+    let groupCategory: { id: string };
+    try {
+      groupCategory = await findOrCreateUtilityCategoryForIngestion(supabase, utility_name);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      return NextResponse.json({ error: msg }, { status: 400 });
+    }
 
     // Find the group by its top-level type (utility_category_id on the group row)
     const { data: group } = await supabase
@@ -106,7 +132,7 @@ export async function POST(request: Request) {
     }
 
     const allFacilityIds = members.map((m) => m.facility_id);
-    const months = getCurrentFiscalYearMonths();
+    const months = getCurrentFiscalYearMonthsThroughNow();
     const periodStarts = months.map((m) => m.start);
 
     // For each member, fetch existing records under its specific category (any status blocks PENDING)
@@ -124,7 +150,7 @@ export async function POST(request: Request) {
         .in('facility_id', allFacilityIds)
         .eq('supplier_id', supplier.id)
         .in('period_start_date', periodStarts)
-        .in('status', ['IMPORTED', 'MANUAL', 'CONFIRMED']),
+        .in('status', ['IMPORTED', 'MANUAL', 'CONFIRMED', 'DEACTIVATED']),
     ]);
 
     // facility__period => set of category ids that already have records

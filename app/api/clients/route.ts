@@ -52,7 +52,7 @@ export async function GET() {
               // Fetch invoices for active meters
               const { data: invoices } = await supabase
                 .from('actual_invoices')
-                .select('meter_id, period_start_date, period_end_date')
+                .select('meter_id, period_start_date, period_end_date, status')
                 .in('meter_id', meterIds);
 
               // Group invoices by meter
@@ -91,8 +91,16 @@ export async function GET() {
                     activeDaysInMonth -= monthEndDate.getDate() - endDay + 1;
                   }
 
-                  totalDaysCovered += Math.min(mc.daysCovered, activeDaysInMonth);
-                  totalPossibleDays += activeDaysInMonth;
+                  if (mc.isDeactivatedMonth) {
+                    continue;
+                  }
+
+                  const calendarExpect = mc.effectiveDaysInMonth ?? mc.daysInMonth;
+                  const scale = mc.daysInMonth > 0 ? activeDaysInMonth / mc.daysInMonth : 1;
+                  const expectedApiDays = Math.max(0, Math.min(activeDaysInMonth, Math.round(calendarExpect * scale)));
+
+                  totalDaysCovered += Math.min(mc.daysCovered, expectedApiDays);
+                  totalPossibleDays += expectedApiDays;
                 }
               }
 

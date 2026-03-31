@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // PATCH /api/non-metered-records/[id] - Update a non-metered record (e.g. mark as received)
 export async function PATCH(
@@ -10,6 +10,7 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const body = await request.json();
     const allowed = ['status', 'consumption', 'unit', 'amount', 'invoice_number', 'invoice_date', 'sub_category', 'input_type', 'framework', 'version', 'customer'];
 
@@ -45,6 +46,7 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const supabase = createSupabaseServerClient();
     const { error } = await supabase
       .from('non_metered_records')
       .delete()

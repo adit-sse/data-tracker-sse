@@ -1,5 +1,7 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
+import { resolveIngestionLine } from '@/lib/ingestion-line';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -44,24 +46,194 @@ function parseDateRange(dateRange: string): { start: string; end: string } | nul
   return { start, end };
 }
 
+/** Compare period keys — DB may return "2026-03-01" or ISO datetime strings */
+function periodKey(d: string | null | undefined): string {
+  if (!d) return '';
+  return String(d).slice(0, 10);
+}
+
+type LineConfirmResult = {
+  confirmed: number;
+  inferred_empty: number;
+  deleted_pending: number;
+  warnings: string[];
+};
+
+/**
+ * Standalone line: each row's Category = record utility (e.g. GREASE), Facility = site name.
+ * No facility group; no INFERRED_EMPTY for other facilities; only deletes orphaned PENDING
+ * for this facility + supplier + category.
+ */
+async function processLineConfirm(
+  supabase: SupabaseClient,
+  rows: NGERSRow[]
+): Promise<LineConfirmResult> {
+  let totalConfirmed = 0;
+  let totalDeletedPending = 0;
+  const warnings: string[] = [];
+
+  const groupedRows = new Map<string, NGERSRow[]>();
+  for (const row of rows) {
+    const facKey = (row.Facility ?? '').trim();
+    const key = `${row.Company}__${row.Provider}__${row.Category}__${facKey}`;
+    if (!groupedRows.has(key)) groupedRows.set(key, []);
+    groupedRows.get(key)!.push(row);
+  }
+
+  for (const [, lineRows] of Array.from(groupedRows.entries())) {
+    const { Company, Provider, Category, Facility } = lineRows[0];
+    if (!Company || !Provider || !Category) {
+      warnings.push('Row missing Company, Provider, or Category — skipped');
+      continue;
+    }
+
+    const resolved = await resolveIngestionLine(
+      supabase,
+      Company,
+      (Facility ?? '').trim(),
+      Provider,
+      Category
+    );
+    if (!resolved.ok) {
+      warnings.push(`${resolved.error} — rows skipped`);
+      continue;
+    }
+
+    const { facilityId, supplierId, categoryId } = resolved;
+
+    const confirmedPeriods = new Map<string, { start: string; end: string }>();
+    const periodTotals = new Map<string, { consumption: number; amount: number }>();
+
+    for (const row of lineRows) {
+      if (!row['Date Range']) continue;
+      const parsed = parseDateRange(row['Date Range']);
+      if (!parsed) {
+        warnings.push(`Could not parse Date Range "${row['Date Range']}" — row skipped`);
+        continue;
+      }
+      confirmedPeriods.set(parsed.start, parsed);
+      const prev = periodTotals.get(parsed.start) ?? { consumption: 0, amount: 0 };
+      periodTotals.set(parsed.start, {
+        consumption: prev.consumption + (Number(row.Consumption) || 0),
+        amount: prev.amount + (Number(row['Amount ($)']) || 0),
+      });
+    }
+
+    if (confirmedPeriods.size === 0) continue;
+
+    const confirmedPeriodStarts = Array.from(confirmedPeriods.keys());
+
+    const { data: allPending, error: pendingFetchErr } = await supabase
+      .from('non_metered_records')
+      .select('id, facility_id, utility_category_id, period_start_date, status')
+      .eq('facility_id', facilityId)
+      .eq('supplier_id', supplierId)
+      .eq('utility_category_id', categoryId)
+      .eq('status', 'PENDING');
+
+    if (pendingFetchErr) throw new Error(pendingFetchErr.message);
+
+    const pendingRecords = allPending ?? [];
+    const confirmedKeys = new Set(confirmedPeriodStarts.map((p) => periodKey(p)));
+
+    for (const [periodStart, period] of Array.from(confirmedPeriods.entries())) {
+      const totals = periodTotals.get(periodStart) ?? { consumption: 0, amount: 0 };
+      const pk = periodKey(periodStart);
+      const existingPending = pendingRecords.find((r) => periodKey(r.period_start_date) === pk);
+
+      if (existingPending) {
+        const { error: updErr } = await supabase
+          .from('non_metered_records')
+          .update({
+            status: 'CONFIRMED',
+            consumption: totals.consumption,
+            amount: totals.amount,
+          })
+          .eq('id', existingPending.id);
+        if (updErr) throw new Error(updErr.message);
+      } else {
+        const { error: upErr } = await supabase.from('non_metered_records').upsert(
+          {
+            facility_id: facilityId,
+            supplier_id: supplierId,
+            utility_category_id: categoryId,
+            period_start_date: period.start,
+            period_end_date: period.end,
+            status: 'CONFIRMED',
+            consumption: totals.consumption,
+            amount: totals.amount,
+          },
+          {
+            onConflict: 'facility_id,supplier_id,utility_category_id,period_start_date,period_end_date',
+            ignoreDuplicates: false,
+          }
+        );
+        if (upErr) throw new Error(upErr.message);
+      }
+      totalConfirmed++;
+    }
+
+    const orphanedPending = pendingRecords.filter(
+      (r) => !confirmedKeys.has(periodKey(r.period_start_date))
+    );
+    if (orphanedPending.length > 0) {
+      const orphanIds = orphanedPending.map((r) => r.id);
+      const { error: delErr } = await supabase.from('non_metered_records').delete().in('id', orphanIds);
+      if (delErr) throw new Error(delErr.message);
+      totalDeletedPending += orphanIds.length;
+    }
+  }
+
+  return {
+    confirmed: totalConfirmed,
+    inferred_empty: 0,
+    deleted_pending: totalDeletedPending,
+    warnings,
+  };
+}
+
 // POST /api/ingestion/confirm
-// Called by the ingestion workflow after producing NGERS output rows.
-// Category in each row identifies the group-level type (e.g. "Transport Fuels").
-// Each group member carries its own utility_category_id (e.g. "Diesel", "Petrol"),
-// and CONFIRMED / INFERRED_EMPTY records are written under that member-level category.
+// Group mode: JSON array of NGERS rows (Category = group-level type; inference applies).
+// Line mode: { "mode": "line", "rows": [ ... NGERS rows ... ] }
+//   Category = record utility name; Facility = site; no INFERRED_EMPTY siblings.
 export async function POST(request: Request) {
   if (!checkApiKey(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
-    const rows: NGERSRow[] = await request.json();
+    const supabase = createSupabaseServiceRoleClient();
+    const raw = await request.json();
+    let rows: NGERSRow[];
+    let lineMode = false;
 
-    if (!Array.isArray(rows) || rows.length === 0) {
+    if (Array.isArray(raw)) {
+      rows = raw;
+    } else if (
+      raw &&
+      typeof raw === 'object' &&
+      raw.mode === 'line' &&
+      Array.isArray(raw.rows)
+    ) {
+      rows = raw.rows;
+      lineMode = true;
+    } else {
       return NextResponse.json(
-        { error: 'Request body must be a non-empty array of rows' },
+        {
+          error:
+            'Request body must be a non-empty array of NGERS rows, or { "mode": "line", "rows": [...] }',
+        },
         { status: 400 }
       );
+    }
+
+    if (rows.length === 0) {
+      return NextResponse.json({ error: 'rows must be non-empty' }, { status: 400 });
+    }
+
+    if (lineMode) {
+      const result = await processLineConfirm(supabase, rows);
+      return NextResponse.json({ mode: 'line', ...result });
     }
 
     let totalConfirmed = 0;
@@ -77,7 +249,7 @@ export async function POST(request: Request) {
       groupedRows.get(key)!.push(row);
     }
 
-    for (const [, groupRows] of groupedRows) {
+    for (const [, groupRows] of Array.from(groupedRows.entries())) {
       const { Company, Provider, Category } = groupRows[0];
       if (!Company || !Provider || !Category) continue;
 
@@ -112,7 +284,7 @@ export async function POST(request: Request) {
         continue;
       }
 
-      const members = (group.members ?? []) as GroupMember[];
+      const members = (group.members ?? []) as unknown as GroupMember[];
 
       // Build lookup maps
       const facilityNameToId = new Map<string, string>();
@@ -179,10 +351,14 @@ export async function POST(request: Request) {
         .eq('status', 'PENDING');
 
       const pendingRecords = allPending ?? [];
+      const confirmedPeriodKeySet = new Set(
+        confirmedPeriodStarts.map((p) => periodKey(p))
+      );
 
       // Step 1: Resolve records for confirmed periods
-      for (const [periodStart, period] of confirmedPeriods) {
+      for (const [periodStart, period] of Array.from(confirmedPeriods.entries())) {
         const byFacility = periodFacilityData.get(periodStart) ?? new Map();
+        const periodStartKey = periodKey(periodStart);
 
         for (const memberId of allMemberIds) {
           const memberCatId = facilityIdToCategory.get(memberId);
@@ -195,7 +371,7 @@ export async function POST(request: Request) {
             (r) =>
               String(r.facility_id) === memberId &&
               r.utility_category_id === memberCatId &&
-              r.period_start_date === periodStart
+              periodKey(r.period_start_date) === periodStartKey
           );
 
           if (byFacility.has(memberId)) {
@@ -255,7 +431,7 @@ export async function POST(request: Request) {
 
       // Step 2: Delete PENDING records for months not covered by this invoice
       const orphanedPending = pendingRecords.filter(
-        (r) => !confirmedPeriodStarts.includes(r.period_start_date)
+        (r) => !confirmedPeriodKeySet.has(periodKey(r.period_start_date))
       );
       if (orphanedPending.length > 0) {
         const orphanIds = orphanedPending.map((r) => r.id);
@@ -265,6 +441,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({
+      mode: 'group',
       confirmed: totalConfirmed,
       inferred_empty: totalInferredEmpty,
       deleted_pending: totalDeletedPending,
@@ -272,6 +449,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error('Error in ingestion/confirm:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    const detail = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: 'Internal server error', detail }, { status: 500 });
   }
 }

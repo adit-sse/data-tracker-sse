@@ -84,6 +84,12 @@ export interface MonthlyCoverage {
   daysCovered: number;
   percentage: number;
   gaps?: DateGap[];
+  /** Days in this month marked deactivated (no API data expected); excluded from coverage denominator. */
+  daysDeactivated?: number;
+  /** Entire month is deactivated-only (no invoice data). */
+  isDeactivatedMonth?: boolean;
+  /** Days we measure coverage against (daysInMonth minus deactivated-only days). */
+  effectiveDaysInMonth?: number;
   // Invoices that overlap this month (optional)
   invoices?: ActualInvoice[];
 }
@@ -147,6 +153,9 @@ export interface MeterSetupRow {
   Address?: string;
   MonthsWithData?: string;
   DataPointCount?: string;
+  /** Months with no live/API data (account deactivated), same date format as MonthsWithData */
+  MonthsDeactivated?: string;
+  DeactivatedCount?: string;
   Identifier?: string; // optional meter identifier (NMI, account number, etc.)
 }
 
@@ -191,7 +200,8 @@ export type NonMeteredStatus =
   | 'MANUAL'
   | 'PENDING'
   | 'ERROR'
-  | 'CONFIRMED';
+  | 'CONFIRMED'
+  | 'DEACTIVATED';
 
 export interface NonMeteredRecord {
   id: string;

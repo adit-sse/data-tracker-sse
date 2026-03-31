@@ -125,11 +125,15 @@ export async function GET(
           };
         }
 
-        // Prefer IMPORTED/MANUAL over INFERRED_EMPTY
+        // Prefer real data, then deactivated (explicitly marked off), then inferred
         const real = overlapping.find(
-          (r: any) => r.status === 'IMPORTED' || r.status === 'MANUAL'
+          (r: any) =>
+            r.status === 'IMPORTED' ||
+            r.status === 'MANUAL' ||
+            r.status === 'CONFIRMED',
         );
-        const best = real ?? overlapping[0];
+        const deactivated = overlapping.find((r: any) => r.status === 'DEACTIVATED');
+        const best = real ?? deactivated ?? overlapping[0];
 
         return {
           month: format(monthDate, 'MMM yy'),

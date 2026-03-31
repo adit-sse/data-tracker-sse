@@ -243,6 +243,10 @@ export default function NonMeteredCoverageTable({
             <span className="text-gray-700">Error</span>
           </div>
           <div className="flex items-center gap-2">
+            <div className="w-8 h-5 bg-slate-500 border border-slate-600 rounded"></div>
+            <span className="text-gray-700">Deactivated</span>
+          </div>
+          <div className="flex items-center gap-2">
             <div className="w-8 h-5 bg-slate-400 border border-slate-500 rounded"></div>
             <span className="text-gray-700">Inferred empty</span>
           </div>
@@ -271,6 +275,8 @@ function NonMeteredCell({ cell, onClick }: NonMeteredCellProps) {
   const getBgColor = () => {
     if (cell.status === 'IMPORTED' || cell.status === 'MANUAL' || cell.status === 'CONFIRMED')
       return 'bg-green-500 border-green-600';
+    if (cell.status === 'DEACTIVATED')
+      return 'bg-slate-500 border-slate-600';
     if (cell.status === 'INFERRED_EMPTY')
       return 'bg-slate-400 border-slate-500';
     if (cell.status === 'PENDING')
@@ -282,6 +288,7 @@ function NonMeteredCell({ cell, onClick }: NonMeteredCellProps) {
 
   const getLabel = () => {
     if (cell.status === 'IMPORTED' || cell.status === 'MANUAL' || cell.status === 'CONFIRMED') return '✓';
+    if (cell.status === 'DEACTIVATED') return 'Off';
     if (cell.status === 'INFERRED_EMPTY') return '0';
     if (cell.status === 'PENDING') return '…';
     if (cell.status === 'ERROR') return '!';
@@ -301,6 +308,7 @@ function NonMeteredCell({ cell, onClick }: NonMeteredCellProps) {
     if (cell.status === 'INFERRED_EMPTY') return 'Inferred empty — click to mark as received';
     if (cell.status === 'PENDING') return 'Invoice received — awaiting confirmation';
     if (cell.status === 'ERROR') return 'Ingestion error — manual fix needed';
+    if (cell.status === 'DEACTIVATED') return 'Deactivated — no API data expected';
     if (onClick) return 'No data — click to mark as received';
     return 'No data';
   };

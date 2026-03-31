@@ -10,11 +10,13 @@ interface ProgressBarCellProps {
 }
 
 export default function ProgressBarCell({ coverage, onClick, disabled }: ProgressBarCellProps) {
-  const { daysCovered, daysInMonth, percentage, gaps } = coverage;
+  const { daysCovered, daysInMonth, percentage, gaps, effectiveDaysInMonth, isDeactivatedMonth } = coverage;
+  const denom = effectiveDaysInMonth ?? daysInMonth;
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   const getBgColor = () => {
+    if (isDeactivatedMonth) return 'bg-slate-500 border-slate-600';
     if (percentage === 100) return 'bg-green-500 border-green-600';
     if (percentage >= 85) return 'bg-yellow-400 border-yellow-500';
     if (percentage >= 50) return 'bg-orange-500 border-orange-600';
@@ -23,6 +25,7 @@ export default function ProgressBarCell({ coverage, onClick, disabled }: Progres
   };
 
   const getTextColor = () => {
+    if (isDeactivatedMonth) return 'text-white';
     if (percentage === 0) return 'text-gray-500';
     return 'text-white';
   };
@@ -68,7 +71,7 @@ export default function ProgressBarCell({ coverage, onClick, disabled }: Progres
       >
         <div className={`h-7 ${getBgColor()} border rounded flex items-center justify-center hover:brightness-110 hover:shadow-md transition-all cursor-pointer`}>
           <span className={`text-xs font-bold ${getTextColor()} drop-shadow-sm`}>
-            {daysCovered}/{daysInMonth}
+            {isDeactivatedMonth ? 'Off' : `${daysCovered}/${denom}`}
           </span>
         </div>
       </button>
@@ -83,7 +86,11 @@ export default function ProgressBarCell({ coverage, onClick, disabled }: Progres
             transform: 'translateX(-50%)',
           }}
         >
-          <div className="font-semibold">{daysCovered}/{daysInMonth} days ({percentage.toFixed(1)}%)</div>
+          <div className="font-semibold">
+            {isDeactivatedMonth
+              ? 'Deactivated — no API data expected'
+              : `${daysCovered}/${denom} days (${percentage.toFixed(1)}%)`}
+          </div>
           {gaps && gaps.length > 0 && (
             <div className="text-gray-300 text-[11px] mt-0.5">{gaps.length} gap{gaps.length > 1 ? 's' : ''}</div>
           )}
