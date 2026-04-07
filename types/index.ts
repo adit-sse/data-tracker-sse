@@ -29,13 +29,14 @@ export interface Supplier {
   created_at?: string;
 }
 
-export type IdentifierType = 
-  | 'NMI' 
+export type IdentifierType =
+  | 'NMI'
   | 'MIRN'
-  | 'ACCOUNT_NUMBER' 
-  | 'METER_NUMBER' 
-  | 'REGISTRATION_PLATE' 
+  | 'ACCOUNT_NUMBER'
+  | 'METER_NUMBER'
+  | 'REGISTRATION_PLATE'
   | 'CARD_NUMBER'
+  | 'FACILITY_LEVEL'
   | 'DESCRIPTION';
 
 export interface Meter {
@@ -162,6 +163,8 @@ export interface MeterSetupRow {
 export interface UploadResult {
   success: boolean;
   imported: number;
+  /** Number of meters/utility lines registered without invoice data (setup-only rows). */
+  metersSetup?: number;
   errors: string[];
   warnings?: string[];
 }
@@ -187,6 +190,22 @@ export interface FacilityGroupMember {
   facility_id: string;
   utility_category_id?: string | null;
   facility?: Facility;
+  utility_category?: UtilityCategory;
+}
+
+// -------------------------------------------------------
+// Non-metered lines (registration — the meters-table equivalent for non-metered)
+// -------------------------------------------------------
+
+export interface NonMeteredLine {
+  id: string;
+  facility_id: string;
+  supplier_id: string;
+  utility_category_id: string;
+  created_at?: string;
+  // Joined
+  facility?: Facility;
+  supplier?: Supplier;
   utility_category?: UtilityCategory;
 }
 

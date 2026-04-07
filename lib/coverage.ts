@@ -35,6 +35,11 @@ function isDeactivatedInvoiceStatus(status: string | null | undefined): boolean 
   return (status || '').trim().toUpperCase() === 'DEACTIVATED';
 }
 
+function isPendingOrErrorInvoiceStatus(status: string | null | undefined): boolean {
+  const s = (status || '').trim().toUpperCase();
+  return s === 'PENDING' || s === 'ERROR';
+}
+
 /**
  * Calculate coverage for a meter across all months in the fiscal year.
  * Invoices with status DEACTIVATED count as "no API data expected" for those days, not as gaps.
@@ -71,6 +76,10 @@ export function calculateMonthlyCoverage(
       }
 
       monthlyInvoices.push(invoice);
+
+      if (isPendingOrErrorInvoiceStatus(invoice.status)) {
+        return;
+      }
 
       const daysInPeriod = eachDayOfInterval({ start, end });
       const invDeactivated = isDeactivatedInvoiceStatus(invoice.status);

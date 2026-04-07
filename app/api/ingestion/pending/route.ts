@@ -6,6 +6,7 @@ import {
   getCurrentFiscalYearMonthsThroughNow,
   seedIngestionPendingNonMeteredLineMonths,
 } from '@/lib/non-metered-pending-seed';
+import { upsertNonMeteredLines } from '@/lib/non-metered-lines';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -187,6 +188,16 @@ export async function POST(request: Request) {
         }
       }
     }
+
+    // Register lines for all group members so the grid shows them even before records exist.
+    await upsertNonMeteredLines(
+      supabase,
+      members.map((m) => ({
+        facilityId: m.facility_id,
+        supplierId: supplier.id,
+        categoryId: m.utility_category_id!,
+      }))
+    );
 
     if (toInsert.length > 0) {
       const { error: insertError } = await supabase

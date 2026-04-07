@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { generateFiscalYearMonths } from '@/lib/coverage';
+import { upsertNonMeteredLine } from '@/lib/non-metered-lines';
 
 /** Fiscal months from July through the current calendar month (ingestion / email workflow). */
 export function getCurrentFiscalYearMonthsThroughNow(): Array<{ start: string; end: string }> {
@@ -54,6 +55,9 @@ export async function seedIngestionPendingNonMeteredLineMonths(
   params: { facilityId: string; supplierId: string; categoryId: string }
 ): Promise<number> {
   const { facilityId, supplierId, categoryId } = params;
+
+  // Ensure the line registration exists so the grid shows this row even between seedings.
+  await upsertNonMeteredLine(supabase, { facilityId, supplierId, categoryId });
   const months = getCurrentFiscalYearMonthsThroughNow();
   const periodStarts = months.map((m) => m.start);
 
@@ -129,6 +133,9 @@ export async function upsertTemplateScope3CoverageMonths(
   params: { facilityId: string; supplierId: string; categoryId: string }
 ): Promise<number> {
   const { facilityId, supplierId, categoryId } = params;
+
+  // Ensure the line registration exists.
+  await upsertNonMeteredLine(supabase, { facilityId, supplierId, categoryId });
   const months = getFullCurrentFiscalYearMonthPeriods();
 
   const rows = months.map((month) => ({

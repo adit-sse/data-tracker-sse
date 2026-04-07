@@ -4,7 +4,7 @@ export const revalidate = 0;
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { generateFiscalYearMonths } from '@/lib/coverage';
-import { format, parseISO, isValid } from 'date-fns';
+import { format } from 'date-fns';
 import type { NonMeteredRowWithCoverage, NonMeteredMonthlyCoverage, NonMeteredRecord } from '@/types';
 
 // GET /api/clients/[id]/coverage/non-metered?fiscalYear=YYYY&scope=1
@@ -43,29 +43,50 @@ export async function GET(
       return NextResponse.json({ rows: [], fiscalYear });
     }
 
-    // Fetch all non_metered_records for this client's facilities in the FY window,
-    // filtered to the requested scope via the joined utility_categories table.
-    // A record overlaps the window if period_start_date <= fyEnd AND period_end_date >= fyStart.
-    const { data: records, error: recordsError } = await supabase
-      .from('non_metered_records')
+    // non_metered_lines is the authoritative source for which rows appear in the grid.
+    // A line exists for every registered (facility, supplier, utility category) combination,
+    // even before any invoice records exist — enabling the "no data yet" state.
+    const { data: lines, error: linesError } = await supabase
+      .from('non_metered_lines')
       .select(`
-        *,
+        id,
+        facility_id,
+        supplier_id,
+        utility_category_id,
         supplier:suppliers(id, name),
         utility_category:utility_categories!inner(id, name, scope, is_metered)
       `)
       .in('facility_id', facilityIds)
-      .lte('period_start_date', fyEnd)
-      .gte('period_end_date', fyStart)
       .eq('utility_categories.scope', scope);
 
-    if (recordsError) throw recordsError;
+    if (linesError) throw linesError;
 
-    if (!records || records.length === 0) {
+    if (!lines || lines.length === 0) {
       return NextResponse.json({ rows: [], fiscalYear });
     }
 
-    // Fetch group memberships for this client so we can attach groupId/groupName to rows.
-    // Members now carry their own utility_category_id; we match on (facility_id, utility_category_id, supplier).
+    // Fetch all records in the FY window for these facilities.
+    // Scope filtering is handled via the lines query above; we fetch all records
+    // and match them to lines when building coverage cells.
+    const { data: records, error: recordsError } = await supabase
+      .from('non_metered_records')
+      .select('*')
+      .in('facility_id', facilityIds)
+      .lte('period_start_date', fyEnd)
+      .gte('period_end_date', fyStart);
+
+    if (recordsError) throw recordsError;
+
+    // Build a map of records keyed by (facility_id, supplier_id, utility_category_id)
+    // so each line can look up its coverage records in O(1).
+    const recordsByLineKey = new Map<string, any[]>();
+    for (const rec of records || []) {
+      const key = `${rec.facility_id}__${rec.supplier_id ?? 'null'}__${rec.utility_category_id}`;
+      if (!recordsByLineKey.has(key)) recordsByLineKey.set(key, []);
+      recordsByLineKey.get(key)!.push(rec);
+    }
+
+    // Fetch group memberships so we can attach groupId/groupName to rows.
     const { data: groupMembers } = await supabase
       .from('facility_group_members')
       .select(`
@@ -75,7 +96,6 @@ export async function GET(
       `)
       .eq('facility_groups.client_id', clientId);
 
-    // Build a map: "facility_id__utility_category_id__supplier_id" → { groupId, groupName }
     type GroupInfo = { groupId: string; groupName: string };
     const groupByMemberKey = new Map<string, GroupInfo>();
     for (const gm of groupMembers ?? []) {
@@ -85,24 +105,12 @@ export async function GET(
       groupByMemberKey.set(key, { groupId: String(g.id), groupName: String(g.name) });
     }
 
-    // Generate the 12 months for this fiscal year
     const fyMonths = generateFiscalYearMonths(fiscalYear);
-
-    // Group records by (facility_id, supplier_id, utility_category_id)
-    const groupKey = (r: any) =>
-      `${r.facility_id}__${r.supplier_id ?? 'null'}__${r.utility_category_id}`;
-
-    const grouped = new Map<string, any[]>();
-    for (const rec of records) {
-      const key = groupKey(rec);
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key)!.push(rec);
-    }
-
     const rows: NonMeteredRowWithCoverage[] = [];
 
-    for (const [key, groupRecords] of Array.from(grouped.entries())) {
-      const sample = groupRecords[0];
+    for (const line of lines) {
+      const lineKey = `${line.facility_id}__${line.supplier_id}__${line.utility_category_id}`;
+      const lineRecords = recordsByLineKey.get(lineKey) ?? [];
 
       const coverage: NonMeteredMonthlyCoverage[] = fyMonths.map((monthDate) => {
         const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
@@ -110,11 +118,8 @@ export async function GET(
         const monthStartStr = format(monthStart, 'yyyy-MM-dd');
         const monthEndStr = format(monthEnd, 'yyyy-MM-dd');
 
-        // Find records overlapping this month
-        const overlapping = groupRecords.filter((r: any) => {
-          const rStart = r.period_start_date;
-          const rEnd = r.period_end_date;
-          return rStart <= monthEndStr && rEnd >= monthStartStr;
+        const overlapping = lineRecords.filter((r: any) => {
+          return r.period_start_date <= monthEndStr && r.period_end_date >= monthStartStr;
         });
 
         if (overlapping.length === 0) {
@@ -125,7 +130,7 @@ export async function GET(
           };
         }
 
-        // Prefer real data, then deactivated (explicitly marked off), then inferred
+        // Prefer real data, then deactivated (explicitly marked off), then inferred/pending
         const real = overlapping.find(
           (r: any) =>
             r.status === 'IMPORTED' ||
@@ -143,32 +148,29 @@ export async function GET(
         };
       });
 
-      const memberKey = `${sample.facility_id}__${sample.utility_category_id}__${sample.supplier_id}`;
+      const memberKey = `${line.facility_id}__${line.utility_category_id}__${line.supplier_id}`;
       const groupInfo = groupByMemberKey.get(memberKey);
 
       rows.push({
-        facilityId: String(sample.facility_id),
-        facilityName: facilityNameById[sample.facility_id] || 'Unknown',
-        supplierId: sample.supplier_id ? String(sample.supplier_id) : null,
-        supplierName: sample.supplier?.name || '—',
-        categoryId: String(sample.utility_category_id),
-        categoryName: sample.utility_category?.name || 'Unknown',
+        facilityId: String(line.facility_id),
+        facilityName: facilityNameById[line.facility_id] || 'Unknown',
+        supplierId: String(line.supplier_id),
+        supplierName: (line.supplier as any)?.name || '—',
+        categoryId: String(line.utility_category_id),
+        categoryName: (line.utility_category as any)?.name || 'Unknown',
         groupId: groupInfo?.groupId,
         groupName: groupInfo?.groupName,
         coverage,
       });
     }
 
-    // Sort: grouped rows first (by group name), then ungrouped rows by facility/supplier/category.
-    // Within a group, sort by facility name then category name.
+    // Sort: grouped rows first (by group name), then ungrouped by facility/supplier/category.
     rows.sort((a, b) => {
       const aGroup = a.groupName ?? '';
       const bGroup = b.groupName ?? '';
 
-      // Ungrouped rows sink to the bottom
       if (aGroup && !bGroup) return -1;
       if (!aGroup && bGroup) return 1;
-
       if (aGroup !== bGroup) return aGroup.localeCompare(bGroup);
 
       const f = a.facilityName.localeCompare(b.facilityName);

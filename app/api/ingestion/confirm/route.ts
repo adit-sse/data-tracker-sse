@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
+import { upsertNonMeteredLine, upsertNonMeteredLines } from '@/lib/non-metered-lines';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -100,6 +101,9 @@ async function processLineConfirm(
     }
 
     const { facilityId, supplierId, categoryId } = resolved;
+
+    // Ensure line registration exists.
+    await upsertNonMeteredLine(supabase, { facilityId, supplierId, categoryId });
 
     const confirmedPeriods = new Map<string, { start: string; end: string }>();
     const periodTotals = new Map<string, { consumption: number; amount: number }>();
@@ -300,6 +304,18 @@ export async function POST(request: Request) {
         }
         allMemberIds.push(fid);
       }
+
+      // Register lines for all group members.
+      await upsertNonMeteredLines(
+        supabase,
+        allMemberIds
+          .filter((fid) => facilityIdToCategory.has(fid))
+          .map((fid) => ({
+            facilityId: fid,
+            supplierId: supplier.id,
+            categoryId: facilityIdToCategory.get(fid)!,
+          }))
+      );
 
       // Extract confirmed periods and aggregate consumption/amount per (period, facility)
       const confirmedPeriods = new Map<string, { start: string; end: string }>();

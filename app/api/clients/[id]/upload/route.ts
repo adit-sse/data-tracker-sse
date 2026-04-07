@@ -15,6 +15,7 @@ import {
 } from '@/lib/client-wide-facility';
 import { classifyCategory, keywordMatches } from '@/lib/utility-category-classification';
 import { upsertTemplateScope3CoverageMonths } from '@/lib/non-metered-pending-seed';
+import { upsertNonMeteredLine, upsertNonMeteredLines } from '@/lib/non-metered-lines';
 
 const BATCH_CHUNK_SIZE = 200;
 
@@ -290,6 +291,7 @@ export async function POST(
 
     const errors: string[] = [];
     let imported = 0;
+    let metersSetup = 0;
     const nonMeteredBatch: NonMeteredPayload[] = [];
     const pendingInvoices: PendingInvoice[] = [];
 
@@ -304,8 +306,10 @@ export async function POST(
             nonMeteredBatch.push(...result.payloads);
           } else if (result?.type === 'pending_seeded') {
             imported += result.created;
+          } else if (result?.type === 'meter_setup') {
+            metersSetup += result.created;
           }
-          // metered rows are counted when their invoices are batch-inserted below
+          // metered rows with data periods are counted when their invoices are batch-inserted below
         } else {
           const result = await processRow(ctx, row as unknown as CSVRow, rowNum, pendingInvoices);
           if (result?.type === 'non_metered') {
@@ -340,19 +344,21 @@ export async function POST(
     }
 
     console.info(
-      '[upload] client=%s file=%s meterSetup=%s rows=%s pendingInvoices=%s imported=%s errors=%s',
+      '[upload] client=%s file=%s meterSetup=%s rows=%s pendingInvoices=%s imported=%s metersSetup=%s errors=%s',
       params.id,
       fileName,
       isMeterSetupFormat,
       rows.length,
       pendingInvoices.length,
       imported,
+      metersSetup,
       errors.length,
     );
 
     const result: UploadResult = {
-      success: imported > 0,
+      success: imported > 0 || metersSetup > 0,
       imported,
+      metersSetup: metersSetup > 0 ? metersSetup : undefined,
       errors,
     };
 
@@ -617,6 +623,17 @@ async function processNonMeteredBatch(
   errors: string[]
 ): Promise<number> {
   if (records.length === 0) return 0;
+
+  // Register a non_metered_lines row for each distinct (facility, supplier, category) combination
+  // so lines appear in the coverage grid even before/after records are written.
+  const linePayloads = records
+    .filter((r) => r.supplierId !== null)
+    .map((r) => ({ facilityId: r.facilityId, supplierId: r.supplierId!, categoryId: r.categoryId }));
+  try {
+    await upsertNonMeteredLines(ctx.supabase, linePayloads);
+  } catch (e) {
+    errors.push(`Non-metered line registration failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   let successCount = 0;
   const upsertedIds: Array<{
@@ -1184,7 +1201,43 @@ async function cachedFindOrCreateMeter(
     .select('id')
     .single();
 
-  if (error) throw new Error(`Failed to create meter: ${error.message}`);
+  if (error) {
+    if (error.code === '23505') {
+      // Unique constraint conflict. Search only by lookup1 (no identifier_type filter) to handle
+      // cases where the constraint is on just lookup1 or the stored type differs from inferred type.
+      const { data: byLookup1 } = await ctx.supabase
+        .from('meters')
+        .select('id, facility_id, utility_category_id, identifier_type, lookup1')
+        .eq('lookup1', opts.lookup1)
+        .limit(1);
+      const found = byLookup1?.[0];
+      if (found) {
+        const sameFacility = found.facility_id === opts.facilityId;
+        const sameType = found.identifier_type === opts.identifierType;
+        console.warn(
+          '[upload] meter conflict: lookup1=%s inferred_type=%s stored_type=%s same_facility=%s facility_id=%s',
+          opts.lookup1, opts.identifierType, found.identifier_type, sameFacility, found.facility_id,
+        );
+        if (sameFacility) {
+          // Same facility — meter already set up, reuse it.
+          rememberMeter(ctx, found.facility_id, found.utility_category_id, opts.lookup1, found.id,
+            found.identifier_type as IdentifierType, opts.identifierType);
+          return found.id;
+        }
+        throw new Error(
+          `Meter identifier "${opts.lookup1}" (${opts.identifierType}) already exists for a different facility` +
+          `${sameType ? '' : ` (stored as ${found.identifier_type})`}. ` +
+          `Existing meter ID: ${found.id}, facility_id: ${found.facility_id}.`
+        );
+      }
+      // lookup1 query also missed — constraint is on a different column or RLS blocked the read.
+      throw new Error(
+        `Duplicate meter identifier ${opts.identifierType} "${opts.lookup1}" — ` +
+        `a meter with this value already exists but could not be retrieved (check DB constraint "unique_identifier").`
+      );
+    }
+    throw new Error(`Failed to create meter: ${error.message}`);
+  }
 
   rememberMeter(
     ctx,
@@ -1225,6 +1278,7 @@ async function processMeterSetupRow(
 ): Promise<
   | { type: 'non_metered'; payloads: NonMeteredPayload[] }
   | { type: 'pending_seeded'; created: number }
+  | { type: 'meter_setup'; created: number }
   | void
 > {
   const rawFacility = row.Facility?.trim() ?? '';
@@ -1313,7 +1367,13 @@ async function processMeterSetupRow(
   const dataMonthStarts = new Set(dataPeriods.map((p) => p.start));
 
   if (is_metered === false) {
-    if (dataPeriods.length === 0 && deactivatedPeriods.length === 0) return;
+    if (dataPeriods.length === 0 && deactivatedPeriods.length === 0) {
+      // No period data — register the line so it appears in the grid with no-data state.
+      if (supplierId) {
+        await upsertNonMeteredLine(ctx.supabase, { facilityId, supplierId, categoryId });
+      }
+      return { type: 'meter_setup', created: 1 };
+    }
     if (!supplierId) {
       throw new Error('Missing Supplier (required for non-metered Fuel/LPG/etc.)');
     }
@@ -1373,6 +1433,11 @@ async function processMeterSetupRow(
     lookup1,
     lookup2: supplierName,
   });
+
+  if (dataPeriods.length === 0 && deactivatedPeriods.length === 0) {
+    // No period data — meter was created/found; count as setup only.
+    return { type: 'meter_setup', created: 1 };
+  }
 
   for (const period of dataPeriods) {
     pendingInvoices.push({
