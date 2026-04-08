@@ -166,6 +166,11 @@ export interface CSVRow {
 // CSV Upload types - Simplified meter setup format
 export interface MeterSetupRow {
   Facility?: string;
+  /** NGERS / reporting group (Scope 1 or 3). Optional for Scope 2 (e.g. electricity). */
+  Category?: string;
+  /** Specific input type name — must exist in Manage Input Types */
+  'Input Type'?: string;
+  /** @deprecated Prefer Input Type + Category. Maps legacy templates to input types. */
   Utility?: string;
   Supplier?: string;
   Address?: string;

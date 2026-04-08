@@ -58,7 +58,10 @@ interface UploadContext {
   clientId: string;
   facilityCache: Map<string, string>;
   supplierCache: Map<string, string>;
+  /** input_types.name → metadata (legacy name "categoryCache") */
   categoryCache: Map<string, { id: string; is_metered: boolean; scope: number }>;
+  /** categories.name (lower) → NGERS reporting group */
+  reportingCategoryCache: Map<string, { id: string; scope: number }>;
   meterCache: Map<string, string>;
 }
 
@@ -84,13 +87,15 @@ async function initContext(supabase: SupabaseClient, clientId: string): Promise<
     facilityCache: new Map(),
     supplierCache: new Map(),
     categoryCache: new Map(),
+    reportingCategoryCache: new Map(),
     meterCache: new Map(),
   };
 
-  const [facilitiesRes, suppliersRes, categoriesRes] = await Promise.all([
+  const [facilitiesRes, suppliersRes, inputTypesRes, reportingCategoriesRes] = await Promise.all([
     ctx.supabase.from('facilities').select('id, name, address').eq('client_id', clientId),
     ctx.supabase.from('suppliers').select('id, name'),
     ctx.supabase.from('input_types').select('id, name, is_metered, scope, needs_review'),
+    ctx.supabase.from('categories').select('id, name, scope'),
   ]);
 
   // Preload facilities by name+address only when that pair is unique in the DB.
@@ -111,11 +116,17 @@ async function initContext(supabase: SupabaseClient, clientId: string): Promise<
   for (const s of suppliersRes.data || []) {
     ctx.supplierCache.set(s.name.trim().toLowerCase(), s.id);
   }
-  for (const c of categoriesRes.data || []) {
+  for (const c of inputTypesRes.data || []) {
     ctx.categoryCache.set(c.name.trim().toLowerCase(), {
       id: c.id,
       is_metered: c.is_metered ?? true,
       scope: typeof c.scope === 'number' ? c.scope : 2,
+    });
+  }
+  for (const c of reportingCategoriesRes.data || []) {
+    ctx.reportingCategoryCache.set(c.name.trim().toLowerCase(), {
+      id: c.id,
+      scope: typeof c.scope === 'number' ? c.scope : 1,
     });
   }
 
@@ -146,7 +157,10 @@ async function initContext(supabase: SupabaseClient, clientId: string): Promise<
 interface NonMeteredPayload {
   facilityId: string;
   supplierId: string | null;
+  /** input_types.id (legacy field name) */
   categoryId: string;
+  /** public.categories.id when Scope 1 / 3 */
+  reportingCategoryId?: string | null;
   invoiceNumber: string | null;
   invoiceDate: string | null;
   periodStart: string;
@@ -239,7 +253,12 @@ export async function POST(
 
     const firstRow = rows[0];
     const headers = Object.keys(firstRow);
-    const isMeterSetupFormat = headers.some((h) => h === 'Utility' || h === 'MonthsWithData');
+    const looksLikeInvoiceFormat =
+      headers.some((h) => h === 'Company') && headers.some((h) => h === 'Date Range');
+    const isMeterSetupFormat =
+      !looksLikeInvoiceFormat &&
+      (headers.some((h) => h === 'Utility' || h === 'MonthsWithData') ||
+        headers.some((h) => h === 'Input Type'));
 
     // Excel merged cells often leave MonthsWithData blank on rows 2+; carry down like a spreadsheet.
     if (isMeterSetupFormat) {
@@ -277,6 +296,8 @@ export async function POST(
     if (UPLOAD_DEBUG && rows[0]) {
       uploadLog('firstRow sample=', {
         Facility: rows[0].Facility,
+        Category: rows[0].Category,
+        'Input Type': rows[0]['Input Type'],
         Utility: rows[0].Utility,
         MonthsWithData: rows[0].MonthsWithData,
         Identifier: rows[0].Identifier,
@@ -536,6 +557,7 @@ async function processRow(
         facilityId,
         supplierId,
         categoryId,
+        reportingCategoryId: null,
         invoiceNumber: row['Invoice Number']?.trim() || null,
         invoiceDate: row['Invoice Date']?.trim() || null,
         periodStart: dateRange.startDate,
@@ -580,6 +602,7 @@ async function processRow(
     facilityId,
     supplierId,
     categoryId,
+    reportingCategoryId: null,
     identifierType,
     lookup1,
     lookup2,
@@ -628,7 +651,12 @@ async function processNonMeteredBatch(
   // so lines appear in the coverage grid even before/after records are written.
   const linePayloads = records
     .filter((r) => r.supplierId !== null)
-    .map((r) => ({ facilityId: r.facilityId, supplierId: r.supplierId!, inputTypeId: r.categoryId }));
+    .map((r) => ({
+      facilityId: r.facilityId,
+      supplierId: r.supplierId!,
+      inputTypeId: r.categoryId,
+      categoryId: r.reportingCategoryId ?? null,
+    }));
   try {
     await upsertNonMeteredLines(ctx.supabase, linePayloads);
   } catch (e) {
@@ -1029,12 +1057,64 @@ async function cachedFindOrCreateCategory(
   );
 }
 
+/**
+ * Resolve public.categories row for NGERS grouping. Scope 2 input types do not use this FK.
+ */
+async function cachedResolveReportingCategory(
+  ctx: UploadContext,
+  rawName: string | undefined,
+  inputTypeScope: number,
+): Promise<string | null> {
+  const trimmed = rawName?.trim() ?? '';
+  if (!trimmed) return null;
+
+  if (inputTypeScope === 2) {
+    throw new Error(
+      `Category "${trimmed}" is not used with Scope 2 input types (e.g. purchased electricity). Leave Category blank for those rows.`,
+    );
+  }
+
+  const key = trimmed.toLowerCase();
+  let row = ctx.reportingCategoryCache.get(key);
+  if (!row) {
+    const { data: existing } = await ctx.supabase
+      .from('categories')
+      .select('id, name, scope')
+      .ilike('name', trimmed)
+      .limit(2);
+
+    if (!existing?.length) {
+      throw new Error(
+        `Unknown Category (reporting group): "${trimmed}". Create it under Categories or correct the spelling.`,
+      );
+    }
+    if (existing.length > 1) {
+      throw new Error(
+        `Category "${trimmed}" matches multiple reporting groups. Use the exact Category name from your database.`,
+      );
+    }
+    const c = existing[0];
+    row = { id: c.id, scope: typeof c.scope === 'number' ? c.scope : 1 };
+    ctx.reportingCategoryCache.set(c.name.trim().toLowerCase(), row);
+  }
+
+  if (inputTypeScope === 1 && row.scope !== 1) {
+    throw new Error(`Category "${trimmed}" is Scope ${row.scope}, but this Input Type is Scope 1.`);
+  }
+  if (inputTypeScope === 3 && row.scope !== 3) {
+    throw new Error(`Category "${trimmed}" is Scope ${row.scope}, but this Input Type is Scope 3.`);
+  }
+
+  return row.id;
+}
+
 async function cachedFindOrCreateMeter(
   ctx: UploadContext,
   opts: {
     facilityId: string;
     supplierId: string | null;
     categoryId: string;
+    reportingCategoryId?: string | null;
     identifierType: IdentifierType;
     lookup1: string;
     lookup2: string | null;
@@ -1100,6 +1180,7 @@ async function cachedFindOrCreateMeter(
       facility_id: opts.facilityId,
       supplier_id: opts.supplierId,
       input_type_id: opts.categoryId,
+      category_id: opts.reportingCategoryId ?? null,
       identifier_type: opts.identifierType,
       lookup1: opts.lookup1,
       lookup2: opts.lookup2,
@@ -1187,21 +1268,50 @@ async function processMeterSetupRow(
   | void
 > {
   const rawFacility = row.Facility?.trim() ?? '';
-  let utilityName = row.Utility?.trim() ?? '';
-  if (!utilityName) {
-    if (isClientWideFacilityName(rawFacility)) {
-      utilityName = 'Scope 3';
-    } else {
-      throw new Error('Missing Utility type');
+  const rowRec = row as Record<string, string | undefined>;
+
+  const inputTypeCell = (() => {
+    const direct = row['Input Type']?.trim();
+    if (direct) return direct;
+    for (const [k, v] of Object.entries(rowRec)) {
+      if (k.replace(/^\uFEFF/, '').trim().toLowerCase() === 'input type' && v?.trim()) {
+        return v.trim();
+      }
     }
+    return '';
+  })();
+
+  let legacyUtility = row.Utility?.trim() ?? '';
+  if (!legacyUtility && isClientWideFacilityName(rawFacility)) {
+    legacyUtility = 'Scope 3';
   }
+
+  let inputTypeName = inputTypeCell;
+  if (!inputTypeName) {
+    if (legacyUtility) inputTypeName = mapUtilityToCategory(legacyUtility);
+    else throw new Error('Missing Input Type (or legacy Utility column)');
+  }
+
+  const reportingCategoryCell = (() => {
+    const direct = row.Category?.trim();
+    if (direct) return direct;
+    for (const [k, v] of Object.entries(rowRec)) {
+      if (k.replace(/^\uFEFF/, '').trim().toLowerCase() === 'category' && v?.trim()) {
+        return v.trim();
+      }
+    }
+    return '';
+  })();
+
+  const { id: inputTypeId, is_metered, scope } = await cachedFindOrCreateCategory(ctx, inputTypeName);
+  const reportingCategoryId = await cachedResolveReportingCategory(
+    ctx,
+    reportingCategoryCell || undefined,
+    scope,
+  );
 
   const supplierName = row.Supplier?.trim() || null;
   const address = row.Address?.trim() || null;
-  const rowRec = row as Record<string, string | undefined>;
-
-  const categoryName = mapUtilityToCategory(utilityName);
-  const { id: categoryId, is_metered, scope } = await cachedFindOrCreateCategory(ctx, categoryName);
 
   let facilityName: string;
   if (!rawFacility) {
@@ -1260,7 +1370,7 @@ async function processMeterSetupRow(
     const created = await upsertTemplateScope3CoverageMonths(ctx.supabase, {
       facilityId,
       supplierId,
-      inputTypeId: categoryId,
+      inputTypeId,
     });
     return { type: 'pending_seeded', created };
   }
@@ -1275,7 +1385,12 @@ async function processMeterSetupRow(
     if (dataPeriods.length === 0 && deactivatedPeriods.length === 0) {
       // No period data — register the line so it appears in the grid with no-data state.
       if (supplierId) {
-        await upsertNonMeteredLine(ctx.supabase, { facilityId, supplierId, inputTypeId: categoryId });
+        await upsertNonMeteredLine(ctx.supabase, {
+          facilityId,
+          supplierId,
+          inputTypeId,
+          categoryId: reportingCategoryId,
+        });
       }
       return { type: 'meter_setup', created: 1 };
     }
@@ -1286,7 +1401,8 @@ async function processMeterSetupRow(
     const base = {
       facilityId,
       supplierId,
-      categoryId,
+      categoryId: inputTypeId,
+      reportingCategoryId: reportingCategoryId ?? null,
       invoiceNumber: null as string | null,
       invoiceDate: null as string | null,
       consumption: null as number | null,
@@ -1323,17 +1439,18 @@ async function processMeterSetupRow(
   let lookup1: string;
 
   if (identifierRaw) {
-    identifierType = inferIdentifierType(utilityName);
+    identifierType = inferIdentifierType(inputTypeName);
     lookup1 = identifierRaw;
   } else {
     identifierType = 'DESCRIPTION';
-    lookup1 = `${facilityName} ${utilityName}`;
+    lookup1 = `${facilityName} ${inputTypeName}`;
   }
 
   const meterId = await cachedFindOrCreateMeter(ctx, {
     facilityId,
     supplierId,
-    categoryId,
+    categoryId: inputTypeId,
+    reportingCategoryId,
     identifierType,
     lookup1,
     lookup2: supplierName,
