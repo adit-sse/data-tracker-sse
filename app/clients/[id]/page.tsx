@@ -184,12 +184,12 @@ export default function ClientDetailPage() {
 
   // Filter metered coverage by scope
   const scope2Meters = metersWithCoverage.filter(
-    (m) => (m.meter.utility_category as any)?.scope === 2
+    (m) => (m.meter.input_type as any)?.scope === 2
   );
   const scope1MeteredMeters = metersWithCoverage.filter(
     (m) =>
-      (m.meter.utility_category as any)?.scope === 1 &&
-      (m.meter.utility_category as any)?.is_metered === true
+      (m.meter.input_type as any)?.scope === 1 &&
+      (m.meter.input_type as any)?.is_metered === true
   );
 
   const handleTabChange = (tab: ScopeTab) => {
@@ -1323,7 +1323,7 @@ function NmMarkEmptyModal({
         body: JSON.stringify({
           facility_id: row.facilityId,
           supplier_id: row.supplierId,
-          utility_category_id: row.categoryId,
+          input_type_id: row.inputTypeId,
           period_start_date: periodStart,
           period_end_date: periodEnd,
           status,

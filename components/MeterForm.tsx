@@ -11,7 +11,8 @@ interface MeterFormProps {
 export interface MeterFormData {
   facility_id: string;
   supplier_id: string;
-  utility_category_id: string;
+  input_type_id: string;
+  category_id?: string;
   identifier_type: string;
   lookup1: string;
   lookup2?: string;
@@ -29,96 +30,101 @@ interface Supplier {
   name: string;
 }
 
-interface UtilityCategory {
+interface InputType {
   id: string;
   name: string;
+  scope?: number;
+  is_metered?: boolean;
+}
+
+interface Category {
+  id: string;
+  name: string;
+  scope: number;
 }
 
 export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormProps) {
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [utilityCategories, setUtilityCategories] = useState<UtilityCategory[]>([]);
-  
+  const [inputTypes, setInputTypes] = useState<InputType[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+
   const [formData, setFormData] = useState<MeterFormData>({
     facility_id: '',
     supplier_id: '',
-    utility_category_id: '',
+    input_type_id: '',
+    category_id: '',
     identifier_type: 'NMI',
     lookup1: '',
     lookup2: '',
     in_service_start_date: '',
     in_service_end_date: ''
   });
-  
+
   const [newSupplierName, setNewSupplierName] = useState('');
   const [showNewSupplier, setShowNewSupplier] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
-  
+
   useEffect(() => {
     let cancelled = false;
-    
+
     const fetchData = async () => {
       try {
-        const [facilitiesRes, categoriesRes, suppliersRes] = await Promise.all([
+        const [facilitiesRes, inputTypesRes, categoriesRes, suppliersRes] = await Promise.all([
           fetch(`/api/clients/${clientId}/facilities`),
-          fetch('/api/utility-categories'),
+          fetch('/api/input-types'),
+          fetch('/api/categories'),
           fetch('/api/suppliers')
         ]);
-        
+
         if (cancelled) return;
-        
-        if (!facilitiesRes.ok) {
-          throw new Error('Failed to fetch facilities');
-        }
-        if (!categoriesRes.ok) {
-          throw new Error('Failed to fetch utility categories');
-        }
-        if (!suppliersRes.ok) {
-          throw new Error('Failed to fetch suppliers');
-        }
-        
-        const [facilitiesData, categoriesData, suppliersData] = await Promise.all([
+
+        if (!facilitiesRes.ok) throw new Error('Failed to fetch facilities');
+        if (!inputTypesRes.ok) throw new Error('Failed to fetch input types');
+
+        const [facilitiesData, inputTypesData, categoriesData, suppliersData] = await Promise.all([
           facilitiesRes.json(),
-          categoriesRes.json(),
-          suppliersRes.json()
+          inputTypesRes.json(),
+          categoriesRes.ok ? categoriesRes.json() : [],
+          suppliersRes.ok ? suppliersRes.json() : []
         ]);
-        
+
         if (cancelled) return;
-        
+
         setFacilities(facilitiesData);
-        setUtilityCategories(categoriesData);
+        setInputTypes(inputTypesData);
+        setCategories(categoriesData);
         setSuppliers(suppliersData);
       } catch (err) {
         if (!cancelled) {
-          console.error('Error fetching data:', err);
           setError(err instanceof Error ? err.message : 'Failed to load form data');
         }
       }
     };
-    
+
     fetchData();
-    
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [clientId]);
-  
+
+  const selectedInputType = inputTypes.find(it => it.id === formData.input_type_id);
+  const needsCategory = selectedInputType?.scope === 1 || selectedInputType?.scope === 3;
+  const filteredCategories = needsCategory
+    ? categories.filter(c => c.scope === selectedInputType?.scope)
+    : categories;
+
   const handleCreateSupplier = async () => {
     if (!newSupplierName.trim()) return;
-    
     try {
       const response = await fetch('/api/suppliers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newSupplierName.trim() })
       });
-      
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.error || 'Failed to create supplier');
       }
-      
       const newSupplier = await response.json();
       setSuppliers([...suppliers, newSupplier]);
       setFormData({ ...formData, supplier_id: newSupplier.id });
@@ -128,27 +134,27 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
       setError(err instanceof Error ? err.message : 'Failed to create supplier');
     }
   };
-  
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    
-    // Supplier is now optional
-    if (!formData.facility_id || !formData.utility_category_id || !formData.lookup1) {
-      setError('Please fill in facility, utility type, and meter identifier');
+
+    if (!formData.facility_id || !formData.input_type_id || !formData.lookup1) {
+      setError('Please fill in facility, input type, and meter identifier');
       return;
     }
-    
+
     setIsSubmitting(true);
-    
     try {
-      await onSubmit(formData);
-      
-      // Reset form
+      await onSubmit({
+        ...formData,
+        category_id: formData.category_id || undefined,
+      });
       setFormData({
         facility_id: '',
         supplier_id: '',
-        utility_category_id: '',
+        input_type_id: '',
+        category_id: '',
         identifier_type: 'NMI',
         lookup1: '',
         lookup2: '',
@@ -156,16 +162,12 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
         in_service_end_date: ''
       });
     } catch (err) {
-      console.error('Form submission error:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Failed to create meter';
-      setError(errorMessage);
-      
-      // Don't close the form on error - let user fix it
+      setError(err instanceof Error ? err.message : 'Failed to create meter');
     } finally {
       setIsSubmitting(false);
     }
   };
-  
+
   const identifierTypes = [
     { value: 'NMI', label: 'NMI (National Meter Identifier)' },
     { value: 'MIRN', label: 'MIRN (Meter Installation Registration Number)' },
@@ -175,7 +177,7 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
     { value: 'CARD_NUMBER', label: 'Card Number' },
     { value: 'DESCRIPTION', label: 'Description (for Scope 3, etc.)' }
   ];
-  
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {error && (
@@ -183,7 +185,7 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
           {error}
         </div>
       )}
-      
+
       <div>
         <label htmlFor="facility" className="block text-sm font-medium text-gray-700 mb-1">
           Facility <span className="text-red-500">*</span>
@@ -202,26 +204,54 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
           ))}
         </select>
       </div>
-      
+
       <div>
-        <label htmlFor="utility_category" className="block text-sm font-medium text-gray-700 mb-1">
-          Utility Type <span className="text-red-500">*</span>
+        <label htmlFor="input_type" className="block text-sm font-medium text-gray-700 mb-1">
+          Input Type <span className="text-red-500">*</span>
         </label>
         <select
-          id="utility_category"
-          value={formData.utility_category_id}
-          onChange={(e) => setFormData({ ...formData, utility_category_id: e.target.value })}
+          id="input_type"
+          value={formData.input_type_id}
+          onChange={(e) => setFormData({ ...formData, input_type_id: e.target.value, category_id: '' })}
           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           required
           disabled={isSubmitting}
         >
-          <option value="">Select utility type</option>
-          {utilityCategories.map(category => (
-            <option key={category.id} value={category.id}>{category.name}</option>
-          ))}
+          <option value="">Select input type</option>
+          {[1, 2, 3].map(scope => {
+            const scopeTypes = inputTypes.filter(it => it.scope === scope);
+            if (scopeTypes.length === 0) return null;
+            return (
+              <optgroup key={scope} label={`Scope ${scope}`}>
+                {scopeTypes.map(it => (
+                  <option key={it.id} value={it.id}>{it.name}</option>
+                ))}
+              </optgroup>
+            );
+          })}
         </select>
       </div>
-      
+
+      {filteredCategories.length > 0 && (
+        <div>
+          <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-1">
+            Category {!needsCategory && <span className="text-gray-400 text-xs">(Optional)</span>}
+          </label>
+          <select
+            id="category"
+            value={formData.category_id}
+            onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={isSubmitting}
+          >
+            <option value="">Select category</option>
+            {filteredCategories.map(cat => (
+              <option key={cat.id} value={cat.id}>{cat.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div>
         <div className="flex justify-between items-center mb-1">
           <label htmlFor="supplier" className="block text-sm font-medium text-gray-700">
@@ -235,7 +265,7 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
             {showNewSupplier ? 'Cancel' : '+ New Supplier'}
           </button>
         </div>
-        
+
         {showNewSupplier ? (
           <div className="flex gap-2">
             <input
@@ -268,7 +298,7 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
           </select>
         )}
       </div>
-      
+
       <div>
         <label htmlFor="identifier_type" className="block text-sm font-medium text-gray-700 mb-1">
           Identifier Type <span className="text-red-500">*</span>
@@ -286,7 +316,7 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
           ))}
         </select>
       </div>
-      
+
       <div>
         <label htmlFor="lookup1" className="block text-sm font-medium text-gray-700 mb-1">
           Meter Identifier <span className="text-red-500">*</span>
@@ -302,10 +332,10 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
           disabled={isSubmitting}
         />
       </div>
-      
+
       <div>
         <label htmlFor="lookup2" className="block text-sm font-medium text-gray-700 mb-1">
-          Secondary Identifier (Optional)
+          Secondary Identifier <span className="text-gray-400 text-xs">(Optional)</span>
         </label>
         <input
           type="text"
@@ -351,7 +381,7 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
           </div>
         </div>
       </div>
-      
+
       <div className="flex gap-3 pt-2">
         <button
           type="submit"
@@ -360,7 +390,7 @@ export default function MeterForm({ clientId, onSubmit, onCancel }: MeterFormPro
         >
           {isSubmitting ? 'Creating...' : 'Create Meter'}
         </button>
-        
+
         {onCancel && (
           <button
             type="button"

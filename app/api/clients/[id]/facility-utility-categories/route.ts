@@ -38,12 +38,12 @@ export async function GET(
         facility_id,
         supplier_id,
         supplier:suppliers(id, name),
-        utility_category:utility_categories!inner(id, name, scope)
+        input_type:input_types!inner(id, name, scope)
       `)
       .in('facility_id', facilityIds);
 
     if (scope !== null) {
-      query = query.eq('utility_categories.scope', scope);
+      query = query.eq('input_types.scope', scope);
     }
 
     const { data: records, error: recordsError } = await query;
@@ -58,7 +58,7 @@ export async function GET(
 
     for (const rec of records ?? []) {
       const fid = String(rec.facility_id);
-      const cat = (rec as any).utility_category;
+      const cat = (rec as any).input_type;
       const sup = (rec as any).supplier;
       if (!cat) continue;
       const sid = rec.supplier_id ? String(rec.supplier_id) : 'null';

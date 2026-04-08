@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
-import type { NonMeteredRowWithCoverage, NonMeteredMonthlyCoverage, NonMeteredRecord, UtilityCategory } from '@/types';
+import type { NonMeteredRowWithCoverage, NonMeteredMonthlyCoverage, NonMeteredRecord, InputType } from '@/types';
 
 interface NonMeteredCoverageTableProps {
   rows: NonMeteredRowWithCoverage[];
@@ -10,7 +10,7 @@ interface NonMeteredCoverageTableProps {
   onCellClick?: (record: NonMeteredRecord) => void;
   onEmptyCellClick?: (row: NonMeteredRowWithCoverage, cell: NonMeteredMonthlyCoverage) => void;
   onLineStatusToggle?: (lineId: string, currentIsActive: boolean) => void;
-  onUpdateLine?: (lineId: string, field: 'sub_category' | 'utility_category_id', value: string | null) => Promise<void>;
+  onUpdateLine?: (lineId: string, field: 'category_id' | 'input_type_id', value: string | null) => Promise<void>;
 }
 
 export default function NonMeteredCoverageTable({
@@ -31,27 +31,27 @@ export default function NonMeteredCoverageTable({
   // Inline editing state
   const [editingCell, setEditingCell] = useState<{
     lineId: string;
-    field: 'sub_category' | 'utility_category_id';
+    field: 'category_id' | 'input_type_id';
     value: string;
   } | null>(null);
   const [savingCell, setSavingCell] = useState(false);
-  const [utilityCategories, setUtilityCategories] = useState<UtilityCategory[]>([]);
-  const [loadingCategories, setLoadingCategories] = useState(false);
+  const [inputTypes, setInputTypes] = useState<InputType[]>([]);
+  const [loadingInputTypes, setLoadingInputTypes] = useState(false);
   const editInputRef = useRef<HTMLInputElement | HTMLSelectElement>(null);
 
-  const loadUtilityCategories = useCallback(async () => {
-    if (utilityCategories.length > 0 || loadingCategories) return;
-    setLoadingCategories(true);
+  const loadInputTypes = useCallback(async () => {
+    if (inputTypes.length > 0 || loadingInputTypes) return;
+    setLoadingInputTypes(true);
     try {
-      const res = await fetch('/api/utility-categories');
+      const res = await fetch('/api/input-types');
       if (res.ok) {
-        const data: UtilityCategory[] = await res.json();
-        setUtilityCategories(data.filter((c) => c.scope === 1));
+        const data: InputType[] = await res.json();
+        setInputTypes(data.filter((c) => c.scope === 1));
       }
     } finally {
-      setLoadingCategories(false);
+      setLoadingInputTypes(false);
     }
-  }, [utilityCategories.length, loadingCategories]);
+  }, [inputTypes.length, loadingInputTypes]);
 
   useEffect(() => {
     if (editingCell) {
@@ -61,9 +61,9 @@ export default function NonMeteredCoverageTable({
     }
   }, [editingCell?.lineId, editingCell?.field]);
 
-  const startEdit = async (lineId: string, field: 'sub_category' | 'utility_category_id', currentValue: string) => {
+  const startEdit = async (lineId: string, field: 'category_id' | 'input_type_id', currentValue: string) => {
     if (!onUpdateLine) return;
-    if (field === 'utility_category_id') await loadUtilityCategories();
+    if (field === 'input_type_id') await loadInputTypes();
     setEditingCell({ lineId, field, value: currentValue });
   };
 
@@ -96,13 +96,13 @@ export default function NonMeteredCoverageTable({
 
   const suppliers = Array.from(new Set(rows.map((r) => r.supplierName))).sort();
   const facilityNames = Array.from(new Set(rows.map((r) => r.facilityName))).sort();
-  const categories = Array.from(new Set(rows.map((r) => r.categoryName))).sort();
+  const inputTypeNames = Array.from(new Set(rows.map((r) => r.inputTypeName))).sort();
   const groups = Array.from(new Set(rows.filter((r) => r.groupName).map((r) => r.groupName!))).sort();
 
   const filteredRows = rows.filter((r) => {
     const s = filterSupplier === 'ALL' || r.supplierName === filterSupplier;
     const f = filterFacility === 'ALL' || r.facilityName === filterFacility;
-    const c = filterCategory === 'ALL' || r.categoryName === filterCategory;
+    const c = filterCategory === 'ALL' || r.inputTypeName === filterCategory;
     const g = filterGroup === 'ALL' || r.groupName === filterGroup;
     const st = filterStatus === 'ALL' ||
       (filterStatus === 'ACTIVE' && r.isActive) ||
@@ -152,7 +152,7 @@ export default function NonMeteredCoverageTable({
             className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
           >
             <option value="ALL">All Types</option>
-            {categories.map((c) => (
+            {inputTypeNames.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
@@ -254,7 +254,7 @@ export default function NonMeteredCoverageTable({
               const showUngroupedHeader = !row.groupName && prevRow?.groupName;
 
               return (
-                <div key={`${row.facilityId}-${row.supplierId}-${row.categoryId}`}>
+                <div key={`${row.facilityId}-${row.supplierId}-${row.inputTypeId}`}>
                   {/* Group separator / header */}
                   {showGroupHeader && (
                     <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 border-b border-slate-200 sticky top-[49px] z-10">
@@ -287,7 +287,7 @@ export default function NonMeteredCoverageTable({
                     <div
                       className={`w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 flex items-center justify-center ${onUpdateLine ? 'group/cat' : ''}`}
                     >
-                      {editingCell?.lineId === row.lineId && editingCell.field === 'sub_category' ? (
+                      {editingCell?.lineId === row.lineId && editingCell.field === 'category_id' ? (
                         <input
                           ref={editInputRef as React.RefObject<HTMLInputElement>}
                           type="text"
@@ -305,12 +305,12 @@ export default function NonMeteredCoverageTable({
                       ) : (
                         <button
                           type="button"
-                          onClick={() => startEdit(row.lineId, 'sub_category', row.subCategory || '')}
+                          onClick={() => startEdit(row.lineId, 'category_id', row.categoryId || '')}
                           disabled={!onUpdateLine}
                           title={onUpdateLine ? 'Click to edit category' : undefined}
                           className={`text-sm text-gray-600 text-center w-full truncate ${onUpdateLine ? 'cursor-pointer rounded px-1 py-0.5 hover:bg-emerald-50 hover:text-emerald-700 transition-colors' : 'cursor-default'}`}
                         >
-                          {row.subCategory || <span className="text-gray-400">{onUpdateLine ? 'Add category…' : '—'}</span>}
+                          {row.categoryName || <span className="text-gray-400">{onUpdateLine ? 'Select category…' : '—'}</span>}
                         </button>
                       )}
                     </div>
@@ -319,8 +319,8 @@ export default function NonMeteredCoverageTable({
                     <div
                       className={`w-[120px] min-w-[120px] px-3 py-3 border-r border-gray-200 flex items-center justify-center ${onUpdateLine ? 'group/type' : ''}`}
                     >
-                      {editingCell?.lineId === row.lineId && editingCell.field === 'utility_category_id' ? (
-                        loadingCategories ? (
+                      {editingCell?.lineId === row.lineId && editingCell.field === 'input_type_id' ? (
+                        loadingInputTypes ? (
                           <span className="text-xs text-gray-400">Loading…</span>
                         ) : (
                           <select
@@ -334,20 +334,20 @@ export default function NonMeteredCoverageTable({
                             disabled={savingCell}
                             className="w-full text-sm border border-emerald-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white"
                           >
-                            {utilityCategories.map((cat) => (
-                              <option key={cat.id} value={cat.id}>{cat.name}</option>
+                            {inputTypes.map((it) => (
+                              <option key={it.id} value={it.id}>{it.name}</option>
                             ))}
                           </select>
                         )
                       ) : (
                         <button
                           type="button"
-                          onClick={() => startEdit(row.lineId, 'utility_category_id', row.categoryId)}
+                          onClick={() => startEdit(row.lineId, 'input_type_id', row.inputTypeId)}
                           disabled={!onUpdateLine}
                           title={onUpdateLine ? 'Click to edit input type' : undefined}
                           className={`text-sm text-gray-600 text-center w-full truncate ${onUpdateLine ? 'cursor-pointer rounded px-1 py-0.5 hover:bg-emerald-50 hover:text-emerald-700 transition-colors' : 'cursor-default'}`}
                         >
-                          {row.categoryName}
+                          {row.inputTypeName}
                         </button>
                       )}
                     </div>

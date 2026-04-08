@@ -16,7 +16,7 @@ export default function NeedsReviewBanner() {
 
   const fetchFlagged = async () => {
     try {
-      const res = await fetch('/api/utility-categories');
+      const res = await fetch('/api/input-types');
       if (!res.ok) return;
       const data: UtilityCategory[] = await res.json();
       setFlagged(data.filter((c) => c.needs_review === true));
@@ -30,7 +30,7 @@ export default function NeedsReviewBanner() {
     const edit = getEdit(cat);
     setSaving(cat.id);
     try {
-      const res = await fetch(`/api/utility-categories/${cat.id}`, {
+      const res = await fetch(`/api/input-types/${cat.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

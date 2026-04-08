@@ -22,7 +22,7 @@ interface NGERSRow {
 
 interface GroupMember {
   facility_id: string | number;
-  utility_category_id: string | null;
+  input_type_id: string | null;
   facility: { id: string | number; name: string } | null;
 }
 
@@ -103,7 +103,7 @@ async function processLineConfirm(
     const { facilityId, supplierId, categoryId } = resolved;
 
     // Ensure line registration exists.
-    await upsertNonMeteredLine(supabase, { facilityId, supplierId, categoryId });
+    await upsertNonMeteredLine(supabase, { facilityId, supplierId, inputTypeId: categoryId });
 
     const confirmedPeriods = new Map<string, { start: string; end: string }>();
     const periodTotals = new Map<string, { consumption: number; amount: number }>();
@@ -129,10 +129,10 @@ async function processLineConfirm(
 
     const { data: allPending, error: pendingFetchErr } = await supabase
       .from('non_metered_records')
-      .select('id, facility_id, utility_category_id, period_start_date, status')
+      .select('id, facility_id, input_type_id, period_start_date, status')
       .eq('facility_id', facilityId)
       .eq('supplier_id', supplierId)
-      .eq('utility_category_id', categoryId)
+      .eq('input_type_id', categoryId)
       .eq('status', 'PENDING');
 
     if (pendingFetchErr) throw new Error(pendingFetchErr.message);
@@ -160,7 +160,7 @@ async function processLineConfirm(
           {
             facility_id: facilityId,
             supplier_id: supplierId,
-            utility_category_id: categoryId,
+            input_type_id: categoryId,
             period_start_date: period.start,
             period_end_date: period.end,
             status: 'CONFIRMED',
@@ -168,7 +168,7 @@ async function processLineConfirm(
             amount: totals.amount,
           },
           {
-            onConflict: 'facility_id,supplier_id,utility_category_id,period_start_date,period_end_date',
+            onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
             ignoreDuplicates: false,
           }
         );
@@ -261,7 +261,7 @@ export async function POST(request: Request) {
         supabase.from('clients').select('id').ilike('name', Company).single(),
         supabase.from('suppliers').select('id').ilike('name', Provider).single(),
         // Category in the NGERS row = the group-level type
-        supabase.from('utility_categories').select('id').ilike('name', Category).single(),
+        supabase.from('input_types').select('id').ilike('name', Category).single(),
       ]);
 
       if (!client) { warnings.push(`Client "${Company}" not found — rows skipped`); continue; }
@@ -274,13 +274,13 @@ export async function POST(request: Request) {
           id,
           members:facility_group_members(
             facility_id,
-            utility_category_id,
+            input_type_id,
             facility:facilities(id, name)
           )
         `)
         .eq('client_id', client.id)
         .eq('supplier_id', supplier.id)
-        .eq('utility_category_id', groupCategory.id)
+        .eq('input_type_id', groupCategory.id)
         .single();
 
       if (!group) {
@@ -299,8 +299,8 @@ export async function POST(request: Request) {
         const fid = String(member.facility_id);
         const fname = member.facility?.name;
         if (fname) facilityNameToId.set(fname.toLowerCase(), fid);
-        if (member.utility_category_id) {
-          facilityIdToCategory.set(fid, member.utility_category_id);
+        if (member.input_type_id) {
+          facilityIdToCategory.set(fid, member.input_type_id);
         }
         allMemberIds.push(fid);
       }
@@ -313,7 +313,7 @@ export async function POST(request: Request) {
           .map((fid) => ({
             facilityId: fid,
             supplierId: supplier.id,
-            categoryId: facilityIdToCategory.get(fid)!,
+            inputTypeId: facilityIdToCategory.get(fid)!,
           }))
       );
 
@@ -360,10 +360,10 @@ export async function POST(request: Request) {
 
       const { data: allPending } = await supabase
         .from('non_metered_records')
-        .select('id, facility_id, utility_category_id, period_start_date, status')
+        .select('id, facility_id, input_type_id, period_start_date, status')
         .in('facility_id', allMemberIds)
         .eq('supplier_id', supplier.id)
-        .in('utility_category_id', memberCategoryIds)
+        .in('input_type_id', memberCategoryIds)
         .eq('status', 'PENDING');
 
       const pendingRecords = allPending ?? [];
@@ -386,7 +386,7 @@ export async function POST(request: Request) {
           const existingPending = pendingRecords.find(
             (r) =>
               String(r.facility_id) === memberId &&
-              r.utility_category_id === memberCatId &&
+              r.input_type_id === memberCatId &&
               periodKey(r.period_start_date) === periodStartKey
           );
 
@@ -403,7 +403,7 @@ export async function POST(request: Request) {
                 {
                   facility_id: memberId,
                   supplier_id: supplier.id,
-                  utility_category_id: memberCatId,
+                  input_type_id: memberCatId,
                   period_start_date: period.start,
                   period_end_date: period.end,
                   status: 'CONFIRMED',
@@ -411,7 +411,7 @@ export async function POST(request: Request) {
                   amount: data.amount,
                 },
                 {
-                  onConflict: 'facility_id,supplier_id,utility_category_id,period_start_date,period_end_date',
+                  onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
                   ignoreDuplicates: false,
                 }
               );
@@ -429,13 +429,13 @@ export async function POST(request: Request) {
                 {
                   facility_id: memberId,
                   supplier_id: supplier.id,
-                  utility_category_id: memberCatId,
+                  input_type_id: memberCatId,
                   period_start_date: period.start,
                   period_end_date: period.end,
                   status: 'INFERRED_EMPTY',
                 },
                 {
-                  onConflict: 'facility_id,supplier_id,utility_category_id,period_start_date,period_end_date',
+                  onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
                   ignoreDuplicates: true,
                 }
               );

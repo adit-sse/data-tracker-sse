@@ -73,7 +73,7 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
   };
   
   const utilityTypes = Array.from(
-    new Set(metersWithCoverage.map(m => m.meter.utility_category?.name || 'UNKNOWN'))
+    new Set(metersWithCoverage.map(m => m.meter.input_type?.name || 'UNKNOWN'))
   );
   
   const suppliers = Array.from(
@@ -85,7 +85,7 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
   ).sort();
   
   const filteredMeters = metersWithCoverage.filter(m => {
-    const utilityMatch = filterUtility === 'ALL' || m.meter.utility_category?.name === filterUtility;
+    const utilityMatch = filterUtility === 'ALL' || m.meter.input_type?.name === filterUtility;
     const supplierMatch = filterSupplier === 'ALL' || (m.meter.supplier?.name || 'No Supplier') === filterSupplier;
     const facilityMatch = filterFacility === 'ALL' || (m.meter.facility?.name || 'Unknown') === filterFacility;
     
@@ -247,13 +247,13 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
               {showCategoryColumn && (
                 <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
                   <div className="text-sm text-gray-600 text-center">
-                    {meter.utility_category?.name || '—'}
+                    {meter.category?.name || <span className="text-gray-400">—</span>}
                   </div>
                 </div>
               )}
               <div className="w-[110px] min-w-[110px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
                 <div className="text-sm text-gray-600 text-center">
-                  {meter.utility_category?.name || 'N/A'}
+                  {meter.input_type?.name || 'N/A'}
                 </div>
               </div>
               <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 text-center">

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
-import { findOrCreateUtilityCategoryForIngestion } from '@/lib/ingestion-utility-category';
+import { findInputTypeForIngestion } from '@/lib/ingestion-utility-category';
 import {
   getCurrentFiscalYearMonthsThroughNow,
   seedIngestionPendingNonMeteredLineMonths,
@@ -20,7 +20,7 @@ function checkApiKey(request: Request): boolean {
 // POST /api/ingestion/pending
 // Called by the ingestion workflow when an invoice email is received.
 // Marks all months in the current fiscal year as PENDING for every facility
-// in the matching group, using each member's specific utility_category_id.
+// in the matching group, using each member's specific input_type_id.
 //
 // Body (group): { client_name, supplier_name, utility_name }
 //   utility_name = group-level type (e.g. "Transport Fuels").
@@ -62,7 +62,7 @@ export async function POST(request: Request) {
       const created = await seedIngestionPendingNonMeteredLineMonths(supabase, {
         facilityId,
         supplierId,
-        categoryId,
+        inputTypeId: categoryId,
       });
 
       return NextResponse.json({
@@ -72,7 +72,7 @@ export async function POST(request: Request) {
           facility_id: facilityId,
           facility_name: facilityName,
           supplier_id: supplierId,
-          utility_category_id: categoryId,
+          input_type_id: categoryId,
         },
         created,
         skipped: months.length - created,
@@ -90,7 +90,7 @@ export async function POST(request: Request) {
 
     let groupCategory: { id: string };
     try {
-      groupCategory = await findOrCreateUtilityCategoryForIngestion(supabase, utility_name);
+      groupCategory = await findInputTypeForIngestion(supabase, utility_name);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Unknown error';
       return NextResponse.json({ error: msg }, { status: 400 });
@@ -103,12 +103,12 @@ export async function POST(request: Request) {
         id,
         members:facility_group_members(
           facility_id,
-          utility_category_id
+          input_type_id
         )
       `)
       .eq('client_id', client.id)
       .eq('supplier_id', supplier.id)
-      .eq('utility_category_id', groupCategory.id)
+      .eq('input_type_id', groupCategory.id)
       .single();
 
     if (!group) {
@@ -120,9 +120,9 @@ export async function POST(request: Request) {
       );
     }
 
-    type MemberRow = { facility_id: string; utility_category_id: string | null };
+    type MemberRow = { facility_id: string; input_type_id: string | null };
     const members: MemberRow[] = (group.members ?? []).filter(
-      (m: MemberRow) => m.utility_category_id
+      (m: MemberRow) => m.input_type_id
     );
 
     if (members.length === 0) {
@@ -141,7 +141,7 @@ export async function POST(request: Request) {
     const [{ data: existingExact }, { data: existingGreen }] = await Promise.all([
       supabase
         .from('non_metered_records')
-        .select('facility_id, utility_category_id, period_start_date')
+        .select('facility_id, input_type_id, period_start_date')
         .in('facility_id', allFacilityIds)
         .eq('supplier_id', supplier.id)
         .in('period_start_date', periodStarts),
@@ -157,8 +157,8 @@ export async function POST(request: Request) {
     // facility__period => set of category ids that already have records
     const existingByCategoryKey = new Set<string>(
       (existingExact ?? []).map(
-        (r: { facility_id: string; utility_category_id: string; period_start_date: string }) =>
-          `${r.facility_id}__${r.utility_category_id}__${r.period_start_date}`
+        (r: { facility_id: string; input_type_id: string; period_start_date: string }) =>
+          `${r.facility_id}__${r.input_type_id}__${r.period_start_date}`
       )
     );
 
@@ -172,7 +172,7 @@ export async function POST(request: Request) {
 
     const toInsert = [];
     for (const member of members) {
-      const catId = member.utility_category_id!;
+      const catId = member.input_type_id!;
       for (const month of months) {
         const catKey = `${member.facility_id}__${catId}__${month.start}`;
         const greenKey = `${member.facility_id}__${month.start}`;
@@ -180,7 +180,7 @@ export async function POST(request: Request) {
           toInsert.push({
             facility_id: member.facility_id,
             supplier_id: supplier.id,
-            utility_category_id: catId,
+            input_type_id: catId,
             period_start_date: month.start,
             period_end_date: month.end,
             status: 'PENDING',
@@ -189,13 +189,12 @@ export async function POST(request: Request) {
       }
     }
 
-    // Register lines for all group members so the grid shows them even before records exist.
     await upsertNonMeteredLines(
       supabase,
       members.map((m) => ({
         facilityId: m.facility_id,
         supplierId: supplier.id,
-        categoryId: m.utility_category_id!,
+        inputTypeId: m.input_type_id!,
       }))
     );
 

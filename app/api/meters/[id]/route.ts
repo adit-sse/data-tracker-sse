@@ -12,25 +12,29 @@ export async function PATCH(
   try {
     const supabase = createSupabaseServerClient();
     const body = await request.json();
-    const { 
+    const {
       facility_id,
-      utility_category_id,
+      input_type_id,
+      category_id,
       identifier_type,
       lookup1,
       lookup2,
       supplier_id,
-      in_service_start_date, 
+      in_service_start_date,
       in_service_end_date,
       needs_attention
     } = body;
 
     const updateData: Record<string, unknown> = {};
-    
+
     if (facility_id !== undefined) {
       updateData.facility_id = facility_id;
     }
-    if (utility_category_id !== undefined) {
-      updateData.utility_category_id = utility_category_id;
+    if (input_type_id !== undefined) {
+      updateData.input_type_id = input_type_id;
+    }
+    if ('category_id' in body) {
+      updateData.category_id = category_id || null;
     }
     if (identifier_type !== undefined) {
       updateData.identifier_type = identifier_type;

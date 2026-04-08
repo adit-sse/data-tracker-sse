@@ -1,21 +1,20 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { classifyCategory } from '@/lib/utility-category-classification';
 
 /**
- * Find a utility_categories row by case-insensitive name, or create one using
- * the same scope rules as CSV upload (so API names like "LPG" / "Fuel - Bulk" work).
+ * Find an input_types row by case-insensitive name.
+ * Throws if not found — Input Types must be pre-defined (no auto-create during ingestion).
  */
-export async function findOrCreateUtilityCategoryForIngestion(
+export async function findInputTypeForIngestion(
   supabase: SupabaseClient,
-  utilityName: string
+  inputTypeName: string
 ): Promise<{ id: string; scope: number }> {
-  const name = utilityName.trim();
+  const name = inputTypeName.trim();
   if (!name) {
-    throw new Error('utility_name is empty');
+    throw new Error('input_type name is empty');
   }
 
   const { data: existing } = await supabase
-    .from('utility_categories')
+    .from('input_types')
     .select('id, scope')
     .ilike('name', name)
     .limit(1)
@@ -28,39 +27,18 @@ export async function findOrCreateUtilityCategoryForIngestion(
     };
   }
 
-  const classification = classifyCategory(name);
+  throw new Error(
+    `Unknown Input Type: "${name}". Please create it in Manage Input Types before uploading.`
+  );
+}
 
-  const { data: created, error } = await supabase
-    .from('utility_categories')
-    .insert({
-      name,
-      scope: classification.scope,
-      is_metered: classification.is_metered,
-      needs_review: classification.needs_review,
-    })
-    .select('id, scope')
-    .single();
-
-  if (error) {
-    if (error.code === '23505' || error.message?.toLowerCase().includes('duplicate')) {
-      const { data: retry } = await supabase
-        .from('utility_categories')
-        .select('id, scope')
-        .ilike('name', name)
-        .limit(1)
-        .maybeSingle();
-      if (retry) {
-        return {
-          id: retry.id,
-          scope: typeof retry.scope === 'number' ? retry.scope : 2,
-        };
-      }
-    }
-    throw new Error(`Failed to create utility category: ${error.message}`);
-  }
-
-  return {
-    id: created.id,
-    scope: typeof created.scope === 'number' ? created.scope : classification.scope,
-  };
+/**
+ * @deprecated Use findInputTypeForIngestion instead.
+ * Kept temporarily so callers that still pass the old name compile.
+ */
+export async function findOrCreateUtilityCategoryForIngestion(
+  supabase: SupabaseClient,
+  utilityName: string
+): Promise<{ id: string; scope: number }> {
+  return findInputTypeForIngestion(supabase, utilityName);
 }

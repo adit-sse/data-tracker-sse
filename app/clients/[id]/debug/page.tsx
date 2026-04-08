@@ -23,7 +23,7 @@ export default function DebugPage() {
         fetch(`/api/clients/${clientId}/facilities`),
         fetch(`/api/clients/${clientId}/meters`),
         fetch('/api/suppliers'),
-        fetch('/api/utility-categories')
+        fetch('/api/input-types')
       ]);
       
       const [client, facilities, meters, suppliers, categories] = await Promise.all([
@@ -149,7 +149,7 @@ export default function DebugPage() {
   body: JSON.stringify({
     facility_id: 'PASTE-FACILITY-ID',
     supplier_id: 'PASTE-SUPPLIER-ID',
-    utility_category_id: 'PASTE-CATEGORY-ID',
+    input_type_id: 'PASTE-INPUT-TYPE-ID',
     identifier_type: 'NMI',
     lookup1: 'TEST12345',
     lookup2: 'WA - SWIS'

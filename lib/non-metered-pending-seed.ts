@@ -52,19 +52,18 @@ const GREEN_STATUSES = ['IMPORTED', 'MANUAL', 'CONFIRMED', 'DEACTIVATED'] as con
  */
 export async function seedIngestionPendingNonMeteredLineMonths(
   supabase: SupabaseClient,
-  params: { facilityId: string; supplierId: string; categoryId: string }
+  params: { facilityId: string; supplierId: string; inputTypeId: string; categoryId?: string | null }
 ): Promise<number> {
-  const { facilityId, supplierId, categoryId } = params;
+  const { facilityId, supplierId, inputTypeId, categoryId } = params;
 
-  // Ensure the line registration exists so the grid shows this row even between seedings.
-  await upsertNonMeteredLine(supabase, { facilityId, supplierId, categoryId });
+  await upsertNonMeteredLine(supabase, { facilityId, supplierId, inputTypeId, categoryId });
   const months = getCurrentFiscalYearMonthsThroughNow();
   const periodStarts = months.map((m) => m.start);
 
   const [{ data: existingExact }, { data: existingGreen }] = await Promise.all([
     supabase
       .from('non_metered_records')
-      .select('facility_id, utility_category_id, period_start_date')
+      .select('facility_id, input_type_id, period_start_date')
       .eq('facility_id', facilityId)
       .eq('supplier_id', supplierId)
       .in('period_start_date', periodStarts),
@@ -77,10 +76,10 @@ export async function seedIngestionPendingNonMeteredLineMonths(
       .in('status', [...GREEN_STATUSES]),
   ]);
 
-  const existingByCategoryKey = new Set<string>(
+  const existingByInputTypeKey = new Set<string>(
     (existingExact ?? []).map(
-      (r: { facility_id: string; utility_category_id: string; period_start_date: string }) =>
-        `${r.facility_id}__${r.utility_category_id}__${r.period_start_date}`
+      (r: { facility_id: string; input_type_id: string; period_start_date: string }) =>
+        `${r.facility_id}__${r.input_type_id}__${r.period_start_date}`
     )
   );
   const greenSet = new Set<string>(
@@ -93,7 +92,7 @@ export async function seedIngestionPendingNonMeteredLineMonths(
   const toInsert: Array<{
     facility_id: string;
     supplier_id: string;
-    utility_category_id: string;
+    input_type_id: string;
     period_start_date: string;
     period_end_date: string;
     status: string;
@@ -101,13 +100,13 @@ export async function seedIngestionPendingNonMeteredLineMonths(
   }> = [];
 
   for (const month of months) {
-    const catKey = `${facilityId}__${categoryId}__${month.start}`;
+    const typeKey = `${facilityId}__${inputTypeId}__${month.start}`;
     const greenKey = `${facilityId}__${month.start}`;
-    if (!existingByCategoryKey.has(catKey) && !greenSet.has(greenKey)) {
+    if (!existingByInputTypeKey.has(typeKey) && !greenSet.has(greenKey)) {
       toInsert.push({
         facility_id: facilityId,
         supplier_id: supplierId,
-        utility_category_id: categoryId,
+        input_type_id: inputTypeId,
         period_start_date: month.start,
         period_end_date: month.end,
         status: 'PENDING',
@@ -130,18 +129,17 @@ export async function seedIngestionPendingNonMeteredLineMonths(
  */
 export async function upsertTemplateScope3CoverageMonths(
   supabase: SupabaseClient,
-  params: { facilityId: string; supplierId: string; categoryId: string }
+  params: { facilityId: string; supplierId: string; inputTypeId: string; categoryId?: string | null }
 ): Promise<number> {
-  const { facilityId, supplierId, categoryId } = params;
+  const { facilityId, supplierId, inputTypeId, categoryId } = params;
 
-  // Ensure the line registration exists.
-  await upsertNonMeteredLine(supabase, { facilityId, supplierId, categoryId });
+  await upsertNonMeteredLine(supabase, { facilityId, supplierId, inputTypeId, categoryId });
   const months = getFullCurrentFiscalYearMonthPeriods();
 
   const rows = months.map((month) => ({
     facility_id: facilityId,
     supplier_id: supplierId,
-    utility_category_id: categoryId,
+    input_type_id: inputTypeId,
     period_start_date: month.start,
     period_end_date: month.end,
     invoice_number: null as string | null,
@@ -149,8 +147,6 @@ export async function upsertTemplateScope3CoverageMonths(
     consumption: null as number | null,
     unit: null as string | null,
     amount: null as number | null,
-    sub_category: null as string | null,
-    input_type: null as string | null,
     framework: null as string | null,
     version: null as string | null,
     customer: null as string | null,
@@ -159,7 +155,7 @@ export async function upsertTemplateScope3CoverageMonths(
   }));
 
   const { error } = await supabase.from('non_metered_records').upsert(rows, {
-    onConflict: 'facility_id,supplier_id,utility_category_id,period_start_date,period_end_date',
+    onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
   });
 
   if (error) throw new Error(error.message);

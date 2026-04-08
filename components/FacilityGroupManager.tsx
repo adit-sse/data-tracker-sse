@@ -69,7 +69,7 @@ export default function FacilityGroupManager({
 
   const fetchUtilityCategories = async () => {
     try {
-      const res = await fetch('/api/utility-categories');
+      const res = await fetch('/api/input-types');
       if (!res.ok) return;
       const data = await res.json();
       setUtilityCategories(data);
@@ -161,9 +161,9 @@ export default function FacilityGroupManager({
                             <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
                               {group.supplier?.name || 'No supplier'}
                             </span>
-                            {group.utility_category ? (
+                            {group.input_type ? (
                               <span className="text-xs bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded">
-                                {group.utility_category.name}
+                                {group.input_type.name}
                               </span>
                             ) : (
                               <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded">
@@ -181,10 +181,10 @@ export default function FacilityGroupManager({
                                   className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded flex items-center gap-1"
                                 >
                                   {m.facility?.name || m.facility_id}
-                                  {m.utility_category && (
-                                    <span className="text-emerald-500">· {m.utility_category.name}</span>
+                                  {m.input_type && (
+                                    <span className="text-emerald-500">· {m.input_type.name}</span>
                                   )}
-                                  {!m.utility_category && (
+                                  {!m.input_type && (
                                     <span className="text-amber-500">· no type</span>
                                   )}
                                 </span>
@@ -285,7 +285,7 @@ function GroupForm({
 }: GroupFormProps) {
   const [name, setName] = useState(initial?.name || '');
   const [supplierId, setSupplierId] = useState(initial?.supplier_id || '');
-  const [utilityCategoryId, setUtilityCategoryId] = useState(initial?.utility_category_id || '');
+  const [utilityCategoryId, setUtilityCategoryId] = useState(initial?.input_type_id || '');
 
   // Map of facilityId → Set<utility_category_id> (multiple types per facility allowed)
   const [memberCategories, setMemberCategories] = useState<Map<string, Set<string>>>(() => {
@@ -293,7 +293,7 @@ function GroupForm({
     for (const m of initial?.members || []) {
       const fid = String(m.facility_id);
       if (!map.has(fid)) map.set(fid, new Set());
-      if (m.utility_category_id) map.get(fid)!.add(String(m.utility_category_id));
+      if (m.input_type_id) map.get(fid)!.add(String(m.input_type_id));
     }
     return map;
   });
@@ -333,10 +333,10 @@ function GroupForm({
     setSaving(true);
     try {
       // Flatten: one entry per (facility, category) pair
-      const facilityIds: { facility_id: string; utility_category_id: string }[] = [];
+      const facilityIds: { facility_id: string; input_type_id: string }[] = [];
       for (const [facility_id, cats] of Array.from(memberCategories.entries())) {
-        for (const utility_category_id of Array.from(cats)) {
-          facilityIds.push({ facility_id, utility_category_id });
+        for (const input_type_id of Array.from(cats)) {
+          facilityIds.push({ facility_id, input_type_id });
         }
       }
 
@@ -344,14 +344,14 @@ function GroupForm({
         const res = await fetch(`/api/facility-groups/${initial.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), utility_category_id: utilityCategoryId, facility_ids: facilityIds }),
+          body: JSON.stringify({ name: name.trim(), input_type_id: utilityCategoryId, facility_ids: facilityIds }),
         });
         if (!res.ok) throw new Error('Failed to update group');
       } else {
         const res = await fetch(`/api/clients/${clientId}/facility-groups`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), supplier_id: supplierId, utility_category_id: utilityCategoryId, facility_ids: facilityIds }),
+          body: JSON.stringify({ name: name.trim(), supplier_id: supplierId, input_type_id: utilityCategoryId, facility_ids: facilityIds }),
         });
         if (!res.ok) throw new Error('Failed to create group');
       }

@@ -64,19 +64,19 @@ export async function resolveMeterForIngestion(
   );
   if (!line.ok) return line;
 
-  const { data: category, error: catErr } = await supabase
-    .from('utility_categories')
+  const { data: inputType, error: catErr } = await supabase
+    .from('input_types')
     .select('is_metered')
     .eq('id', line.categoryId)
     .single();
 
-  if (catErr || !category) {
-    return { ok: false, error: 'Utility category not found', status: 404 };
+  if (catErr || !inputType) {
+    return { ok: false, error: 'Input type not found', status: 404 };
   }
-  if (!category.is_metered) {
+  if (!inputType.is_metered) {
     return {
       ok: false,
-      error: `Utility "${params.utilityName}" is not marked metered — use non-metered ingestion instead`,
+      error: `Input type "${params.utilityName}" is not marked metered — use non-metered ingestion instead`,
       status: 422,
     };
   }
@@ -90,7 +90,7 @@ export async function resolveMeterForIngestion(
     .from('meters')
     .select('id, supplier_id')
     .eq('facility_id', line.facilityId)
-    .eq('utility_category_id', line.categoryId)
+    .eq('input_type_id', line.categoryId)
     .eq('lookup1', lookup1);
 
   const { data: exactRows } = await query
@@ -104,7 +104,7 @@ export async function resolveMeterForIngestion(
       .from('meters')
       .select('id, supplier_id')
       .eq('facility_id', line.facilityId)
-      .eq('utility_category_id', line.categoryId)
+      .eq('input_type_id', line.categoryId)
       .eq('lookup1', lookup1)
       .limit(2);
 

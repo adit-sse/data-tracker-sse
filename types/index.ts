@@ -15,13 +15,25 @@ export interface Facility {
   created_at?: string;
 }
 
-export interface UtilityCategory {
+/** NGERS grouping — Scope 1 or Scope 3 only (e.g. "Stationary Energy", "Transport") */
+export interface Category {
+  id: string;
+  name: string;
+  scope: 1 | 3;
+  created_at?: string;
+}
+
+/** Specific energy/fuel input (renamed from UtilityCategory) */
+export interface InputType {
   id: string;
   name: string;
   scope?: number;        // 1, 2, or 3
   is_metered?: boolean;
   needs_review?: boolean;
 }
+
+/** @deprecated Use InputType instead */
+export type UtilityCategory = InputType;
 
 export interface Supplier {
   id: string;
@@ -42,20 +54,24 @@ export type IdentifierType =
 export interface Meter {
   id: string;
   facility_id: string;
-  supplier_id?: string | null;  // Optional - meters can exist without a supplier
-  utility_category_id: string;
+  supplier_id?: string | null;
+  input_type_id: string;
+  category_id?: string | null;
   identifier_type: IdentifierType;
   lookup1: string;  // Primary identifier
   lookup2?: string; // Secondary identifier (e.g., "WA - SWIS", "LPG")
-  in_service_start_date?: string; // Date when meter came into service (null = always in service)
-  in_service_end_date?: string;   // Date when meter went out of service (null = still in service)
-  needs_attention?: boolean;      // User-flagged: meter needs attention
-  is_active?: boolean;            // Explicit active/inactive toggle (overrides service-date logic when false)
+  in_service_start_date?: string;
+  in_service_end_date?: string;
+  needs_attention?: boolean;
+  is_active?: boolean;
   created_at?: string;
   // Joined data
   facility?: Facility;
   supplier?: Supplier;
-  utility_category?: UtilityCategory;
+  input_type?: InputType;
+  category?: Category | null;
+  /** @deprecated Use input_type */
+  utility_category?: InputType;
 }
 
 export interface ActualInvoice {
@@ -178,10 +194,10 @@ export interface FacilityGroup {
   id: string;
   client_id: string;
   supplier_id: string;
-  utility_category_id: string | null;
+  input_type_id: string | null;
   name: string;
   supplier?: Supplier;
-  utility_category?: UtilityCategory;
+  input_type?: InputType;
   members?: FacilityGroupMember[];
 }
 
@@ -189,9 +205,9 @@ export interface FacilityGroupMember {
   id: string;
   group_id: string;
   facility_id: string;
-  utility_category_id?: string | null;
+  input_type_id?: string | null;
   facility?: Facility;
-  utility_category?: UtilityCategory;
+  input_type?: InputType;
 }
 
 // -------------------------------------------------------
@@ -202,14 +218,15 @@ export interface NonMeteredLine {
   id: string;
   facility_id: string;
   supplier_id: string;
-  utility_category_id: string;
-  sub_category?: string | null;
+  input_type_id: string;
+  category_id?: string | null;
   is_active: boolean;
   created_at?: string;
   // Joined
   facility?: Facility;
   supplier?: Supplier;
-  utility_category?: UtilityCategory;
+  input_type?: InputType;
+  category?: Category | null;
 }
 
 // -------------------------------------------------------
@@ -229,7 +246,7 @@ export interface NonMeteredRecord {
   id: string;
   facility_id: string;
   supplier_id: string | null;
-  utility_category_id: string;
+  input_type_id: string;
   invoice_number?: string | null;
   invoice_date?: string | null;
   period_start_date: string;
@@ -237,7 +254,9 @@ export interface NonMeteredRecord {
   consumption?: number | null;
   unit?: string | null;
   amount?: number | null;
+  /** @deprecated Legacy text field — category is now a FK on the line */
   sub_category?: string | null;
+  /** @deprecated Legacy text field — use input_type_id FK instead */
   input_type?: string | null;
   framework?: string | null;
   version?: string | null;
@@ -247,7 +266,7 @@ export interface NonMeteredRecord {
   // Joined
   facility?: Facility;
   supplier?: Supplier;
-  utility_category?: UtilityCategory;
+  input_type_obj?: InputType;
 }
 
 // UI types for non-metered coverage grid
@@ -265,9 +284,12 @@ export interface NonMeteredRowWithCoverage {
   facilityName: string;
   supplierId: string | null;
   supplierName: string;
-  categoryId: string;
-  categoryName: string;
-  subCategory?: string | null;
+  /** ID of the input_type (formerly utility_category) */
+  inputTypeId: string;
+  inputTypeName: string;
+  /** ID of the NGERS category (Scope 1/3 only) */
+  categoryId?: string | null;
+  categoryName?: string | null;
   groupId?: string;
   groupName?: string;
   isActive: boolean;

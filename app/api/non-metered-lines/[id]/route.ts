@@ -19,14 +19,12 @@ export async function PATCH(
       updateData.is_active = body.is_active;
     }
 
-    if ('sub_category' in body) {
-      updateData.sub_category = typeof body.sub_category === 'string' && body.sub_category.trim()
-        ? body.sub_category.trim()
-        : null;
+    if ('category_id' in body) {
+      updateData.category_id = body.category_id || null;
     }
 
-    if (body.utility_category_id !== undefined && typeof body.utility_category_id === 'string') {
-      updateData.utility_category_id = body.utility_category_id;
+    if (body.input_type_id !== undefined && typeof body.input_type_id === 'string') {
+      updateData.input_type_id = body.input_type_id;
     }
 
     if (Object.keys(updateData).length === 0) {
