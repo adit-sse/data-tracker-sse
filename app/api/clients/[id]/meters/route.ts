@@ -37,7 +37,8 @@ export async function GET(
         *,
         facility:facilities(id, name),
         supplier:suppliers(id, name),
-        utility_category:utility_categories(id, name)
+        input_type:input_types(id, name),
+        category:categories(id, name)
       `)
       .in('facility_id', facilityIds)
       .order('facility_id');

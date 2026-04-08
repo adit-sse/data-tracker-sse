@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import ClientCard from '@/components/ClientCard';
 import SupplierManager from '@/components/SupplierManager';
-import UtilityCategoryManager from '@/components/UtilityCategoryManager';
+import ReferenceDataManager from '@/components/ReferenceDataManager';
 import ViewByModal from '@/components/ViewByModal';
 
 interface Client {
@@ -190,7 +190,7 @@ export default function HomePage() {
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
-                <span className="hidden sm:inline">Manage Utilities</span>
+                <span className="hidden sm:inline">Reference Data</span>
               </button>
               <div className="w-px h-6 bg-gray-200 mx-1" />
               <button
@@ -396,7 +396,7 @@ export default function HomePage() {
         <SupplierManager onClose={() => setShowSuppliersManager(false)} />
       )}
       {showUtilitiesManager && (
-        <UtilityCategoryManager onClose={() => setShowUtilitiesManager(false)} />
+        <ReferenceDataManager onClose={() => setShowUtilitiesManager(false)} />
       )}
 
       {/* View by Modals */}

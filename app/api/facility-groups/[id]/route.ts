@@ -15,8 +15,8 @@ export async function PUT(
     const supabase = createSupabaseServerClient();
     const groupId = params.id;
     const body = await request.json();
-    const { name, utility_category_id, facility_ids } = body;
-    // facility_ids is { facility_id: string, utility_category_id: string }[]
+    const { name, input_type_id, facility_ids } = body;
+    // facility_ids is { facility_id: string, input_type_id: string }[]
 
     // Fetch group for supplier_id (needed for backfill)
     const { data: group, error: groupFetchError } = await supabase
@@ -34,8 +34,8 @@ export async function PUT(
       }
       groupUpdates.name = name.trim();
     }
-    if (utility_category_id !== undefined) {
-      groupUpdates.utility_category_id = utility_category_id || null;
+    if (input_type_id !== undefined) {
+      groupUpdates.input_type_id = input_type_id || null;
     }
     if (Object.keys(groupUpdates).length > 0) {
       const { error: updateError } = await supabase
@@ -48,10 +48,9 @@ export async function PUT(
     let memberIds: string[] | null = null;
 
     if (Array.isArray(facility_ids)) {
-      const members: { facility_id: string; utility_category_id: string }[] = facility_ids;
+      const members: { facility_id: string; input_type_id: string }[] = facility_ids;
       memberIds = members.map((m) => m.facility_id);
 
-      // Replace all members
       const { error: deleteError } = await supabase
         .from('facility_group_members')
         .delete()
@@ -61,10 +60,10 @@ export async function PUT(
       if (members.length > 0) {
         const { error: insertError } = await supabase
           .from('facility_group_members')
-          .insert(members.map(({ facility_id, utility_category_id: ucid }) => ({
+          .insert(members.map(({ facility_id, input_type_id: itid }) => ({
             group_id: groupId,
             facility_id,
-            utility_category_id: ucid || null,
+            input_type_id: itid || null,
           })));
         if (insertError) throw insertError;
       }
@@ -80,13 +79,13 @@ export async function PUT(
       .select(`
         *,
         supplier:suppliers(id, name),
-        utility_category:utility_categories(id, name),
+        input_type:input_types(id, name),
         members:facility_group_members(
           id,
           facility_id,
-          utility_category_id,
+          input_type_id,
           facility:facilities(id, name),
-          utility_category:utility_categories(id, name)
+          input_type:input_types(id, name)
         )
       `)
       .eq('id', groupId)

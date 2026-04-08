@@ -27,7 +27,7 @@ export async function GET(request: Request) {
 
     const { data: metersData, error: metersErr } = await supabase
       .from('meters')
-      .select('facility_id, supplier_id, utility_category_id');
+      .select('facility_id, supplier_id, input_type_id');
 
     if (metersErr) throw metersErr;
 
@@ -62,7 +62,7 @@ export async function GET(request: Request) {
     });
 
     const { data: suppliers } = await supabase.from('suppliers').select('id, name');
-    const { data: categories } = await supabase.from('utility_categories').select('id, name');
+    const { data: categories } = await supabase.from('input_types').select('id, name');
 
     const supplierMap = (suppliers || []).reduce((acc: Record<string, string>, s: any) => {
       acc[s.id] = s.name;
@@ -122,7 +122,7 @@ export async function GET(request: Request) {
 
     for (const m of metersData || []) {
       const fid = m.facility_id;
-      if (!fid || !m.utility_category_id) continue;
+      if (!fid || !m.input_type_id) continue;
 
       const facInfo = facilityInfoMap[fid];
       if (!facInfo) continue;
@@ -134,7 +134,7 @@ export async function GET(request: Request) {
         facilityName: facInfo.name
       };
 
-      const key = m.utility_category_id;
+      const key = m.input_type_id;
       const categoryName = categoryMap[key] || 'Unknown';
 
       if (!byUtility[key]) {

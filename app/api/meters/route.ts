@@ -10,23 +10,22 @@ export async function POST(request: Request) {
     const supabase = createSupabaseServerClient();
     const body = await request.json();
     
-    const { facility_id, supplier_id, utility_category_id, identifier_type, lookup1, lookup2, in_service_start_date, in_service_end_date } = body;
-    
-    // Supplier is now optional
-    if (!facility_id || !utility_category_id || !identifier_type || !lookup1) {
+    const { facility_id, supplier_id, input_type_id, category_id, identifier_type, lookup1, lookup2, in_service_start_date, in_service_end_date } = body;
+
+    if (!facility_id || !input_type_id || !identifier_type || !lookup1) {
       return NextResponse.json(
-        { error: 'Missing required fields: facility_id, utility_category_id, identifier_type, lookup1' },
+        { error: 'Missing required fields: facility_id, input_type_id, identifier_type, lookup1' },
         { status: 400 }
       );
     }
-    
-    // Try to insert - let database handle uniqueness constraint
+
     const { data, error } = await supabase
       .from('meters')
       .insert([{
         facility_id,
         supplier_id: supplier_id || null,
-        utility_category_id,
+        input_type_id,
+        category_id: category_id || null,
         identifier_type,
         lookup1: lookup1.trim(),
         lookup2: lookup2?.trim() || null,

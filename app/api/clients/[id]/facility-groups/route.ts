@@ -17,13 +17,13 @@ export async function GET(
       .select(`
         *,
         supplier:suppliers(id, name),
-        utility_category:utility_categories(id, name),
+        input_type:input_types(id, name),
         members:facility_group_members(
           id,
           facility_id,
-          utility_category_id,
+          input_type_id,
           facility:facilities(id, name),
-          utility_category:utility_categories(id, name)
+          input_type:input_types(id, name)
         )
       `)
       .eq('client_id', params.id)
@@ -47,7 +47,7 @@ export async function POST(
   try {
     const supabase = createSupabaseServerClient();
     const body = await request.json();
-    const { name, supplier_id, utility_category_id, facility_ids } = body;
+    const { name, supplier_id, input_type_id, facility_ids } = body;
 
     if (!name?.trim()) {
       return NextResponse.json({ error: 'Group name is required' }, { status: 400 });
@@ -55,29 +55,27 @@ export async function POST(
     if (!supplier_id) {
       return NextResponse.json({ error: 'supplier_id is required' }, { status: 400 });
     }
-    if (!utility_category_id) {
-      return NextResponse.json({ error: 'utility_category_id is required' }, { status: 400 });
+    if (!input_type_id) {
+      return NextResponse.json({ error: 'input_type_id is required' }, { status: 400 });
     }
 
-    // Create the group
     const { data: group, error: groupError } = await supabase
       .from('facility_groups')
-      .insert([{ client_id: params.id, supplier_id, utility_category_id, name: name.trim() }])
+      .insert([{ client_id: params.id, supplier_id, input_type_id, name: name.trim() }])
       .select('*')
       .single();
 
     if (groupError) throw groupError;
 
-    // Add members — facility_ids is now { facility_id, utility_category_id }[]
-    const members: { facility_id: string; utility_category_id: string }[] =
+    const members: { facility_id: string; input_type_id: string }[] =
       Array.isArray(facility_ids) ? facility_ids : [];
     if (members.length > 0) {
       const { error: membersError } = await supabase
         .from('facility_group_members')
-        .insert(members.map(({ facility_id, utility_category_id: ucid }) => ({
+        .insert(members.map(({ facility_id, input_type_id: itid }) => ({
           group_id: group.id,
           facility_id,
-          utility_category_id: ucid || null,
+          input_type_id: itid || null,
         })));
 
       if (membersError) throw membersError;
@@ -95,13 +93,13 @@ export async function POST(
       .select(`
         *,
         supplier:suppliers(id, name),
-        utility_category:utility_categories(id, name),
+        input_type:input_types(id, name),
         members:facility_group_members(
           id,
           facility_id,
-          utility_category_id,
+          input_type_id,
           facility:facilities(id, name),
-          utility_category:utility_categories(id, name)
+          input_type:input_types(id, name)
         )
       `)
       .eq('id', group.id)

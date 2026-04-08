@@ -21,7 +21,7 @@ export async function runGroupBackfill(
   // Fetch all existing records for these facilities + supplier
   const { data: existingRecords, error } = await supabase
     .from('non_metered_records')
-    .select('id, facility_id, utility_category_id, period_start_date, period_end_date, status')
+    .select('id, facility_id, input_type_id, period_start_date, period_end_date, status')
     .in('facility_id', memberFacilityIds)
     .eq('supplier_id', supplierId);
 
@@ -31,7 +31,7 @@ export async function runGroupBackfill(
   const slices = new Map<
     string,
     {
-      utility_category_id: string;
+      input_type_id: string;
       period_start_date: string;
       period_end_date: string;
       presentFacilityIds: Set<string>;
@@ -40,10 +40,10 @@ export async function runGroupBackfill(
   >();
 
   for (const rec of existingRecords) {
-    const key = `${rec.utility_category_id}__${rec.period_start_date}__${rec.period_end_date}`;
+    const key = `${rec.input_type_id}__${rec.period_start_date}__${rec.period_end_date}`;
     if (!slices.has(key)) {
       slices.set(key, {
-        utility_category_id: String(rec.utility_category_id),
+        input_type_id: String(rec.input_type_id),
         period_start_date: rec.period_start_date,
         period_end_date: rec.period_end_date,
         presentFacilityIds: new Set(),
@@ -74,7 +74,7 @@ export async function runGroupBackfill(
           {
             facility_id: facilityId,
             supplier_id: supplierId,
-            utility_category_id: slice.utility_category_id,
+            input_type_id: slice.input_type_id,
             period_start_date: slice.period_start_date,
             period_end_date: slice.period_end_date,
             status: 'INFERRED_EMPTY',
@@ -82,7 +82,7 @@ export async function runGroupBackfill(
           },
           {
             onConflict:
-              'facility_id,supplier_id,utility_category_id,period_start_date,period_end_date',
+              'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
             ignoreDuplicates: true, // never overwrite IMPORTED or MANUAL
           }
         );

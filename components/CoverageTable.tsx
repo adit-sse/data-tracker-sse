@@ -11,36 +11,38 @@ interface CoverageTableProps {
   fiscalYear: number;
   onQuickAddInvoice?: (opts: { meterId: string; facilityId?: string; period_start_date: string; period_end_date: string; invoices?: ActualInvoice[] }) => void;
   onMeterUpdated?: () => void;
+  showCategoryColumn?: boolean;
 }
 
-export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickAddInvoice, onMeterUpdated }: CoverageTableProps) {
+export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickAddInvoice, onMeterUpdated, showCategoryColumn = false }: CoverageTableProps) {
   const [filterUtility, setFilterUtility] = useState<string>('ALL');
   const [filterSupplier, setFilterSupplier] = useState<string>('ALL');
   const [filterFacility, setFilterFacility] = useState<string>('ALL');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
-  const [togglingAttention, setTogglingAttention] = useState<string | null>(null);
+  const [togglingIsActive, setTogglingIsActive] = useState<string | null>(null);
 
-  const toggleNeedsAttention = async (meterId: string, currentValue: boolean) => {
-    setTogglingAttention(meterId);
+  const toggleIsActive = async (meterId: string, currentIsActive: boolean) => {
+    setTogglingIsActive(meterId);
     try {
       const res = await fetch(`/api/meters/${meterId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ needs_attention: !currentValue })
+        body: JSON.stringify({ is_active: !currentIsActive })
       });
       if (res.ok) onMeterUpdated?.();
     } catch (err) {
-      console.error('Error toggling needs attention:', err);
+      console.error('Error toggling is_active:', err);
     } finally {
-      setTogglingAttention(null);
+      setTogglingIsActive(null);
     }
   };
 
   const getDisplayStatus = (meter: MeterWithCoverage['meter']) => {
+    if (meter.is_active === false) return { label: 'Inactive', color: 'bg-gray-100 text-gray-500' };
     if (meter.needs_attention) return { label: 'Needs attention', color: 'bg-amber-100 text-amber-700' };
     const status = getMeterServiceStatus(meter);
-    return status.isActive 
-      ? { label: 'Active', color: 'bg-green-100 text-green-700' } 
+    return status.isActive
+      ? { label: 'Active', color: 'bg-green-100 text-green-700' }
       : { label: 'Inactive', color: 'bg-gray-100 text-gray-500' };
   };
 
@@ -59,6 +61,7 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
   };
 
   const getMeterServiceStatus = (meter: MeterWithCoverage['meter']): { label: string; isActive: boolean } => {
+    if (meter.is_active === false) return { label: 'Inactive', isActive: false };
     const today = new Date().toISOString().split('T')[0];
     if (meter.in_service_end_date && meter.in_service_end_date <= today) {
       return { label: 'Inactive', isActive: false };
@@ -70,7 +73,7 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
   };
   
   const utilityTypes = Array.from(
-    new Set(metersWithCoverage.map(m => m.meter.utility_category?.name || 'UNKNOWN'))
+    new Set(metersWithCoverage.map(m => m.meter.input_type?.name || 'UNKNOWN'))
   );
   
   const suppliers = Array.from(
@@ -82,15 +85,16 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
   ).sort();
   
   const filteredMeters = metersWithCoverage.filter(m => {
-    const utilityMatch = filterUtility === 'ALL' || m.meter.utility_category?.name === filterUtility;
+    const utilityMatch = filterUtility === 'ALL' || m.meter.input_type?.name === filterUtility;
     const supplierMatch = filterSupplier === 'ALL' || (m.meter.supplier?.name || 'No Supplier') === filterSupplier;
     const facilityMatch = filterFacility === 'ALL' || (m.meter.facility?.name || 'Unknown') === filterFacility;
     
+    const isExplicitlyInactive = m.meter.is_active === false;
     const status = getMeterServiceStatus(m.meter);
-    const statusMatch = filterStatus === 'ALL' || 
-      (filterStatus === 'ACTIVE' && status.isActive && !m.meter.needs_attention) ||
-      (filterStatus === 'INACTIVE' && !status.isActive && !m.meter.needs_attention) ||
-      (filterStatus === 'NEEDS_ATTENTION' && m.meter.needs_attention);
+    const statusMatch = filterStatus === 'ALL' ||
+      (filterStatus === 'ACTIVE' && status.isActive && !m.meter.needs_attention && !isExplicitlyInactive) ||
+      (filterStatus === 'INACTIVE' && (!status.isActive || isExplicitlyInactive)) ||
+      (filterStatus === 'NEEDS_ATTENTION' && m.meter.needs_attention && !isExplicitlyInactive);
     
     return utilityMatch && supplierMatch && facilityMatch && statusMatch;
   });
@@ -176,8 +180,15 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
             <div className="w-[130px] min-w-[130px] px-3 py-3 border-r border-gray-300 text-center">
               <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Supplier</span>
             </div>
+            {showCategoryColumn && (
+              <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-300 text-center">
+                <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Category</span>
+              </div>
+            )}
             <div className="w-[110px] min-w-[110px] px-3 py-3 border-r border-gray-300 text-center">
-              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Type</span>
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">
+                {showCategoryColumn ? 'Input Type' : 'Type'}
+              </span>
             </div>
             <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-300 text-center">
               <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Identifier</span>
@@ -233,9 +244,16 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
                   {meter.supplier?.name || '—'}
                 </div>
               </div>
+              {showCategoryColumn && (
+                <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
+                  <div className="text-sm text-gray-600 text-center">
+                    {meter.category?.name || <span className="text-gray-400">—</span>}
+                  </div>
+                </div>
+              )}
               <div className="w-[110px] min-w-[110px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
                 <div className="text-sm text-gray-600 text-center">
-                  {meter.utility_category?.name || 'N/A'}
+                  {meter.input_type?.name || 'N/A'}
                 </div>
               </div>
               <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 text-center">
@@ -248,14 +266,14 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
               </div>
               <div className="w-[80px] min-w-[80px] px-2 py-3 border-r border-gray-200 flex items-center justify-center">
                 <button
-                  onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleNeedsAttention(meter.id, !!meter.needs_attention); }}
-                  disabled={togglingAttention === meter.id}
-                  title={meter.needs_attention ? 'Clear needs attention' : 'Mark as needs attention'}
-                  className={`px-2 py-1 rounded text-xs font-semibold cursor-pointer ${
+                  onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleIsActive(meter.id, meter.is_active !== false); }}
+                  disabled={togglingIsActive === meter.id}
+                  title={meter.is_active === false ? 'Mark as active' : 'Mark as inactive'}
+                  className={`px-2 py-1 rounded text-xs font-semibold cursor-pointer hover:opacity-80 transition-opacity ${
                     getDisplayStatus(meter).color
-                  } ${!meter.needs_attention ? 'hover:bg-amber-50 hover:text-amber-600' : ''}`}
+                  }`}
                 >
-                  {togglingAttention === meter.id ? '…' : getDisplayStatus(meter).label}
+                  {togglingIsActive === meter.id ? '…' : getDisplayStatus(meter).label}
                 </button>
               </div>
               

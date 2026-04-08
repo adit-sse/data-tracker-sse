@@ -1,14 +1,16 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
-import type { NonMeteredRowWithCoverage, NonMeteredMonthlyCoverage, NonMeteredRecord } from '@/types';
+import type { NonMeteredRowWithCoverage, NonMeteredMonthlyCoverage, NonMeteredRecord, InputType } from '@/types';
 
 interface NonMeteredCoverageTableProps {
   rows: NonMeteredRowWithCoverage[];
   fiscalYear: number;
   onCellClick?: (record: NonMeteredRecord) => void;
   onEmptyCellClick?: (row: NonMeteredRowWithCoverage, cell: NonMeteredMonthlyCoverage) => void;
+  onLineStatusToggle?: (lineId: string, currentIsActive: boolean) => void;
+  onUpdateLine?: (lineId: string, field: 'category_id' | 'input_type_id', value: string | null) => Promise<void>;
 }
 
 export default function NonMeteredCoverageTable({
@@ -16,23 +18,96 @@ export default function NonMeteredCoverageTable({
   fiscalYear,
   onCellClick,
   onEmptyCellClick,
+  onLineStatusToggle,
+  onUpdateLine,
 }: NonMeteredCoverageTableProps) {
   const [filterSupplier, setFilterSupplier] = useState<string>('ALL');
   const [filterFacility, setFilterFacility] = useState<string>('ALL');
   const [filterCategory, setFilterCategory] = useState<string>('ALL');
   const [filterGroup, setFilterGroup] = useState<string>('ALL');
+  const [filterStatus, setFilterStatus] = useState<string>('ALL');
+  const [togglingLineId, setTogglingLineId] = useState<string | null>(null);
+
+  // Inline editing state
+  const [editingCell, setEditingCell] = useState<{
+    lineId: string;
+    field: 'category_id' | 'input_type_id';
+    value: string;
+  } | null>(null);
+  const [savingCell, setSavingCell] = useState(false);
+  const [inputTypes, setInputTypes] = useState<InputType[]>([]);
+  const [loadingInputTypes, setLoadingInputTypes] = useState(false);
+  const editInputRef = useRef<HTMLInputElement | HTMLSelectElement>(null);
+
+  const loadInputTypes = useCallback(async () => {
+    if (inputTypes.length > 0 || loadingInputTypes) return;
+    setLoadingInputTypes(true);
+    try {
+      const res = await fetch('/api/input-types');
+      if (res.ok) {
+        const data: InputType[] = await res.json();
+        setInputTypes(data.filter((c) => c.scope === 1));
+      }
+    } finally {
+      setLoadingInputTypes(false);
+    }
+  }, [inputTypes.length, loadingInputTypes]);
+
+  useEffect(() => {
+    if (editingCell) {
+      // Focus the input after it renders
+      const timer = setTimeout(() => editInputRef.current?.focus(), 0);
+      return () => clearTimeout(timer);
+    }
+  }, [editingCell?.lineId, editingCell?.field]);
+
+  const startEdit = async (lineId: string, field: 'category_id' | 'input_type_id', currentValue: string) => {
+    if (!onUpdateLine) return;
+    if (field === 'input_type_id') await loadInputTypes();
+    setEditingCell({ lineId, field, value: currentValue });
+  };
+
+  const commitEdit = async () => {
+    if (!editingCell || !onUpdateLine) return;
+    setSavingCell(true);
+    try {
+      await onUpdateLine(
+        editingCell.lineId,
+        editingCell.field,
+        editingCell.value.trim() || null,
+      );
+      setEditingCell(null);
+    } finally {
+      setSavingCell(false);
+    }
+  };
+
+  const cancelEdit = () => setEditingCell(null);
+
+  const handleToggleActive = async (lineId: string, currentIsActive: boolean) => {
+    if (!onLineStatusToggle) return;
+    setTogglingLineId(lineId);
+    try {
+      await onLineStatusToggle(lineId, currentIsActive);
+    } finally {
+      setTogglingLineId(null);
+    }
+  };
 
   const suppliers = Array.from(new Set(rows.map((r) => r.supplierName))).sort();
   const facilityNames = Array.from(new Set(rows.map((r) => r.facilityName))).sort();
-  const categories = Array.from(new Set(rows.map((r) => r.categoryName))).sort();
+  const inputTypeNames = Array.from(new Set(rows.map((r) => r.inputTypeName))).sort();
   const groups = Array.from(new Set(rows.filter((r) => r.groupName).map((r) => r.groupName!))).sort();
 
   const filteredRows = rows.filter((r) => {
     const s = filterSupplier === 'ALL' || r.supplierName === filterSupplier;
     const f = filterFacility === 'ALL' || r.facilityName === filterFacility;
-    const c = filterCategory === 'ALL' || r.categoryName === filterCategory;
+    const c = filterCategory === 'ALL' || r.inputTypeName === filterCategory;
     const g = filterGroup === 'ALL' || r.groupName === filterGroup;
-    return s && f && c && g;
+    const st = filterStatus === 'ALL' ||
+      (filterStatus === 'ACTIVE' && r.isActive) ||
+      (filterStatus === 'INACTIVE' && !r.isActive);
+    return s && f && c && g && st;
   });
 
   if (rows.length === 0) {
@@ -77,7 +152,7 @@ export default function NonMeteredCoverageTable({
             className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
           >
             <option value="ALL">All Types</option>
-            {categories.map((c) => (
+            {inputTypeNames.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
@@ -104,6 +179,16 @@ export default function NonMeteredCoverageTable({
             ))}
           </select>
 
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+          >
+            <option value="ALL">All Statuses</option>
+            <option value="ACTIVE">Active</option>
+            <option value="INACTIVE">Inactive</option>
+          </select>
+
           <span className="text-sm text-gray-500 ml-auto">
             {filteredRows.length}/{rows.length} rows
           </span>
@@ -121,8 +206,14 @@ export default function NonMeteredCoverageTable({
             <div className="w-[130px] min-w-[130px] px-3 py-3 border-r border-gray-300 text-center">
               <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Supplier</span>
             </div>
+            <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-300 text-center">
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Category</span>
+            </div>
             <div className="w-[120px] min-w-[120px] px-3 py-3 border-r border-gray-300 text-center">
-              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Type</span>
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Input Type</span>
+            </div>
+            <div className="w-[100px] min-w-[100px] px-2 py-3 border-r border-gray-300 text-center">
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Status</span>
             </div>
             <div className="flex-1 flex">
               {monthLabels.map((month) => {
@@ -163,7 +254,7 @@ export default function NonMeteredCoverageTable({
               const showUngroupedHeader = !row.groupName && prevRow?.groupName;
 
               return (
-                <div key={`${row.facilityId}-${row.supplierId}-${row.categoryId}`}>
+                <div key={`${row.facilityId}-${row.supplierId}-${row.inputTypeId}`}>
                   {/* Group separator / header */}
                   {showGroupHeader && (
                     <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 border-b border-slate-200 sticky top-[49px] z-10">
@@ -192,8 +283,95 @@ export default function NonMeteredCoverageTable({
                         {row.supplierName}
                       </div>
                     </div>
-                    <div className="w-[120px] min-w-[120px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
-                      <div className="text-sm text-gray-600 text-center">{row.categoryName}</div>
+                    {/* Category (sub_category) — inline editable */}
+                    <div
+                      className={`w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 flex items-center justify-center ${onUpdateLine ? 'group/cat' : ''}`}
+                    >
+                      {editingCell?.lineId === row.lineId && editingCell.field === 'category_id' ? (
+                        <input
+                          ref={editInputRef as React.RefObject<HTMLInputElement>}
+                          type="text"
+                          value={editingCell.value}
+                          onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') commitEdit();
+                            if (e.key === 'Escape') cancelEdit();
+                          }}
+                          onBlur={commitEdit}
+                          disabled={savingCell}
+                          className="w-full text-sm text-center border border-emerald-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white"
+                          placeholder="e.g. Diesel oil"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startEdit(row.lineId, 'category_id', row.categoryId || '')}
+                          disabled={!onUpdateLine}
+                          title={onUpdateLine ? 'Click to edit category' : undefined}
+                          className={`text-sm text-gray-600 text-center w-full truncate ${onUpdateLine ? 'cursor-pointer rounded px-1 py-0.5 hover:bg-emerald-50 hover:text-emerald-700 transition-colors' : 'cursor-default'}`}
+                        >
+                          {row.categoryName || <span className="text-gray-400">{onUpdateLine ? 'Select category…' : '—'}</span>}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Input Type (utility_category) — inline editable */}
+                    <div
+                      className={`w-[120px] min-w-[120px] px-3 py-3 border-r border-gray-200 flex items-center justify-center ${onUpdateLine ? 'group/type' : ''}`}
+                    >
+                      {editingCell?.lineId === row.lineId && editingCell.field === 'input_type_id' ? (
+                        loadingInputTypes ? (
+                          <span className="text-xs text-gray-400">Loading…</span>
+                        ) : (
+                          <select
+                            ref={editInputRef as React.RefObject<HTMLSelectElement>}
+                            value={editingCell.value}
+                            onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Escape') cancelEdit();
+                            }}
+                            onBlur={commitEdit}
+                            disabled={savingCell}
+                            className="w-full text-sm border border-emerald-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white"
+                          >
+                            {inputTypes.map((it) => (
+                              <option key={it.id} value={it.id}>{it.name}</option>
+                            ))}
+                          </select>
+                        )
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startEdit(row.lineId, 'input_type_id', row.inputTypeId)}
+                          disabled={!onUpdateLine}
+                          title={onUpdateLine ? 'Click to edit input type' : undefined}
+                          className={`text-sm text-gray-600 text-center w-full truncate ${onUpdateLine ? 'cursor-pointer rounded px-1 py-0.5 hover:bg-emerald-50 hover:text-emerald-700 transition-colors' : 'cursor-default'}`}
+                        >
+                          {row.inputTypeName}
+                        </button>
+                      )}
+                    </div>
+                    <div className="w-[100px] min-w-[100px] px-2 py-3 border-r border-gray-200 flex items-center justify-center">
+                      {onLineStatusToggle ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleToggleActive(row.lineId, row.isActive); }}
+                          disabled={togglingLineId === row.lineId}
+                          title={row.isActive ? 'Mark as inactive' : 'Mark as active'}
+                          className={`px-2 py-1 rounded text-xs font-semibold cursor-pointer hover:opacity-80 transition-opacity ${
+                            row.isActive
+                              ? 'bg-green-100 text-green-700'
+                              : 'bg-gray-100 text-gray-500'
+                          }`}
+                        >
+                          {togglingLineId === row.lineId ? '…' : row.isActive ? 'Active' : 'Inactive'}
+                        </button>
+                      ) : (
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          row.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                        }`}>
+                          {row.isActive ? 'Active' : 'Inactive'}
+                        </span>
+                      )}
                     </div>
 
                     {/* Month cells */}

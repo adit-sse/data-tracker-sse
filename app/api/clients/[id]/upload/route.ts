@@ -13,7 +13,7 @@ import {
   CLIENT_WIDE_FACILITY_NAME,
   isClientWideFacilityName,
 } from '@/lib/client-wide-facility';
-import { classifyCategory, keywordMatches } from '@/lib/utility-category-classification';
+import { keywordMatches } from '@/lib/utility-category-classification';
 import { upsertTemplateScope3CoverageMonths } from '@/lib/non-metered-pending-seed';
 import { upsertNonMeteredLine, upsertNonMeteredLines } from '@/lib/non-metered-lines';
 
@@ -90,7 +90,7 @@ async function initContext(supabase: SupabaseClient, clientId: string): Promise<
   const [facilitiesRes, suppliersRes, categoriesRes] = await Promise.all([
     ctx.supabase.from('facilities').select('id, name, address').eq('client_id', clientId),
     ctx.supabase.from('suppliers').select('id, name'),
-    ctx.supabase.from('utility_categories').select('id, name, is_metered, scope, needs_review'),
+    ctx.supabase.from('input_types').select('id, name, is_metered, scope, needs_review'),
   ]);
 
   // Preload facilities by name+address only when that pair is unique in the DB.
@@ -123,13 +123,13 @@ async function initContext(supabase: SupabaseClient, clientId: string): Promise<
   if (facilityIds.length > 0) {
     const { data: meters } = await ctx.supabase
       .from('meters')
-      .select('id, facility_id, utility_category_id, identifier_type, lookup1')
+      .select('id, facility_id, input_type_id, identifier_type, lookup1')
       .in('facility_id', facilityIds);
     for (const m of meters || []) {
       rememberMeter(
         ctx,
         m.facility_id,
-        m.utility_category_id,
+        m.input_type_id,
         m.lookup1,
         m.id,
         m.identifier_type as IdentifierType,
@@ -628,7 +628,7 @@ async function processNonMeteredBatch(
   // so lines appear in the coverage grid even before/after records are written.
   const linePayloads = records
     .filter((r) => r.supplierId !== null)
-    .map((r) => ({ facilityId: r.facilityId, supplierId: r.supplierId!, categoryId: r.categoryId }));
+    .map((r) => ({ facilityId: r.facilityId, supplierId: r.supplierId!, inputTypeId: r.categoryId }));
   try {
     await upsertNonMeteredLines(ctx.supabase, linePayloads);
   } catch (e) {
@@ -651,7 +651,7 @@ async function processNonMeteredBatch(
     const rows = chunk.map((rec) => ({
       facility_id: rec.facilityId,
       supplier_id: rec.supplierId,
-      utility_category_id: rec.categoryId,
+      input_type_id: rec.categoryId,
       invoice_number: rec.invoiceNumber,
       invoice_date: rec.invoiceDate,
       period_start_date: rec.periodStart,
@@ -671,9 +671,9 @@ async function processNonMeteredBatch(
     const { data, error } = await ctx.supabase
       .from('non_metered_records')
       .upsert(rows, {
-        onConflict: 'facility_id,supplier_id,utility_category_id,period_start_date,period_end_date',
+        onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
       })
-      .select('id, facility_id, supplier_id, utility_category_id, period_start_date, period_end_date, status');
+      .select('id, facility_id, supplier_id, input_type_id, period_start_date, period_end_date, status');
 
     if (error) {
       errors.push(`Batch non-metered upsert failed: ${error.message}`);
@@ -684,7 +684,7 @@ async function processNonMeteredBatch(
           id: row.id,
           facilityId: row.facility_id,
           supplierId: row.supplier_id,
-          categoryId: row.utility_category_id,
+          categoryId: row.input_type_id,
           periodStart: row.period_start_date,
           periodEnd: row.period_end_date,
           status: row.status as string,
@@ -775,7 +775,7 @@ async function runInferenceForBatch(
   const inferenceRows: Array<{
     facility_id: string;
     supplier_id: string;
-    utility_category_id: string;
+    input_type_id: string;
     period_start_date: string;
     period_end_date: string;
     status: string;
@@ -803,7 +803,7 @@ async function runInferenceForBatch(
         inferenceRows.push({
           facility_id: absentFacilityId,
           supplier_id: group.supplierId,
-          utility_category_id: group.categoryId,
+          input_type_id: group.categoryId,
           period_start_date: group.periodStart,
           period_end_date: group.periodEnd,
           status: 'INFERRED_EMPTY',
@@ -819,7 +819,7 @@ async function runInferenceForBatch(
     const { error: inferError } = await supabase
       .from('non_metered_records')
       .upsert(chunk, {
-        onConflict: 'facility_id,supplier_id,utility_category_id,period_start_date,period_end_date',
+        onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
         ignoreDuplicates: true,
       });
 
@@ -993,73 +993,28 @@ async function cachedFindOrCreateSupplier(ctx: UploadContext, name: string): Pro
   return created.id;
 }
 
+/**
+ * Look up an input_type by name from the cache (pre-seeded from DB at upload start).
+ * Throws if not found — Input Types must be pre-defined; no auto-creation on upload.
+ */
 async function cachedFindOrCreateCategory(
   ctx: UploadContext,
   name: string,
 ): Promise<{ id: string; is_metered: boolean; scope: number }> {
   const key = name.trim().toLowerCase();
-  const classification = classifyCategory(name);
 
-  // initContext pre-seeds this cache from DB. Legacy rows often still have migration
-  // defaults (scope=2, is_metered=true). Without reconciling here, FUEL/LPG etc. hit
-  // the cache and skip needsCorrection — they are routed as metered Scope 2 and never
-  // written to non_metered_records (so Scope 1 non-metered stays empty).
   const cached = ctx.categoryCache.get(key);
-  if (cached) {
-    const needsCorrection =
-      !classification.needs_review &&
-      (cached.is_metered !== classification.is_metered || cached.scope !== classification.scope);
-    if (needsCorrection) {
-      await ctx.supabase
-        .from('utility_categories')
-        .update({
-          scope: classification.scope,
-          is_metered: classification.is_metered,
-          needs_review: false,
-        })
-        .eq('id', cached.id);
-      const result = {
-        id: cached.id,
-        is_metered: classification.is_metered,
-        scope: classification.scope,
-      };
-      ctx.categoryCache.set(key, result);
-      return result;
-    }
-    return cached;
-  }
+  if (cached) return cached;
 
+  // Fallback DB lookup (handles case sensitivity variations not in cache)
   const { data: existing } = await ctx.supabase
-    .from('utility_categories')
-    .select('id, is_metered, scope, needs_review')
+    .from('input_types')
+    .select('id, is_metered, scope')
     .ilike('name', name)
     .limit(1);
 
   if (existing && existing.length > 0) {
     const row = existing[0];
-
-    const needsCorrection =
-      !classification.needs_review &&
-      (row.is_metered !== classification.is_metered || row.scope !== classification.scope);
-
-    if (needsCorrection) {
-      await ctx.supabase
-        .from('utility_categories')
-        .update({
-          scope: classification.scope,
-          is_metered: classification.is_metered,
-          needs_review: false,
-        })
-        .eq('id', row.id);
-      const result = {
-        id: row.id,
-        is_metered: classification.is_metered,
-        scope: classification.scope,
-      };
-      ctx.categoryCache.set(key, result);
-      return result;
-    }
-
     const result = {
       id: row.id,
       is_metered: row.is_metered ?? true,
@@ -1069,58 +1024,9 @@ async function cachedFindOrCreateCategory(
     return result;
   }
 
-  const { data: created, error } = await ctx.supabase
-    .from('utility_categories')
-    .insert([{
-      name,
-      scope: classification.scope,
-      is_metered: classification.is_metered,
-      needs_review: classification.needs_review,
-    }])
-    .select('id, is_metered, scope')
-    .single();
-
-  if (error) {
-    if (error.code === '23505' || error.message?.toLowerCase().includes('duplicate')) {
-      const { data: retry } = await ctx.supabase
-        .from('utility_categories')
-        .select('id, is_metered, scope')
-        .ilike('name', name)
-        .limit(1);
-      if (retry && retry.length > 0) {
-        const r = retry[0];
-        const needsCorrection =
-          !classification.needs_review &&
-          (r.is_metered !== classification.is_metered || r.scope !== classification.scope);
-        if (needsCorrection) {
-          await ctx.supabase
-            .from('utility_categories')
-            .update({
-              scope: classification.scope,
-              is_metered: classification.is_metered,
-              needs_review: false,
-            })
-            .eq('id', r.id);
-        }
-        const result = {
-          id: r.id,
-          is_metered: needsCorrection ? classification.is_metered : (r.is_metered ?? true),
-          scope: needsCorrection ? classification.scope : (typeof r.scope === 'number' ? r.scope : 2),
-        };
-        ctx.categoryCache.set(key, result);
-        return result;
-      }
-    }
-    throw new Error(`Failed to create utility category: ${error.message}`);
-  }
-
-  const result = {
-    id: created.id,
-    is_metered: created.is_metered ?? true,
-    scope: typeof created.scope === 'number' ? created.scope : classification.scope,
-  };
-  ctx.categoryCache.set(key, result);
-  return result;
+  throw new Error(
+    `Unknown Input Type: "${name}". Please create it in Manage Input Types before uploading.`
+  );
 }
 
 async function cachedFindOrCreateMeter(
@@ -1145,7 +1051,7 @@ async function cachedFindOrCreateMeter(
     .from('meters')
     .select('id, identifier_type')
     .eq('facility_id', opts.facilityId)
-    .eq('utility_category_id', opts.categoryId)
+    .eq('input_type_id', opts.categoryId)
     .eq('identifier_type', opts.identifierType)
     .eq('lookup1', opts.lookup1)
     .limit(1);
@@ -1170,7 +1076,7 @@ async function cachedFindOrCreateMeter(
     .from('meters')
     .select('id, identifier_type')
     .eq('facility_id', opts.facilityId)
-    .eq('utility_category_id', opts.categoryId)
+    .eq('input_type_id', opts.categoryId)
     .eq('lookup1', opts.lookup1)
     .limit(1);
 
@@ -1193,7 +1099,7 @@ async function cachedFindOrCreateMeter(
     .insert([{
       facility_id: opts.facilityId,
       supplier_id: opts.supplierId,
-      utility_category_id: opts.categoryId,
+      input_type_id: opts.categoryId,
       identifier_type: opts.identifierType,
       lookup1: opts.lookup1,
       lookup2: opts.lookup2,
@@ -1207,7 +1113,7 @@ async function cachedFindOrCreateMeter(
       // cases where the constraint is on just lookup1 or the stored type differs from inferred type.
       const { data: byLookup1 } = await ctx.supabase
         .from('meters')
-        .select('id, facility_id, utility_category_id, identifier_type, lookup1')
+        .select('id, facility_id, input_type_id, identifier_type, lookup1')
         .eq('lookup1', opts.lookup1)
         .limit(1);
       const found = byLookup1?.[0];
@@ -1219,8 +1125,7 @@ async function cachedFindOrCreateMeter(
           opts.lookup1, opts.identifierType, found.identifier_type, sameFacility, found.facility_id,
         );
         if (sameFacility) {
-          // Same facility — meter already set up, reuse it.
-          rememberMeter(ctx, found.facility_id, found.utility_category_id, opts.lookup1, found.id,
+          rememberMeter(ctx, found.facility_id, found.input_type_id, opts.lookup1, found.id,
             found.identifier_type as IdentifierType, opts.identifierType);
           return found.id;
         }
@@ -1355,7 +1260,7 @@ async function processMeterSetupRow(
     const created = await upsertTemplateScope3CoverageMonths(ctx.supabase, {
       facilityId,
       supplierId,
-      categoryId,
+      inputTypeId: categoryId,
     });
     return { type: 'pending_seeded', created };
   }
@@ -1370,7 +1275,7 @@ async function processMeterSetupRow(
     if (dataPeriods.length === 0 && deactivatedPeriods.length === 0) {
       // No period data — register the line so it appears in the grid with no-data state.
       if (supplierId) {
-        await upsertNonMeteredLine(ctx.supabase, { facilityId, supplierId, categoryId });
+        await upsertNonMeteredLine(ctx.supabase, { facilityId, supplierId, inputTypeId: categoryId });
       }
       return { type: 'meter_setup', created: 1 };
     }

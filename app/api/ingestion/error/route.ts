@@ -85,7 +85,7 @@ export async function POST(request: Request) {
         .select('id')
         .eq('facility_id', facilityId)
         .eq('supplier_id', supplierId)
-        .eq('utility_category_id', categoryId)
+        .eq('input_type_id', categoryId)
         .eq('period_start_date', periodStart)
         .eq('status', 'PENDING');
 
@@ -118,7 +118,7 @@ export async function POST(request: Request) {
     const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
       supabase.from('clients').select('id').ilike('name', client_name).single(),
       supabase.from('suppliers').select('id').ilike('name', supplier_name).single(),
-      supabase.from('utility_categories').select('id').ilike('name', utility_name).single(),
+      supabase.from('input_types').select('id').ilike('name', utility_name).single(),
     ]);
 
     if (!client) return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
@@ -133,12 +133,12 @@ export async function POST(request: Request) {
         id,
         members:facility_group_members(
           facility_id,
-          utility_category_id
+          input_type_id
         )
       `)
       .eq('client_id', client.id)
       .eq('supplier_id', supplier.id)
-      .eq('utility_category_id', groupCategory.id)
+      .eq('input_type_id', groupCategory.id)
       .single();
 
     if (!group) {
@@ -150,24 +150,24 @@ export async function POST(request: Request) {
       );
     }
 
-    type MemberRow = { facility_id: string; utility_category_id: string | null };
+    type MemberRow = { facility_id: string; input_type_id: string | null };
     const members: MemberRow[] = (group.members ?? []).filter(
-      (m: MemberRow) => m.utility_category_id
+      (m: MemberRow) => m.input_type_id
     );
 
     if (members.length === 0) {
-      return NextResponse.json({ error: 'Group has no members with utility types' }, { status: 422 });
+      return NextResponse.json({ error: 'Group has no members with input types' }, { status: 422 });
     }
 
     const facilityIds = members.map((m) => m.facility_id);
-    const categoryIds = Array.from(new Set(members.map((m) => m.utility_category_id!)));
+    const categoryIds = Array.from(new Set(members.map((m) => m.input_type_id!)));
 
     const { data: pendingRows, error: fetchError } = await supabase
       .from('non_metered_records')
       .select('id')
       .in('facility_id', facilityIds)
       .eq('supplier_id', supplier.id)
-      .in('utility_category_id', categoryIds)
+      .in('input_type_id', categoryIds)
       .eq('period_start_date', periodStart)
       .eq('status', 'PENDING');
 

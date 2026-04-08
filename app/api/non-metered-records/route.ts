@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     const {
       facility_id,
       supplier_id,
-      utility_category_id,
+      input_type_id,
       period_start_date,
       period_end_date,
       status = 'MANUAL',
@@ -21,12 +21,11 @@ export async function POST(request: Request) {
       amount,
       invoice_number,
       invoice_date,
-      sub_category,
     } = body;
 
-    if (!facility_id || !utility_category_id || !period_start_date || !period_end_date) {
+    if (!facility_id || !input_type_id || !period_start_date || !period_end_date) {
       return NextResponse.json(
-        { error: 'facility_id, utility_category_id, period_start_date and period_end_date are required' },
+        { error: 'facility_id, input_type_id, period_start_date and period_end_date are required' },
         { status: 400 }
       );
     }
@@ -36,7 +35,7 @@ export async function POST(request: Request) {
       .insert({
         facility_id,
         supplier_id: supplier_id || null,
-        utility_category_id,
+        input_type_id,
         period_start_date,
         period_end_date,
         status,
@@ -45,7 +44,6 @@ export async function POST(request: Request) {
         amount: amount ?? null,
         invoice_number: invoice_number || null,
         invoice_date: invoice_date || null,
-        sub_category: sub_category || null,
       })
       .select()
       .single();

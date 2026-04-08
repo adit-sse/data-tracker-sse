@@ -37,7 +37,9 @@ interface Meter {
   facility_id: string | number;
   lookup1: string;
   identifier_type: string;
-  utility_category: { name: string };
+  input_type?: { name: string } | null;
+  /** @deprecated use input_type */
+  utility_category?: { name: string } | null;
   supplier?: { name: string } | null;
 }
 
@@ -304,7 +306,7 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel, initialData,
           <option value="">Select a meter</option>
           {filteredMeters.map(meter => (
             <option key={meter.id} value={String(meter.id)}>
-              {meter.utility_category.name} - {meter.supplier?.name || 'No Supplier'} • {meter.lookup1}
+              {(meter.input_type || meter.utility_category)?.name || 'N/A'} - {meter.supplier?.name || 'No Supplier'} • {meter.lookup1}
             </option>
           ))}
         </select>

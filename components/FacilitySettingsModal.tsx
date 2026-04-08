@@ -20,6 +20,8 @@ interface Meter {
   needs_attention?: boolean;
   supplier?: { id: string; name: string } | null;
   supplier_id?: string | null;
+  input_type?: { id: string; name: string } | null;
+  /** @deprecated use input_type */
   utility_category?: { id: string; name: string } | null;
   facility?: { id: string; name: string } | null;
 }
@@ -29,9 +31,10 @@ interface Supplier {
   name: string;
 }
 
-interface UtilityCategory {
+interface InputType {
   id: string;
   name: string;
+  scope?: number;
 }
 
 interface FacilityOption {
@@ -41,7 +44,7 @@ interface FacilityOption {
 
 interface MeterEditData {
   facility_id: string;
-  utility_category_id: string;
+  input_type_id: string;
   identifier_type: string;
   lookup1: string;
   lookup2: string;
@@ -77,7 +80,7 @@ export default function FacilitySettingsModal({
   const [editingMeterId, setEditingMeterId] = useState<string | null>(null);
   const [editMeterData, setEditMeterData] = useState<MeterEditData>({ 
     facility_id: '',
-    utility_category_id: '',
+    input_type_id: '',
     identifier_type: '',
     lookup1: '',
     lookup2: '', 
@@ -88,13 +91,13 @@ export default function FacilitySettingsModal({
   const [savingMeter, setSavingMeter] = useState(false);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [allFacilities, setAllFacilities] = useState<FacilityOption[]>([]);
-  const [utilityCategories, setUtilityCategories] = useState<UtilityCategory[]>([]);
+  const [inputTypes, setInputTypes] = useState<InputType[]>([]);
   
   // Add new meter state
   const [showAddMeter, setShowAddMeter] = useState(false);
   const [newMeterData, setNewMeterData] = useState<MeterEditData>({
     facility_id: '',
-    utility_category_id: '',
+    input_type_id: '',
     identifier_type: '',
     lookup1: '',
     lookup2: '',
@@ -158,9 +161,9 @@ export default function FacilitySettingsModal({
 
   const fetchUtilityCategories = async () => {
     try {
-      const res = await fetch('/api/utility-categories');
+      const res = await fetch('/api/input-types');
       const data = await res.json();
-      setUtilityCategories(data || []);
+      setInputTypes(data || []);
     } catch (err) {
       console.error('Error fetching utility categories:', err);
     }
@@ -293,7 +296,7 @@ export default function FacilitySettingsModal({
     setEditingMeterId(meter.id);
     setEditMeterData({
       facility_id: meter.facility?.id || '',
-      utility_category_id: meter.utility_category?.id || '',
+      input_type_id: (meter.input_type || meter.utility_category)?.id || '',
       identifier_type: meter.identifier_type || '',
       lookup1: meter.lookup1 || '',
       lookup2: meter.lookup2 || '',
@@ -307,7 +310,7 @@ export default function FacilitySettingsModal({
     setEditingMeterId(null);
     setEditMeterData({ 
       facility_id: '',
-      utility_category_id: '',
+      input_type_id: '',
       identifier_type: '',
       lookup1: '',
       lookup2: '', 
@@ -320,7 +323,7 @@ export default function FacilitySettingsModal({
   const handleSaveMeter = async (): Promise<boolean> => {
     if (!editingMeterId) return true;
     
-    if (!editMeterData.facility_id || !editMeterData.utility_category_id || !editMeterData.identifier_type || !editMeterData.lookup1) {
+    if (!editMeterData.facility_id || !editMeterData.input_type_id || !editMeterData.identifier_type || !editMeterData.lookup1) {
       return false;
     }
     
@@ -331,7 +334,7 @@ export default function FacilitySettingsModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           facility_id: editMeterData.facility_id,
-          utility_category_id: editMeterData.utility_category_id,
+          input_type_id: editMeterData.input_type_id,
           identifier_type: editMeterData.identifier_type,
           lookup1: editMeterData.lookup1,
           lookup2: editMeterData.lookup2 || null,
@@ -344,7 +347,7 @@ export default function FacilitySettingsModal({
         const updatedMeter = await res.json();
         const newSupplier = suppliers.find(s => s.id === updatedMeter.supplier_id);
         const newFacility = allFacilities.find(f => f.id === updatedMeter.facility_id);
-        const newUtilityCategory = utilityCategories.find(u => u.id === updatedMeter.utility_category_id);
+        const newInputType = inputTypes.find(u => u.id === updatedMeter.input_type_id);
         
         // If facility changed, remove from current list; otherwise update in place
         if (updatedMeter.facility_id !== facility.id) {
@@ -355,7 +358,7 @@ export default function FacilitySettingsModal({
               ? { 
                   ...m, 
                   facility: newFacility ? { id: newFacility.id, name: newFacility.name } : null,
-                  utility_category: newUtilityCategory ? { id: newUtilityCategory.id, name: newUtilityCategory.name } : null,
+                  input_type: newInputType ? { id: newInputType.id, name: newInputType.name } : null,
                   identifier_type: updatedMeter.identifier_type,
                   lookup1: updatedMeter.lookup1,
                   lookup2: updatedMeter.lookup2,
@@ -371,7 +374,7 @@ export default function FacilitySettingsModal({
         setEditingMeterId(null);
         setEditMeterData({ 
           facility_id: '',
-          utility_category_id: '',
+          input_type_id: '',
           identifier_type: '',
           lookup1: '',
           lookup2: '', 
@@ -394,7 +397,7 @@ export default function FacilitySettingsModal({
   };
 
   const handleCreateMeter = async () => {
-    if (!newMeterData.utility_category_id || !newMeterData.identifier_type || !newMeterData.lookup1) {
+    if (!newMeterData.input_type_id || !newMeterData.identifier_type || !newMeterData.lookup1) {
       return;
     }
     
@@ -405,7 +408,7 @@ export default function FacilitySettingsModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           facility_id: facility.id,
-          utility_category_id: newMeterData.utility_category_id,
+          input_type_id: newMeterData.input_type_id,
           identifier_type: newMeterData.identifier_type,
           lookup1: newMeterData.lookup1,
           lookup2: newMeterData.lookup2 || null,
@@ -422,7 +425,7 @@ export default function FacilitySettingsModal({
         setShowAddMeter(false);
         setNewMeterData({
           facility_id: '',
-          utility_category_id: '',
+          input_type_id: '',
           identifier_type: '',
           lookup1: '',
           lookup2: '',
@@ -503,15 +506,15 @@ export default function FacilitySettingsModal({
                 <h4 className="text-sm font-medium text-blue-800 mb-3">Add New Meter</h4>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs text-gray-500">Utility Category <span className="text-red-500">*</span></label>
+                    <label className="text-xs text-gray-500">Input Type <span className="text-red-500">*</span></label>
                     <select
-                      value={newMeterData.utility_category_id}
-                      onChange={(e) => setNewMeterData({ ...newMeterData, utility_category_id: e.target.value })}
+                      value={newMeterData.input_type_id}
+                      onChange={(e) => setNewMeterData({ ...newMeterData, input_type_id: e.target.value })}
                       className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
                       required
                     >
-                      <option value="">Select category</option>
-                      {utilityCategories.map((u) => (
+                      <option value="">Select input type</option>
+                      {inputTypes.map((u) => (
                         <option key={u.id} value={u.id}>{u.name}</option>
                       ))}
                     </select>
@@ -589,7 +592,7 @@ export default function FacilitySettingsModal({
                       setShowAddMeter(false);
                       setNewMeterData({
                         facility_id: '',
-                        utility_category_id: '',
+                        input_type_id: '',
                         identifier_type: '',
                         lookup1: '',
                         lookup2: '',
@@ -604,7 +607,7 @@ export default function FacilitySettingsModal({
                   </button>
                   <button
                     onClick={handleCreateMeter}
-                    disabled={creatingMeter || !newMeterData.utility_category_id || !newMeterData.identifier_type || !newMeterData.lookup1}
+                    disabled={creatingMeter || !newMeterData.input_type_id || !newMeterData.identifier_type || !newMeterData.lookup1}
                     className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                   >
                     {creatingMeter ? 'Creating...' : 'Create Meter'}
@@ -627,7 +630,7 @@ export default function FacilitySettingsModal({
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium">{m.utility_category?.name || 'N/A'}{m.supplier ? ` • ${m.supplier.name}` : ''}</span>
+                            <span className="text-sm font-medium">{(m.input_type || m.utility_category)?.name || 'N/A'}{m.supplier ? ` • ${m.supplier.name}` : ''}</span>
                           </div>
                           <div className="text-xs text-gray-500 mt-1">
                             <span className="text-gray-400">{formatIdentifierType(m.identifier_type)}:</span>
@@ -689,15 +692,15 @@ export default function FacilitySettingsModal({
                               </select>
                             </div>
                             <div>
-                              <label className="text-xs text-gray-500">Utility Type <span className="text-red-500">*</span></label>
+                              <label className="text-xs text-gray-500">Input Type <span className="text-red-500">*</span></label>
                               <select
-                                value={editMeterData.utility_category_id}
-                                onChange={(e) => setEditMeterData({ ...editMeterData, utility_category_id: e.target.value })}
+                                value={editMeterData.input_type_id}
+                                onChange={(e) => setEditMeterData({ ...editMeterData, input_type_id: e.target.value })}
                                 className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
                                 required
                               >
-                                <option value="">Select utility type</option>
-                                {utilityCategories.map(u => (
+                                <option value="">Select input type</option>
+                                {inputTypes.map(u => (
                                   <option key={u.id} value={u.id}>{u.name}</option>
                                 ))}
                               </select>
@@ -781,7 +784,7 @@ export default function FacilitySettingsModal({
                           <div className="flex gap-2">
                             <button
                               onClick={handleSaveMeter}
-                              disabled={savingMeter || !editMeterData.facility_id || !editMeterData.utility_category_id || !editMeterData.identifier_type || !editMeterData.lookup1}
+                              disabled={savingMeter || !editMeterData.facility_id || !editMeterData.input_type_id || !editMeterData.identifier_type || !editMeterData.lookup1}
                               className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                             >
                               {savingMeter ? 'Saving…' : 'Save'}

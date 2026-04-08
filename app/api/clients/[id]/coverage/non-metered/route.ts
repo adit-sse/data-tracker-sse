@@ -52,12 +52,15 @@ export async function GET(
         id,
         facility_id,
         supplier_id,
-        utility_category_id,
+        input_type_id,
+        category_id,
+        is_active,
         supplier:suppliers(id, name),
-        utility_category:utility_categories!inner(id, name, scope, is_metered)
+        input_type:input_types!inner(id, name, scope, is_metered),
+        category:categories(id, name, scope)
       `)
       .in('facility_id', facilityIds)
-      .eq('utility_categories.scope', scope);
+      .eq('input_types.scope', scope);
 
     if (linesError) throw linesError;
 
@@ -77,11 +80,11 @@ export async function GET(
 
     if (recordsError) throw recordsError;
 
-    // Build a map of records keyed by (facility_id, supplier_id, utility_category_id)
+    // Build a map of records keyed by (facility_id, supplier_id, input_type_id)
     // so each line can look up its coverage records in O(1).
     const recordsByLineKey = new Map<string, any[]>();
     for (const rec of records || []) {
-      const key = `${rec.facility_id}__${rec.supplier_id ?? 'null'}__${rec.utility_category_id}`;
+      const key = `${rec.facility_id}__${rec.supplier_id ?? 'null'}__${rec.input_type_id}`;
       if (!recordsByLineKey.has(key)) recordsByLineKey.set(key, []);
       recordsByLineKey.get(key)!.push(rec);
     }
@@ -91,7 +94,7 @@ export async function GET(
       .from('facility_group_members')
       .select(`
         facility_id,
-        utility_category_id,
+        input_type_id,
         group:facility_groups!inner(id, name, supplier_id, client_id)
       `)
       .eq('facility_groups.client_id', clientId);
@@ -101,7 +104,7 @@ export async function GET(
     for (const gm of groupMembers ?? []) {
       const g = (gm as any).group;
       if (!g) continue;
-      const key = `${gm.facility_id}__${gm.utility_category_id}__${g.supplier_id}`;
+      const key = `${gm.facility_id}__${gm.input_type_id}__${g.supplier_id}`;
       groupByMemberKey.set(key, { groupId: String(g.id), groupName: String(g.name) });
     }
 
@@ -109,7 +112,7 @@ export async function GET(
     const rows: NonMeteredRowWithCoverage[] = [];
 
     for (const line of lines) {
-      const lineKey = `${line.facility_id}__${line.supplier_id}__${line.utility_category_id}`;
+      const lineKey = `${line.facility_id}__${line.supplier_id}__${line.input_type_id}`;
       const lineRecords = recordsByLineKey.get(lineKey) ?? [];
 
       const coverage: NonMeteredMonthlyCoverage[] = fyMonths.map((monthDate) => {
@@ -148,18 +151,24 @@ export async function GET(
         };
       });
 
-      const memberKey = `${line.facility_id}__${line.utility_category_id}__${line.supplier_id}`;
+      const memberKey = `${line.facility_id}__${line.input_type_id}__${line.supplier_id}`;
       const groupInfo = groupByMemberKey.get(memberKey);
 
+      const lineCategory = (line as any).category;
+
       rows.push({
+        lineId: String(line.id),
         facilityId: String(line.facility_id),
         facilityName: facilityNameById[line.facility_id] || 'Unknown',
         supplierId: String(line.supplier_id),
         supplierName: (line.supplier as any)?.name || '—',
-        categoryId: String(line.utility_category_id),
-        categoryName: (line.utility_category as any)?.name || 'Unknown',
+        inputTypeId: String(line.input_type_id),
+        inputTypeName: (line.input_type as any)?.name || 'Unknown',
+        categoryId: lineCategory?.id ? String(lineCategory.id) : null,
+        categoryName: lineCategory?.name ?? null,
         groupId: groupInfo?.groupId,
         groupName: groupInfo?.groupName,
+        isActive: (line as any).is_active !== false,
         coverage,
       });
     }
@@ -177,7 +186,7 @@ export async function GET(
       if (f !== 0) return f;
       const s = a.supplierName.localeCompare(b.supplierName);
       if (s !== 0) return s;
-      return a.categoryName.localeCompare(b.categoryName);
+      return a.inputTypeName.localeCompare(b.inputTypeName);
     });
 
     return NextResponse.json({ rows, fiscalYear });
