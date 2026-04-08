@@ -50,6 +50,7 @@ export interface Meter {
   in_service_start_date?: string; // Date when meter came into service (null = always in service)
   in_service_end_date?: string;   // Date when meter went out of service (null = still in service)
   needs_attention?: boolean;      // User-flagged: meter needs attention
+  is_active?: boolean;            // Explicit active/inactive toggle (overrides service-date logic when false)
   created_at?: string;
   // Joined data
   facility?: Facility;
@@ -202,6 +203,8 @@ export interface NonMeteredLine {
   facility_id: string;
   supplier_id: string;
   utility_category_id: string;
+  sub_category?: string | null;
+  is_active: boolean;
   created_at?: string;
   // Joined
   facility?: Facility;
@@ -257,13 +260,16 @@ export interface NonMeteredMonthlyCoverage {
 }
 
 export interface NonMeteredRowWithCoverage {
+  lineId: string;
   facilityId: string;
   facilityName: string;
   supplierId: string | null;
   supplierName: string;
   categoryId: string;
   categoryName: string;
+  subCategory?: string | null;
   groupId?: string;
   groupName?: string;
+  isActive: boolean;
   coverage: NonMeteredMonthlyCoverage[];
 }

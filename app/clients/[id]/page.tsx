@@ -532,6 +532,7 @@ export default function ClientDetailPage() {
                   <CoverageTable
                     metersWithCoverage={scope1MeteredMeters}
                     fiscalYear={fiscalYear}
+                    showCategoryColumn
                     onQuickAddInvoice={({ meterId, facilityId, period_start_date, period_end_date, invoices }) => {
                       if (invoices && invoices.length > 0) {
                         setInvoiceListForPeriod(invoices);
@@ -553,6 +554,22 @@ export default function ClientDetailPage() {
                   fiscalYear={fiscalYear}
                   onCellClick={(record) => setNmRecordModal(record)}
                   onEmptyCellClick={(row, cell) => setNmMarkEmptyModal({ row, cell })}
+                  onLineStatusToggle={async (lineId, currentIsActive) => {
+                    await fetch(`/api/non-metered-lines/${lineId}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ is_active: !currentIsActive }),
+                    });
+                    fetchNonMeteredCoverage();
+                  }}
+                  onUpdateLine={async (lineId, field, value) => {
+                    await fetch(`/api/non-metered-lines/${lineId}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ [field]: value }),
+                    });
+                    fetchNonMeteredCoverage();
+                  }}
                 />
               )}
 
@@ -562,6 +579,22 @@ export default function ClientDetailPage() {
                   fiscalYear={fiscalYear}
                   onCellClick={(record) => setNmRecordModal(record)}
                   onEmptyCellClick={(row, cell) => setNmMarkEmptyModal({ row, cell })}
+                  onLineStatusToggle={async (lineId, currentIsActive) => {
+                    await fetch(`/api/non-metered-lines/${lineId}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ is_active: !currentIsActive }),
+                    });
+                    fetchNonMeteredCoverage();
+                  }}
+                  onUpdateLine={async (lineId, field, value) => {
+                    await fetch(`/api/non-metered-lines/${lineId}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ [field]: value }),
+                    });
+                    fetchNonMeteredCoverage();
+                  }}
                 />
               )}
             </>

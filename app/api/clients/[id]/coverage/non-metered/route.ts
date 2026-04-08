@@ -53,6 +53,8 @@ export async function GET(
         facility_id,
         supplier_id,
         utility_category_id,
+        sub_category,
+        is_active,
         supplier:suppliers(id, name),
         utility_category:utility_categories!inner(id, name, scope, is_metered)
       `)
@@ -152,14 +154,17 @@ export async function GET(
       const groupInfo = groupByMemberKey.get(memberKey);
 
       rows.push({
+        lineId: String(line.id),
         facilityId: String(line.facility_id),
         facilityName: facilityNameById[line.facility_id] || 'Unknown',
         supplierId: String(line.supplier_id),
         supplierName: (line.supplier as any)?.name || '—',
         categoryId: String(line.utility_category_id),
         categoryName: (line.utility_category as any)?.name || 'Unknown',
+        subCategory: (line as any).sub_category ?? null,
         groupId: groupInfo?.groupId,
         groupName: groupInfo?.groupName,
+        isActive: (line as any).is_active !== false,
         coverage,
       });
     }

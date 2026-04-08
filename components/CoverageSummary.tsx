@@ -15,9 +15,10 @@ export default function CoverageSummary({ metersWithCoverage }: CoverageSummaryP
     const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
     const prevMonthEndStr = format(prevMonthEnd, 'yyyy-MM-dd');
 
-    // Filter to only active meters
+    // Filter to only active meters (is_active flag takes precedence over service dates)
     const activeMetersData = metersWithCoverage.filter(({ meter }) => {
       const isInactive =
+        meter.is_active === false ||
         (meter.in_service_end_date && meter.in_service_end_date <= todayStr) ||
         (meter.in_service_start_date && meter.in_service_start_date > todayStr);
       return !isInactive;

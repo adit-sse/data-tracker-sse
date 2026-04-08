@@ -53,6 +53,9 @@ export async function PATCH(
     if (needs_attention !== undefined) {
       updateData.needs_attention = !!needs_attention;
     }
+    if (body.is_active !== undefined && typeof body.is_active === 'boolean') {
+      updateData.is_active = body.is_active;
+    }
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json(
