@@ -118,13 +118,13 @@ export async function POST(request: Request) {
     const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
       supabase.from('clients').select('id').ilike('name', client_name).single(),
       supabase.from('suppliers').select('id').ilike('name', supplier_name).single(),
-      supabase.from('input_types').select('id').ilike('name', utility_name).single(),
+      supabase.from('categories').select('id').ilike('name', utility_name).single(),
     ]);
 
     if (!client) return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
     if (!supplier) return NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 });
     if (!groupCategory) {
-      return NextResponse.json({ error: `Utility type "${utility_name}" not found` }, { status: 404 });
+      return NextResponse.json({ error: `Category "${utility_name}" not found` }, { status: 404 });
     }
 
     const { data: group } = await supabase
@@ -132,13 +132,12 @@ export async function POST(request: Request) {
       .select(`
         id,
         members:facility_group_members(
-          facility_id,
-          input_type_id
+          line:non_metered_lines(facility_id, input_type_id)
         )
       `)
       .eq('client_id', client.id)
       .eq('supplier_id', supplier.id)
-      .eq('input_type_id', groupCategory.id)
+      .eq('category_id', groupCategory.id)
       .single();
 
     if (!group) {
@@ -150,10 +149,14 @@ export async function POST(request: Request) {
       );
     }
 
-    type MemberRow = { facility_id: string; input_type_id: string | null };
-    const members: MemberRow[] = (group.members ?? []).filter(
-      (m: MemberRow) => m.input_type_id
-    );
+    type MemberRow = { facility_id: string; input_type_id: string };
+    // Flatten line data into the shape the rest of this handler expects
+    const members: MemberRow[] = ((group.members ?? []) as any[])
+      .map((m: any) => ({
+        facility_id: m.line?.facility_id,
+        input_type_id: m.line?.input_type_id,
+      }))
+      .filter((m): m is MemberRow => !!m.facility_id && !!m.input_type_id);
 
     if (members.length === 0) {
       return NextResponse.json({ error: 'Group has no members with input types' }, { status: 422 });

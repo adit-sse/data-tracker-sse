@@ -124,11 +124,21 @@ export async function DELETE(
       // Ignore error if table doesn't exist yet (migration not yet run)
       if (nmError && !nmError.message?.includes('does not exist')) throw nmError;
 
-      // 6. Delete facility_group_members for all facilities
+    }
+
+    // 6. Delete facility_group_members via group_id (facility_id column no longer exists)
+    const { data: clientGroups, error: cgError } = await supabase
+      .from('facility_groups')
+      .select('id')
+      .eq('client_id', clientId);
+    if (cgError && !cgError.message?.includes('does not exist')) throw cgError;
+
+    const groupIds = (clientGroups || []).map((g: any) => g.id);
+    if (groupIds.length > 0) {
       const { error: fgmError } = await supabase
         .from('facility_group_members')
         .delete()
-        .in('facility_id', facilityIds);
+        .in('group_id', groupIds);
       if (fgmError && !fgmError.message?.includes('does not exist')) throw fgmError;
     }
 

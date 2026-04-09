@@ -90,21 +90,22 @@ export async function GET(
     }
 
     // Fetch group memberships so we can attach groupId/groupName to rows.
+    // Members are now keyed on non_metered_line_id; join through the line to get facility/type.
     const { data: groupMembers } = await supabase
       .from('facility_group_members')
       .select(`
-        facility_id,
-        input_type_id,
+        line:non_metered_lines(facility_id, input_type_id),
         group:facility_groups!inner(id, name, supplier_id, client_id)
       `)
       .eq('facility_groups.client_id', clientId);
 
     type GroupInfo = { groupId: string; groupName: string };
     const groupByMemberKey = new Map<string, GroupInfo>();
-    for (const gm of groupMembers ?? []) {
-      const g = (gm as any).group;
-      if (!g) continue;
-      const key = `${gm.facility_id}__${gm.input_type_id}__${g.supplier_id}`;
+    for (const gm of (groupMembers ?? []) as any[]) {
+      const g = gm.group;
+      const line = gm.line;
+      if (!g || !line) continue;
+      const key = `${line.facility_id}__${line.input_type_id}__${g.supplier_id}`;
       groupByMemberKey.set(key, { groupId: String(g.id), groupName: String(g.name) });
     }
 

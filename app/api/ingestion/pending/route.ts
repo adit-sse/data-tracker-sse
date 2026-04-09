@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
-import { findInputTypeForIngestion } from '@/lib/ingestion-utility-category';
+import { findCategoryForIngestion } from '@/lib/ingestion-utility-category';
 import {
   getCurrentFiscalYearMonthsThroughNow,
   seedIngestionPendingNonMeteredLineMonths,
@@ -23,9 +23,9 @@ function checkApiKey(request: Request): boolean {
 // in the matching group, using each member's specific input_type_id.
 //
 // Body (group): { client_name, supplier_name, utility_name }
-//   utility_name = group-level type (e.g. "Transport Fuels").
+//   utility_name = NGERS category name on the group (e.g. "Transport Fuel").
 // Body (line): { mode: "line", client_name, supplier_name, utility_name [, facility_name] }
-//   utility_name = the record category (e.g. "GREASE"). No facility group required.
+//   utility_name = the record input type name (e.g. "GREASE"). No facility group required.
 //   facility_name optional for Scope 3 (uses "(Client-wide)"); required for Scope 1 / 2.
 export async function POST(request: Request) {
   if (!checkApiKey(request)) {
@@ -90,40 +90,43 @@ export async function POST(request: Request) {
 
     let groupCategory: { id: string };
     try {
-      groupCategory = await findInputTypeForIngestion(supabase, utility_name);
+      groupCategory = await findCategoryForIngestion(supabase, utility_name);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Unknown error';
       return NextResponse.json({ error: msg }, { status: 400 });
     }
 
-    // Find the group by its top-level type (utility_category_id on the group row)
+    // Find the group by its reporting category
     const { data: group } = await supabase
       .from('facility_groups')
       .select(`
         id,
         members:facility_group_members(
-          facility_id,
-          input_type_id
+          line:non_metered_lines(facility_id, input_type_id)
         )
       `)
       .eq('client_id', client.id)
       .eq('supplier_id', supplier.id)
-      .eq('input_type_id', groupCategory.id)
+      .eq('category_id', groupCategory.id)
       .single();
 
     if (!group) {
       return NextResponse.json(
         {
-          error: `No group configured for client "${client_name}", supplier "${supplier_name}", utility type "${utility_name}". Set it up in the tracker UI first.`,
+          error: `No group configured for client "${client_name}", supplier "${supplier_name}", category "${utility_name}". Set it up in the tracker UI first.`,
         },
         { status: 404 }
       );
     }
 
-    type MemberRow = { facility_id: string; input_type_id: string | null };
-    const members: MemberRow[] = (group.members ?? []).filter(
-      (m: MemberRow) => m.input_type_id
-    );
+    type MemberRow = { facility_id: string; input_type_id: string };
+    // Flatten line data into the shape the rest of this handler expects
+    const members: MemberRow[] = ((group.members ?? []) as any[])
+      .map((m: any) => ({
+        facility_id: m.line?.facility_id,
+        input_type_id: m.line?.input_type_id,
+      }))
+      .filter((m): m is MemberRow => !!m.facility_id && !!m.input_type_id);
 
     if (members.length === 0) {
       return NextResponse.json(

@@ -5,8 +5,26 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { runGroupBackfill } from '@/lib/facility-group-backfill';
 
+const GROUP_SELECT = `
+  *,
+  supplier:suppliers(id, name),
+  category:categories(id, name),
+  members:facility_group_members(
+    id,
+    non_metered_line_id,
+    line:non_metered_lines(
+      id,
+      facility_id,
+      input_type_id,
+      facility:facilities(id, name),
+      input_type:input_types(id, name)
+    )
+  )
+`;
+
 // PUT /api/facility-groups/[id] — update group name and/or members + run backfill
-// Body: { name?: string, facility_ids?: string[] }
+// Body: { name?: string, category_id?: string,
+//         facility_ids?: { facility_id: string, input_type_id: string }[] }
 export async function PUT(
   request: Request,
   { params }: { params: { id: string } }
@@ -15,10 +33,9 @@ export async function PUT(
     const supabase = createSupabaseServerClient();
     const groupId = params.id;
     const body = await request.json();
-    const { name, input_type_id, facility_ids } = body;
-    // facility_ids is { facility_id: string, input_type_id: string }[]
+    const { name, category_id, facility_ids } = body;
 
-    // Fetch group for supplier_id (needed for backfill)
+    // Fetch group for supplier_id (needed for backfill + line lookup)
     const { data: group, error: groupFetchError } = await supabase
       .from('facility_groups')
       .select('supplier_id')
@@ -34,8 +51,8 @@ export async function PUT(
       }
       groupUpdates.name = name.trim();
     }
-    if (input_type_id !== undefined) {
-      groupUpdates.input_type_id = input_type_id || null;
+    if (category_id !== undefined) {
+      groupUpdates.category_id = category_id || null;
     }
     if (Object.keys(groupUpdates).length > 0) {
       const { error: updateError } = await supabase
@@ -45,12 +62,13 @@ export async function PUT(
       if (updateError) throw updateError;
     }
 
-    let memberIds: string[] | null = null;
+    let memberFacilityIds: string[] | null = null;
 
     if (Array.isArray(facility_ids)) {
       const members: { facility_id: string; input_type_id: string }[] = facility_ids;
-      memberIds = members.map((m) => m.facility_id);
+      memberFacilityIds = [...new Set(members.map((m) => m.facility_id))];
 
+      // Replace all members
       const { error: deleteError } = await supabase
         .from('facility_group_members')
         .delete()
@@ -58,36 +76,38 @@ export async function PUT(
       if (deleteError) throw deleteError;
 
       if (members.length > 0) {
-        const { error: insertError } = await supabase
-          .from('facility_group_members')
-          .insert(members.map(({ facility_id, input_type_id: itid }) => ({
-            group_id: groupId,
-            facility_id,
-            input_type_id: itid || null,
-          })));
-        if (insertError) throw insertError;
+        // Look up the non_metered_line_id for each (facility_id, input_type_id) pair
+        const { data: lines } = await supabase
+          .from('non_metered_lines')
+          .select('id, facility_id, input_type_id')
+          .eq('supplier_id', group.supplier_id)
+          .in('facility_id', memberFacilityIds);
+
+        const lineIds = members
+          .map((m) =>
+            (lines ?? []).find(
+              (l) => l.facility_id === m.facility_id && l.input_type_id === m.input_type_id
+            )?.id
+          )
+          .filter((id): id is string => !!id);
+
+        if (lineIds.length > 0) {
+          const { error: insertError } = await supabase
+            .from('facility_group_members')
+            .insert(lineIds.map((lineId) => ({ group_id: groupId, non_metered_line_id: lineId })));
+          if (insertError) throw insertError;
+        }
       }
     }
 
     // Run backfill for the updated member set
-    if (memberIds && memberIds.length > 0 && group.supplier_id) {
-      await runGroupBackfill(supabase, group.supplier_id, memberIds);
+    if (memberFacilityIds && memberFacilityIds.length > 0 && group.supplier_id) {
+      await runGroupBackfill(supabase, group.supplier_id, memberFacilityIds);
     }
 
     const { data, error } = await supabase
       .from('facility_groups')
-      .select(`
-        *,
-        supplier:suppliers(id, name),
-        input_type:input_types(id, name),
-        members:facility_group_members(
-          id,
-          facility_id,
-          input_type_id,
-          facility:facilities(id, name),
-          input_type:input_types(id, name)
-        )
-      `)
+      .select(GROUP_SELECT)
       .eq('id', groupId)
       .single();
 

@@ -17,7 +17,6 @@ interface Client {
 interface ClientWithCount {
   client: Client;
   facilitiesCount: number;
-  coveragePercentage?: number | null;
 }
 
 export default function HomePage() {
@@ -33,59 +32,9 @@ export default function HomePage() {
   const [showViewByUtilities, setShowViewByUtilities] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   
-  useEffect(() => {
-    let cancelled = false;
-    
-    const fetchClients = async () => {
-      try {
-        const response = await fetch('/api/clients');
-        const data = await response.json();
-
-        if (cancelled) return;
-
-        if (!response.ok) {
-          const message = (data && (data.error || data.message)) || 'Failed to fetch clients';
-          console.error('Error fetching clients:', message);
-          setFetchError(message);
-          setClients([]);
-          return;
-        }
-
-        setFetchError(null);
-
-        let parsedClients: ClientWithCount[] = [];
-        if (Array.isArray(data)) {
-          parsedClients = data;
-        } else if (data && Array.isArray((data as any).clients)) {
-          parsedClients = (data as any).clients;
-        } else if (data && Array.isArray((data as any).data)) {
-          parsedClients = (data as any).data;
-        } else {
-          console.warn('Unexpected /api/clients response, defaulting to []:', data);
-        }
-
-        setClients(parsedClients);
-      } catch (error) {
-        if (!cancelled) {
-          console.error('Error fetching clients:', error);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    };
-    
-    fetchClients();
-    
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  
-  const fetchClients = async () => {
+  const fetchClients = async ({ bypassCache = false }: { bypassCache?: boolean } = {}) => {
     try {
-      const response = await fetch('/api/clients');
+      const response = await fetch('/api/clients', bypassCache ? { cache: 'no-store' } : undefined);
       const data = await response.json();
 
       if (!response.ok) {
@@ -101,8 +50,6 @@ export default function HomePage() {
       let parsedClients: ClientWithCount[] = [];
       if (Array.isArray(data)) {
         parsedClients = data;
-      } else if (data && Array.isArray((data as any).clients)) {
-        parsedClients = (data as any).clients;
       } else if (data && Array.isArray((data as any).data)) {
         parsedClients = (data as any).data;
       } else {
@@ -116,6 +63,11 @@ export default function HomePage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchClients();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   
   const handleCreateClient = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -134,7 +86,7 @@ export default function HomePage() {
       if (response.ok) {
         setNewClientName('');
         setShowAddModal(false);
-        fetchClients();
+        fetchClients({ bypassCache: true });
       }
     } catch (error) {
       console.error('Error creating client:', error);
@@ -142,20 +94,6 @@ export default function HomePage() {
       setCreating(false);
     }
   };
-  
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="relative w-16 h-16 mx-auto">
-            <div className="absolute inset-0 rounded-full border-4 border-blue-100"></div>
-            <div className="absolute inset-0 rounded-full border-4 border-blue-600 border-t-transparent animate-spin"></div>
-          </div>
-          <p className="mt-4 text-gray-500 font-medium">Loading clients...</p>
-        </div>
-      </div>
-    );
-  }
   
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
@@ -233,16 +171,24 @@ export default function HomePage() {
         </div>
         
         {/* Stats Bar */}
-        {clients.length > 0 && (
+        {(loading || clients.length > 0) && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
             <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
-              <div className="text-2xl font-bold text-gray-900">{clients.length}</div>
+              {loading ? (
+                <div className="h-8 w-10 bg-gray-200 rounded animate-pulse mb-1" />
+              ) : (
+                <div className="text-2xl font-bold text-gray-900">{clients.length}</div>
+              )}
               <div className="text-sm text-gray-500">Total Clients</div>
             </div>
             <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
-              <div className="text-2xl font-bold text-emerald-600">
-                {clients.reduce((sum, c) => sum + c.facilitiesCount, 0)}
-              </div>
+              {loading ? (
+                <div className="h-8 w-10 bg-gray-200 rounded animate-pulse mb-1" />
+              ) : (
+                <div className="text-2xl font-bold text-emerald-600">
+                  {clients.reduce((sum, c) => sum + c.facilitiesCount, 0)}
+                </div>
+              )}
               <div className="text-sm text-gray-500">Facilities</div>
             </div>
             <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm col-span-2 sm:col-span-2">
@@ -269,8 +215,34 @@ export default function HomePage() {
             </div>
           </div>
         )}
-        
-        {fetchError ? (
+
+        {loading ? (
+          <>
+            <div className="flex items-center justify-between mb-4">
+              <div className="h-6 w-32 bg-gray-200 rounded animate-pulse" />
+              <div className="h-5 w-14 bg-gray-200 rounded animate-pulse" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                  <div className="h-1.5 bg-gray-200" />
+                  <div className="p-5 space-y-4">
+                    <div className="flex items-start gap-4">
+                      <div className="w-14 h-14 rounded-lg bg-gray-200 animate-pulse flex-shrink-0" />
+                      <div className="flex-1 space-y-2 pt-1">
+                        <div className="h-5 bg-gray-200 rounded animate-pulse w-3/4" />
+                        <div className="h-4 bg-gray-100 rounded animate-pulse w-1/3" />
+                      </div>
+                    </div>
+                    <div className="pt-3 border-t border-gray-100">
+                      <div className="h-4 bg-gray-100 rounded animate-pulse w-1/4" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : fetchError ? (
           <div className="text-center py-16">
             <div className="w-16 h-16 mx-auto rounded-full bg-red-100 flex items-center justify-center mb-4">
               <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -282,7 +254,7 @@ export default function HomePage() {
             <button
               onClick={() => {
                 setLoading(true);
-                fetchClients();
+                fetchClients({ bypassCache: true });
               }}
               className="mt-6 bg-blue-600 text-white px-5 py-2.5 rounded-lg hover:bg-blue-700 font-medium transition-colors"
             >
@@ -322,9 +294,8 @@ export default function HomePage() {
                   key={data.client.id} 
                   client={data.client}
                   facilitiesCount={data.facilitiesCount}
-                  coveragePercentage={data.coveragePercentage}
-                  onDeleted={() => fetchClients()}
-                  onUpdated={() => fetchClients()}
+                  onDeleted={() => fetchClients({ bypassCache: true })}
+                  onUpdated={() => fetchClients({ bypassCache: true })}
                 />
               ))}
             </div>

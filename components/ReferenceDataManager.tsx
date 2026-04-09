@@ -63,7 +63,7 @@ export default function ReferenceDataManager({ onClose }: { onClose: () => void 
         </div>
 
         {/* Tab content */}
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden flex flex-col">
           {activeTab === 'input-types' ? (
             <InputTypesPanel />
           ) : (
@@ -177,7 +177,7 @@ function InputTypesPanel() {
   const filtered = items.filter((i) => i.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
   return (
-    <div className="flex flex-col h-full p-6 overflow-hidden">
+    <div className="flex-1 flex flex-col p-6 overflow-hidden min-h-0">
       <p className="text-sm text-gray-500 mb-4">
         Input types define how energy is consumed or reported (e.g. Natural gas, Electricity, Diesel oil). Each meter is linked to one input type.
       </p>
@@ -433,7 +433,7 @@ function CategoriesPanel() {
   );
 
   return (
-    <div className="flex flex-col h-full p-6 overflow-hidden">
+    <div className="flex-1 flex flex-col p-6 overflow-hidden min-h-0">
       <p className="text-sm text-gray-500 mb-4">
         Categories are NGERS groupings (e.g. Stationary Energy, Transport) used for Scope 1 and Scope 3 reporting. Each meter or line links to one category.
       </p>

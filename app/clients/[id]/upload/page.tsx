@@ -85,12 +85,23 @@ export default function UploadPage() {
         {/* Instructions */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h3 className="font-semibold text-blue-900 mb-2">File Format Requirements</h3>
-          <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
-            <li>CSV or XLSX file format</li>
-            <li>Must include columns: Company, Facility, Category, Provider, Date Range</li>
-            <li>Date Range format: DD/MM/YYYY-DD/MM/YYYY (e.g., "01/12/2025-31/12/2025")</li>
-            <li>Category must be: ELECTRICITY, GAS, FUEL, or OIL</li>
-            <li>Include at least one meter identifier: NMI, Account Number, or Meter Number</li>
+          <p className="text-sm text-blue-800 mb-2">
+            Two layouts are supported (do not mix Company/Date Range with facility setup-only rows):
+          </p>
+          <ul className="text-sm text-blue-800 space-y-2 list-disc list-inside">
+            <li>
+              <strong>Invoice import:</strong> Company, Facility, Category (input type), Provider,
+              Date Range (DD/MM/YYYY-DD/MM/YYYY), plus meter ids (NMI, Account Number, or Meter Number)
+              where applicable.
+            </li>
+            <li>
+              <strong>Facility / meter setup:</strong> Facility, Input Type (name from Manage Input
+              Types), Supplier, Address, optional Category (NGERS reporting group for Scope 1 and 3 —
+              leave blank for Scope 2 e.g. electricity), MonthsWithData, DataPointCount (optional),
+              Identifier, MonthsDeactivated. Month ranges: <code className="text-xs">Jul 2025 - Nov 2025</code>.
+              Legacy templates may use a <code className="text-xs">Utility</code> column instead of Input Type.
+            </li>
+            <li>CSV or XLSX; first sheet is used for spreadsheets.</li>
           </ul>
         </div>
         
