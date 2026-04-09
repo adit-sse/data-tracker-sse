@@ -199,20 +199,26 @@ export interface FacilityGroup {
   id: string;
   client_id: string;
   supplier_id: string;
-  input_type_id: string | null;
+  category_id: string | null;
   name: string;
   supplier?: Supplier;
-  input_type?: InputType;
+  category?: Category;
   members?: FacilityGroupMember[];
 }
 
 export interface FacilityGroupMember {
   id: string;
   group_id: string;
-  facility_id: string;
-  input_type_id?: string | null;
-  facility?: Facility;
-  input_type?: InputType;
+  non_metered_line_id: string;
+  /** Joined via non_metered_lines */
+  line?: {
+    id: string;
+    facility_id: string;
+    input_type_id: string;
+    supplier_id?: string;
+    facility?: Facility;
+    input_type?: InputType;
+  };
 }
 
 // -------------------------------------------------------

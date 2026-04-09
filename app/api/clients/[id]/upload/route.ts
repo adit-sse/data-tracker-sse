@@ -721,12 +721,172 @@ async function processNonMeteredBatch(
     }
   }
 
+  // Auto-create facility groups for scope 1 non-metered rows where
+  // multiple facilities share the same supplier + reporting category.
+  await autoCreateNonMeteredGroups(ctx, records, errors);
+
   const inferenceSeeds = upsertedIds.filter((r) =>
     ['IMPORTED', 'MANUAL', 'CONFIRMED'].includes(r.status || ''),
   );
   await runInferenceForBatch(ctx.supabase, inferenceSeeds, errors);
 
   return successCount;
+}
+
+// -------------------------------------------------------
+// Auto-create facility groups for scope 1 non-metered rows
+// where multiple facilities share the same supplier + reporting category.
+// -------------------------------------------------------
+async function autoCreateNonMeteredGroups(
+  ctx: UploadContext,
+  records: NonMeteredPayload[],
+  errors: string[],
+): Promise<void> {
+  // Build inputTypeId → scope reverse map from the category cache (name → {id, scope}).
+  const inputTypeIdToScope = new Map<string, number>();
+  for (const [, meta] of ctx.categoryCache) {
+    inputTypeIdToScope.set(meta.id, meta.scope);
+  }
+
+  // Filter to scope 1, non-metered, with both a supplier and a reporting category.
+  const scope1 = records.filter(
+    (r) =>
+      r.supplierId !== null &&
+      r.reportingCategoryId !== null &&
+      inputTypeIdToScope.get(r.categoryId) === 1,
+  );
+
+  if (scope1.length === 0) return;
+
+  // Group by (supplierId, reportingCategoryId), collecting all distinct facility IDs.
+  // Members are now keyed on non_metered_line_id, so the same facility can appear multiple
+  // times (once per input type). We track facilityIds only for the 2+ distinct facilities check.
+  type GroupEntry = {
+    supplierId: string;
+    reportingCategoryId: string;
+    facilityIds: Set<string>;
+  };
+
+  const groupMap = new Map<string, GroupEntry>();
+
+  for (const rec of scope1) {
+    const key = `${rec.supplierId}__${rec.reportingCategoryId}`;
+    if (!groupMap.has(key)) {
+      groupMap.set(key, {
+        supplierId: rec.supplierId!,
+        reportingCategoryId: rec.reportingCategoryId!,
+        facilityIds: new Set(),
+      });
+    }
+    groupMap.get(key)!.facilityIds.add(rec.facilityId);
+  }
+
+  // Only act on groups where 2+ distinct facilities appear.
+  const multiGroups = Array.from(groupMap.values()).filter((g) => g.facilityIds.size >= 2);
+  if (multiGroups.length === 0) return;
+
+  // Fetch supplier + category names for group naming.
+  const supplierIds = Array.from(new Set(multiGroups.map((g) => g.supplierId)));
+  const categoryIds = Array.from(new Set(multiGroups.map((g) => g.reportingCategoryId)));
+
+  const [{ data: supplierRows }, { data: categoryRows }] = await Promise.all([
+    ctx.supabase.from('suppliers').select('id, name').in('id', supplierIds),
+    ctx.supabase.from('categories').select('id, name').in('id', categoryIds),
+  ]);
+
+  const supplierNameById = new Map<string, string>();
+  for (const s of supplierRows ?? []) supplierNameById.set(s.id, s.name);
+
+  const categoryNameById = new Map<string, string>();
+  for (const c of categoryRows ?? []) categoryNameById.set(c.id, c.name);
+
+  // Load existing facility_groups to avoid creating duplicates.
+  // Join through non_metered_lines to get member facility IDs.
+  const { data: existingGroups, error: egError } = await ctx.supabase
+    .from('facility_groups')
+    .select(`id, supplier_id, members:facility_group_members(line:non_metered_lines(facility_id))`)
+    .eq('client_id', ctx.clientId);
+
+  if (egError) {
+    errors.push(`Auto-group: failed to load existing groups: ${egError.message}`);
+    return;
+  }
+
+  // Map supplierId → list of existing groups with their member facility IDs.
+  type ExistingGroup = { id: string; facilityIds: Set<string> };
+  const existingBySupplier = new Map<string, ExistingGroup[]>();
+  for (const eg of existingGroups ?? []) {
+    const members = (eg.members as Array<{ line: { facility_id: string } | null }>) ?? [];
+    const facilityIds = new Set(members.map((m) => m.line?.facility_id).filter(Boolean) as string[]);
+    if (!existingBySupplier.has(eg.supplier_id)) {
+      existingBySupplier.set(eg.supplier_id, []);
+    }
+    existingBySupplier.get(eg.supplier_id)!.push({ id: String(eg.id), facilityIds });
+  }
+
+  for (const g of multiGroups) {
+    const existing = existingBySupplier.get(g.supplierId) ?? [];
+    const facilityIds = Array.from(g.facilityIds);
+
+    // Skip if any existing group already contains all of these facilities for this supplier.
+    const alreadyCovered = existing.some((eg) =>
+      facilityIds.every((fid) => eg.facilityIds.has(fid)),
+    );
+    if (alreadyCovered) continue;
+
+    const supplierName = supplierNameById.get(g.supplierId) ?? 'Unknown Supplier';
+    const categoryName = categoryNameById.get(g.reportingCategoryId) ?? 'Unknown Category';
+    const groupName = `${supplierName} - ${categoryName}`;
+
+    const { data: newGroup, error: createError } = await ctx.supabase
+      .from('facility_groups')
+      .insert([{
+        client_id: ctx.clientId,
+        supplier_id: g.supplierId,
+        category_id: g.reportingCategoryId,
+        name: groupName,
+      }])
+      .select('id')
+      .single();
+
+    if (createError) {
+      errors.push(`Auto-group: failed to create group "${groupName}": ${createError.message}`);
+      continue;
+    }
+
+    // Look up all non_metered_lines for this supplier + reporting category + facilities.
+    // This correctly yields one row per (facility, input_type) combination, so a facility
+    // with both Diesel and Gasoline lines becomes two separate member rows.
+    const { data: memberLines, error: linesError } = await ctx.supabase
+      .from('non_metered_lines')
+      .select('id')
+      .eq('supplier_id', g.supplierId)
+      .eq('category_id', g.reportingCategoryId)
+      .in('facility_id', facilityIds);
+
+    if (linesError) {
+      errors.push(`Auto-group: failed to look up member lines for "${groupName}": ${linesError.message}`);
+      continue;
+    }
+
+    if (!memberLines?.length) {
+      errors.push(`Auto-group: no non_metered_lines found for group "${groupName}" — members skipped`);
+      continue;
+    }
+
+    const { error: membersError } = await ctx.supabase
+      .from('facility_group_members')
+      .upsert(
+        memberLines.map((l) => ({ group_id: newGroup.id, non_metered_line_id: l.id })),
+        { onConflict: 'group_id,non_metered_line_id', ignoreDuplicates: true },
+      );
+
+    if (membersError) {
+      errors.push(
+        `Auto-group: failed to add members to group "${groupName}": ${membersError.message}`,
+      );
+    }
+  }
 }
 
 // -------------------------------------------------------
@@ -778,25 +938,36 @@ async function runInferenceForBatch(
 
   if (allPresentFacilityIds.size === 0) return;
 
-  // Single query to get all relevant group memberships
+  // Find non_metered_line IDs for the uploaded facilities, then look up group memberships.
+  const { data: presentLines } = await supabase
+    .from('non_metered_lines')
+    .select('id, facility_id')
+    .in('facility_id', Array.from(allPresentFacilityIds));
+
+  const presentLineIds = (presentLines ?? []).map((l: any) => String(l.id));
+  if (presentLineIds.length === 0) return;
+
+  // Single query to get all relevant group memberships via line join
   const { data: allGroupMembers, error: gmError } = await supabase
     .from('facility_group_members')
-    .select('group_id, facility_id, facility_groups!inner(supplier_id)')
-    .in('facility_id', Array.from(allPresentFacilityIds));
+    .select('group_id, non_metered_line_id, line:non_metered_lines(facility_id), group:facility_groups(supplier_id)')
+    .in('non_metered_line_id', presentLineIds);
 
   if (gmError || !allGroupMembers?.length) return;
 
-  // Pre-fetch all group members for referenced groups
+  // Pre-fetch all group members for referenced groups, also via line join
   const relevantGroupIds = Array.from(new Set(allGroupMembers.map((m: any) => m.group_id)));
   const { data: allMembersData } = await supabase
     .from('facility_group_members')
-    .select('group_id, facility_id')
+    .select('group_id, line:non_metered_lines(facility_id)')
     .in('group_id', relevantGroupIds);
 
   const membersByGroup = new Map<string, string[]>();
-  for (const m of allMembersData || []) {
+  for (const m of (allMembersData || []) as any[]) {
+    const facilityId = m.line?.facility_id;
+    if (!facilityId) continue;
     if (!membersByGroup.has(m.group_id)) membersByGroup.set(m.group_id, []);
-    membersByGroup.get(m.group_id)!.push(m.facility_id);
+    membersByGroup.get(m.group_id)!.push(String(facilityId));
   }
 
   // Collect all inference upserts, then batch them
@@ -815,8 +986,8 @@ async function runInferenceForBatch(
 
     const matchingGroupMembers = allGroupMembers.filter(
       (m: any) =>
-        group.facilityIds.has(m.facility_id) &&
-        (m.facility_groups as any)?.supplier_id === group.supplierId
+        group.facilityIds.has((m.line as any)?.facility_id) &&
+        (m.group as any)?.supplier_id === group.supplierId
     );
 
     if (!matchingGroupMembers.length) continue;

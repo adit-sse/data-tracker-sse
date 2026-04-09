@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { FacilityGroup, Supplier, UtilityCategory } from '@/types';
+import type { FacilityGroup, Supplier, Category } from '@/types';
 
 interface FacilityStub {
   id: string;
@@ -31,7 +31,7 @@ export default function FacilityGroupManager({
 }: FacilityGroupManagerProps) {
   const [groups, setGroups] = useState<FacilityGroup[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [utilityCategories, setUtilityCategories] = useState<UtilityCategory[]>([]);
+  const [reportingCategories, setReportingCategories] = useState<Category[]>([]);
   // facilityId → scope-1 (category + supplier) combos that already have records for that facility
   const [facilityCategoryMap, setFacilityCategoryMap] = useState<Record<string, FacilityCategoryOption[]>>({});
   const [loading, setLoading] = useState(true);
@@ -41,7 +41,7 @@ export default function FacilityGroupManager({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([fetchGroups(), fetchSuppliers(), fetchUtilityCategories(), fetchFacilityCategoryMap()]);
+    Promise.all([fetchGroups(), fetchSuppliers(), fetchReportingCategories(), fetchFacilityCategoryMap()]);
   }, []);
 
   const fetchGroups = async () => {
@@ -67,12 +67,12 @@ export default function FacilityGroupManager({
     } catch {}
   };
 
-  const fetchUtilityCategories = async () => {
+  const fetchReportingCategories = async () => {
     try {
-      const res = await fetch('/api/input-types');
+      const res = await fetch('/api/categories');
       if (!res.ok) return;
       const data = await res.json();
-      setUtilityCategories(data);
+      setReportingCategories(data);
     } catch {}
   };
 
@@ -146,7 +146,7 @@ export default function FacilityGroupManager({
                       clientId={clientId}
                       facilities={facilities}
                       suppliers={suppliers}
-                      utilityCategories={utilityCategories}
+                      reportingCategories={reportingCategories}
                       facilityCategoryMap={facilityCategoryMap}
                       initial={group}
                       onSaved={handleGroupSaved}
@@ -161,15 +161,11 @@ export default function FacilityGroupManager({
                             <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
                               {group.supplier?.name || 'No supplier'}
                             </span>
-                            {group.input_type ? (
+                            {group.category ? (
                               <span className="text-xs bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded">
-                                {group.input_type.name}
+                                {group.category.name}
                               </span>
-                            ) : (
-                              <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded">
-                                No utility — edit to set
-                              </span>
-                            )}
+                            ) : null}
                           </div>
                           <div className="flex flex-wrap gap-1 mt-2">
                             {(group.members || []).length === 0 ? (
@@ -180,11 +176,11 @@ export default function FacilityGroupManager({
                                   key={m.id}
                                   className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded flex items-center gap-1"
                                 >
-                                  {m.facility?.name || m.facility_id}
-                                  {m.input_type && (
-                                    <span className="text-emerald-500">· {m.input_type.name}</span>
+                                  {m.line?.facility?.name || m.line?.facility_id || m.non_metered_line_id}
+                                  {m.line?.input_type && (
+                                    <span className="text-emerald-500">· {m.line.input_type.name}</span>
                                   )}
-                                  {!m.input_type && (
+                                  {!m.line?.input_type && (
                                     <span className="text-amber-500">· no type</span>
                                   )}
                                 </span>
@@ -239,7 +235,7 @@ export default function FacilityGroupManager({
                 clientId={clientId}
                 facilities={facilities}
                 suppliers={suppliers}
-                utilityCategories={utilityCategories}
+                reportingCategories={reportingCategories}
                 facilityCategoryMap={facilityCategoryMap}
                 onSaved={handleGroupSaved}
                 onCancel={() => setShowNewForm(false)}
@@ -266,7 +262,7 @@ interface GroupFormProps {
   clientId: string;
   facilities: FacilityStub[];
   suppliers: Supplier[];
-  utilityCategories: UtilityCategory[];
+  reportingCategories: Category[];
   facilityCategoryMap: Record<string, FacilityCategoryOption[]>;
   initial?: FacilityGroup;
   onSaved: () => void;
@@ -277,7 +273,7 @@ function GroupForm({
   clientId,
   facilities,
   suppliers,
-  utilityCategories,
+  reportingCategories,
   facilityCategoryMap,
   initial,
   onSaved,
@@ -285,15 +281,16 @@ function GroupForm({
 }: GroupFormProps) {
   const [name, setName] = useState(initial?.name || '');
   const [supplierId, setSupplierId] = useState(initial?.supplier_id || '');
-  const [utilityCategoryId, setUtilityCategoryId] = useState(initial?.input_type_id || '');
+  const [categoryId, setCategoryId] = useState(initial?.category_id || '');
 
   // Map of facilityId → Set<utility_category_id> (multiple types per facility allowed)
   const [memberCategories, setMemberCategories] = useState<Map<string, Set<string>>>(() => {
     const map = new Map<string, Set<string>>();
     for (const m of initial?.members || []) {
-      const fid = String(m.facility_id);
+      const fid = String(m.line?.facility_id ?? '');
+      if (!fid) continue;
       if (!map.has(fid)) map.set(fid, new Set());
-      if (m.input_type_id) map.get(fid)!.add(String(m.input_type_id));
+      if (m.line?.input_type_id) map.get(fid)!.add(String(m.line.input_type_id));
     }
     return map;
   });
@@ -325,7 +322,6 @@ function GroupForm({
     setFormError(null);
     if (!name.trim()) { setFormError('Group name is required'); return; }
     if (!supplierId) { setFormError('Please select a supplier'); return; }
-    if (!utilityCategoryId) { setFormError('Please select a group utility type'); return; }
     if (memberCategories.size < 2) { setFormError('A group needs at least 2 facilities'); return; }
     const missingCategory = Array.from(memberCategories.values()).some((cats) => cats.size === 0);
     if (missingCategory) { setFormError('All facilities must have at least one utility type selected'); return; }
@@ -344,14 +340,14 @@ function GroupForm({
         const res = await fetch(`/api/facility-groups/${initial.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), input_type_id: utilityCategoryId, facility_ids: facilityIds }),
+          body: JSON.stringify({ name: name.trim(), category_id: categoryId || null, facility_ids: facilityIds }),
         });
         if (!res.ok) throw new Error('Failed to update group');
       } else {
         const res = await fetch(`/api/clients/${clientId}/facility-groups`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), supplier_id: supplierId, input_type_id: utilityCategoryId, facility_ids: facilityIds }),
+          body: JSON.stringify({ name: name.trim(), supplier_id: supplierId, category_id: categoryId || null, facility_ids: facilityIds }),
         });
         if (!res.ok) throw new Error('Failed to create group');
       }
@@ -402,16 +398,16 @@ function GroupForm({
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          Group Type
-          <span className="ml-1.5 text-xs font-normal text-gray-400">Used to identify this group in the ingestion workflow</span>
+          Category
+          <span className="ml-1.5 text-xs font-normal text-gray-400">NGERS reporting group — used to match this group in the ingestion workflow</span>
         </label>
         <select
-          value={utilityCategoryId}
-          onChange={(e) => setUtilityCategoryId(e.target.value)}
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
           className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
         >
-          <option value="">Select group type...</option>
-          {utilityCategories.map((c) => (
+          <option value="">Select category (optional)...</option>
+          {reportingCategories.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>

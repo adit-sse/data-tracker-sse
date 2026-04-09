@@ -21,9 +21,11 @@ interface NGERSRow {
 }
 
 interface GroupMember {
-  facility_id: string | number;
-  input_type_id: string | null;
-  facility: { id: string | number; name: string } | null;
+  line: {
+    facility_id: string | number;
+    input_type_id: string | null;
+    facility: { id: string | number; name: string } | null;
+  } | null;
 }
 
 function checkApiKey(request: Request): boolean {
@@ -260,27 +262,29 @@ export async function POST(request: Request) {
       const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
         supabase.from('clients').select('id').ilike('name', Company).single(),
         supabase.from('suppliers').select('id').ilike('name', Provider).single(),
-        // Category in the NGERS row = the group-level type
-        supabase.from('input_types').select('id').ilike('name', Category).single(),
+        // Category in the NGERS row = the reporting category on the group
+        supabase.from('categories').select('id').ilike('name', Category).single(),
       ]);
 
       if (!client) { warnings.push(`Client "${Company}" not found — rows skipped`); continue; }
       if (!supplier) { warnings.push(`Supplier "${Provider}" not found — rows skipped`); continue; }
-      if (!groupCategory) { warnings.push(`Utility type "${Category}" not found — rows skipped`); continue; }
+      if (!groupCategory) { warnings.push(`Category "${Category}" not found — rows skipped`); continue; }
 
       const { data: group } = await supabase
         .from('facility_groups')
         .select(`
           id,
           members:facility_group_members(
-            facility_id,
-            input_type_id,
-            facility:facilities(id, name)
+            line:non_metered_lines(
+              facility_id,
+              input_type_id,
+              facility:facilities(id, name)
+            )
           )
         `)
         .eq('client_id', client.id)
         .eq('supplier_id', supplier.id)
-        .eq('input_type_id', groupCategory.id)
+        .eq('category_id', groupCategory.id)
         .single();
 
       if (!group) {
@@ -296,11 +300,13 @@ export async function POST(request: Request) {
       const allMemberIds: string[] = [];
 
       for (const member of members) {
-        const fid = String(member.facility_id);
-        const fname = member.facility?.name;
+        const line = member.line;
+        if (!line) continue;
+        const fid = String(line.facility_id);
+        const fname = line.facility?.name;
         if (fname) facilityNameToId.set(fname.toLowerCase(), fid);
-        if (member.input_type_id) {
-          facilityIdToCategory.set(fid, member.input_type_id);
+        if (line.input_type_id) {
+          facilityIdToCategory.set(fid, line.input_type_id);
         }
         allMemberIds.push(fid);
       }
