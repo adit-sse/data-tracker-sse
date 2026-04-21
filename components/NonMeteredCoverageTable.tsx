@@ -2,11 +2,19 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
-import type { NonMeteredRowWithCoverage, NonMeteredMonthlyCoverage, NonMeteredRecord, InputType } from '@/types';
+import type {
+  NonMeteredRowWithCoverage,
+  NonMeteredMonthlyCoverage,
+  NonMeteredRecord,
+  InputType,
+  Category,
+} from '@/types';
 
 interface NonMeteredCoverageTableProps {
   rows: NonMeteredRowWithCoverage[];
   fiscalYear: number;
+  /** Scope for NGERS category dropdown (Scope 1 vs Scope 3 lines). */
+  categoryScope?: 1 | 3;
   onCellClick?: (record: NonMeteredRecord) => void;
   onEmptyCellClick?: (row: NonMeteredRowWithCoverage, cell: NonMeteredMonthlyCoverage) => void;
   onLineStatusToggle?: (lineId: string, currentIsActive: boolean) => void;
@@ -16,6 +24,7 @@ interface NonMeteredCoverageTableProps {
 export default function NonMeteredCoverageTable({
   rows,
   fiscalYear,
+  categoryScope = 1,
   onCellClick,
   onEmptyCellClick,
   onLineStatusToggle,
@@ -37,7 +46,23 @@ export default function NonMeteredCoverageTable({
   const [savingCell, setSavingCell] = useState(false);
   const [inputTypes, setInputTypes] = useState<InputType[]>([]);
   const [loadingInputTypes, setLoadingInputTypes] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(false);
   const editInputRef = useRef<HTMLInputElement | HTMLSelectElement>(null);
+
+  const loadCategories = useCallback(async () => {
+    if (categories.length > 0 || loadingCategories) return;
+    setLoadingCategories(true);
+    try {
+      const res = await fetch(`/api/categories?scope=${categoryScope}`);
+      if (res.ok) {
+        const data: Category[] = await res.json();
+        setCategories(data);
+      }
+    } finally {
+      setLoadingCategories(false);
+    }
+  }, [categories.length, loadingCategories, categoryScope]);
 
   const loadInputTypes = useCallback(async () => {
     if (inputTypes.length > 0 || loadingInputTypes) return;
@@ -54,6 +79,10 @@ export default function NonMeteredCoverageTable({
   }, [inputTypes.length, loadingInputTypes]);
 
   useEffect(() => {
+    setCategories([]);
+  }, [categoryScope]);
+
+  useEffect(() => {
     if (editingCell) {
       // Focus the input after it renders
       const timer = setTimeout(() => editInputRef.current?.focus(), 0);
@@ -63,6 +92,7 @@ export default function NonMeteredCoverageTable({
 
   const startEdit = async (lineId: string, field: 'category_id' | 'input_type_id', currentValue: string) => {
     if (!onUpdateLine) return;
+    if (field === 'category_id') await loadCategories();
     if (field === 'input_type_id') await loadInputTypes();
     setEditingCell({ lineId, field, value: currentValue });
   };
@@ -288,20 +318,32 @@ export default function NonMeteredCoverageTable({
                       className={`w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 flex items-center justify-center ${onUpdateLine ? 'group/cat' : ''}`}
                     >
                       {editingCell?.lineId === row.lineId && editingCell.field === 'category_id' ? (
-                        <input
-                          ref={editInputRef as React.RefObject<HTMLInputElement>}
-                          type="text"
-                          value={editingCell.value}
-                          onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') commitEdit();
-                            if (e.key === 'Escape') cancelEdit();
-                          }}
-                          onBlur={commitEdit}
-                          disabled={savingCell}
-                          className="w-full text-sm text-center border border-emerald-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white"
-                          placeholder="e.g. Diesel oil"
-                        />
+                        loadingCategories ? (
+                          <span className="text-xs text-gray-400">Loading…</span>
+                        ) : (
+                          <select
+                            ref={editInputRef as React.RefObject<HTMLSelectElement>}
+                            value={editingCell.value}
+                            onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Escape') cancelEdit();
+                            }}
+                            onBlur={commitEdit}
+                            disabled={savingCell}
+                            className="w-full text-sm border border-emerald-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white"
+                          >
+                            <option value="">— None —</option>
+                            {editingCell.value &&
+                              !categories.some((c) => c.id === editingCell.value) && (
+                                <option value={editingCell.value}>
+                                  {row.categoryName || editingCell.value}
+                                </option>
+                              )}
+                            {categories.map((cat) => (
+                              <option key={cat.id} value={cat.id}>{cat.name}</option>
+                            ))}
+                          </select>
+                        )
                       ) : (
                         <button
                           type="button"
