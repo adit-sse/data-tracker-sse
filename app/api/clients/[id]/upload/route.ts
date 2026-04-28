@@ -900,7 +900,8 @@ async function autoCreateNonMeteredGroups(
   type ExistingGroup = { id: string; facilityIds: Set<string> };
   const existingBySupplier = new Map<string, ExistingGroup[]>();
   for (const eg of existingGroups ?? []) {
-    const members = (eg.members as Array<{ line: { facility_id: string } | null }>) ?? [];
+    const members =
+      (eg.members as unknown as Array<{ line: { facility_id: string } | null }>) ?? [];
     const facilityIds = new Set(members.map((m) => m.line?.facility_id).filter(Boolean) as string[]);
     if (!existingBySupplier.has(eg.supplier_id)) {
       existingBySupplier.set(eg.supplier_id, []);
