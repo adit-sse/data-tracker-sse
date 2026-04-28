@@ -5,6 +5,7 @@ export const maxDuration = 300;
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { parseDateRange } from '@/lib/coverage';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
@@ -16,6 +17,7 @@ import {
 import { keywordMatches } from '@/lib/utility-category-classification';
 import { upsertTemplateScope3CoverageMonths } from '@/lib/non-metered-pending-seed';
 import { upsertNonMeteredLine, upsertNonMeteredLines } from '@/lib/non-metered-lines';
+import { parse, isValid } from 'date-fns';
 
 const BATCH_CHUNK_SIZE = 200;
 
@@ -48,6 +50,13 @@ function normalizeSpreadsheetRow(row: Record<string, unknown>): Record<string, s
     out[key] = s.replace(/^\uFEFF/, '').trim();
   }
   return out;
+}
+
+/** First letter uppercase, rest lowercase (sentence case) for input type labels from spreadsheets. */
+function toSentenceCase(s: string): string {
+  const t = s.trim();
+  if (!t) return '';
+  return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
 }
 
 // -------------------------------------------------------
@@ -198,7 +207,6 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const supabase = createSupabaseServerClient();
     const formData = await request.formData();
     const file = formData.get('file') as File;
 
@@ -249,7 +257,34 @@ export async function POST(
       );
     }
 
-    const ctx = await initContext(supabase, params.id);
+    const authClient = createSupabaseServerClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const clientIdNum = Number(params.id);
+    if (!Number.isFinite(clientIdNum)) {
+      return NextResponse.json({ error: 'Invalid client id' }, { status: 400 });
+    }
+
+    const { data: clientRow, error: clientError } = await authClient
+      .from('clients')
+      .select('id')
+      .eq('id', clientIdNum)
+      .maybeSingle();
+
+    if (clientError || !clientRow) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    // Upload performs many writes; use service role after session proves access to this client
+    // (same bar as RLS: clients_select uses user_can_access_client).
+    const db = createSupabaseServiceRoleClient();
+    const ctx = await initContext(db, params.id);
 
     const firstRow = rows[0];
     const headers = Object.keys(firstRow);
@@ -345,7 +380,7 @@ export async function POST(
 
     // Batch-insert all collected metered invoices (with dedup)
     if (pendingInvoices.length > 0) {
-      const invoiceCount = await batchInsertInvoices(supabase, pendingInvoices, errors);
+      const invoiceCount = await batchInsertInvoices(db, pendingInvoices, errors);
       imported += invoiceCount;
       uploadLog(
         'pendingInvoices=',
@@ -530,7 +565,7 @@ async function processRow(
     throw new Error(`Invalid date range format: ${row['Date Range']}`);
   }
 
-  const categoryName = mapUtilityToCategory(row.Category!);
+  const categoryName = toSentenceCase(mapUtilityToCategory(row.Category!));
   const { id: categoryId, is_metered, scope } = await cachedFindOrCreateCategory(ctx, categoryName);
 
   const rawFac = row.Facility?.trim() ?? '';
@@ -550,6 +585,9 @@ async function processRow(
 
   const supplierId = providerName ? await cachedFindOrCreateSupplier(ctx, providerName) : null;
 
+  const inputTypeColRaw = row['Input Type']?.trim();
+  const inputTypeCol = inputTypeColRaw ? toSentenceCase(inputTypeColRaw) : null;
+
   if (is_metered === false) {
     return {
       type: 'non_metered',
@@ -566,7 +604,7 @@ async function processRow(
         unit: row['Unit Type']?.trim() || null,
         amount: row['Amount($)'] ? parseFloat(row['Amount($)'].replace(/[^0-9.-]/g, '')) : null,
         subCategory: row['Sub-category']?.trim() || null,
-        inputType: row['Input Type']?.trim() || null,
+        inputType: inputTypeCol,
         framework: row.Framework?.trim() || null,
         version: row.Version?.trim() || null,
         customer: row.Customer?.trim() || null,
@@ -582,15 +620,15 @@ async function processRow(
   if (row.NMI && row.NMI.trim()) {
     identifierType = 'NMI';
     lookup1 = row.NMI.trim();
-    lookup2 = row['Input Type']?.trim() || null;
+    lookup2 = inputTypeCol;
   } else if (row.MIRN && row.MIRN.trim()) {
     identifierType = 'MIRN';
     lookup1 = row.MIRN.trim();
-    lookup2 = row['Input Type']?.trim() || null;
+    lookup2 = inputTypeCol;
   } else if (row['Account Number'] && row['Account Number'].trim()) {
     identifierType = 'ACCOUNT_NUMBER';
     lookup1 = row['Account Number'].trim();
-    lookup2 = row['Input Type']?.trim() || null;
+    lookup2 = inputTypeCol;
   } else if (row['Meter Number'] && row['Meter Number'].trim()) {
     identifierType = 'METER_NUMBER';
     lookup1 = row['Meter Number'].trim();
@@ -630,11 +668,50 @@ async function processRow(
     amount: row['Amount($)'] ? parseFloat(row['Amount($)'].replace(/[^0-9.-]/g, '')) : null,
     framework: row.Framework?.trim() || null,
     version: row.Version?.trim() || null,
-    input_type: row['Input Type']?.trim() || null,
+    input_type: inputTypeCol,
     emissions_factor: row['Output (tCO2-e)'] ? parseFloat(row['Output (tCO2-e)']) : null,
     customer: row.Customer?.trim() || null,
     status: 'IMPORTED',
   });
+}
+
+/**
+ * Same key as non_metered_records upsert onConflict:
+ * facility_id, supplier_id, input_type_id, period_start_date, period_end_date.
+ * Postgres errors if one INSERT touches the same row twice — dedupe before upsert.
+ */
+function nonMeteredUpsertConflictKey(rec: NonMeteredPayload): string {
+  const sid = rec.supplierId ?? '';
+  return `${rec.facilityId}__${sid}__${rec.categoryId}__${rec.periodStart}__${rec.periodEnd}`;
+}
+
+function nonMeteredPayloadPriority(rec: NonMeteredPayload): number {
+  const s = (rec.status || 'IMPORTED').toUpperCase();
+  const order: Record<string, number> = {
+    IMPORTED: 100,
+    MANUAL: 95,
+    CONFIRMED: 90,
+    DEACTIVATED: 50,
+    PENDING: 40,
+    INFERRED_EMPTY: 30,
+    ERROR: 10,
+  };
+  let p = order[s] ?? 20;
+  if (rec.consumption != null || rec.amount != null) p += 5;
+  if (rec.invoiceNumber?.trim()) p += 2;
+  return p;
+}
+
+function dedupeNonMeteredForUpsert(records: NonMeteredPayload[]): NonMeteredPayload[] {
+  const map = new Map<string, NonMeteredPayload>();
+  for (const rec of records) {
+    const key = nonMeteredUpsertConflictKey(rec);
+    const prev = map.get(key);
+    if (!prev || nonMeteredPayloadPriority(rec) > nonMeteredPayloadPriority(prev)) {
+      map.set(key, rec);
+    }
+  }
+  return Array.from(map.values());
 }
 
 // -------------------------------------------------------
@@ -647,9 +724,11 @@ async function processNonMeteredBatch(
 ): Promise<number> {
   if (records.length === 0) return 0;
 
+  const deduped = dedupeNonMeteredForUpsert(records);
+
   // Register a non_metered_lines row for each distinct (facility, supplier, category) combination
   // so lines appear in the coverage grid even before/after records are written.
-  const linePayloads = records
+  const linePayloads = deduped
     .filter((r) => r.supplierId !== null)
     .map((r) => ({
       facilityId: r.facilityId,
@@ -674,8 +753,8 @@ async function processNonMeteredBatch(
     status: string;
   }> = [];
 
-  for (let i = 0; i < records.length; i += BATCH_CHUNK_SIZE) {
-    const chunk = records.slice(i, i + BATCH_CHUNK_SIZE);
+  for (let i = 0; i < deduped.length; i += BATCH_CHUNK_SIZE) {
+    const chunk = deduped.slice(i, i + BATCH_CHUNK_SIZE);
     const rows = chunk.map((rec) => ({
       facility_id: rec.facilityId,
       supplier_id: rec.supplierId,
@@ -723,7 +802,7 @@ async function processNonMeteredBatch(
 
   // Auto-create facility groups for scope 1 non-metered rows where
   // multiple facilities share the same supplier + reporting category.
-  await autoCreateNonMeteredGroups(ctx, records, errors);
+  await autoCreateNonMeteredGroups(ctx, deduped, errors);
 
   const inferenceSeeds = upsertedIds.filter((r) =>
     ['IMPORTED', 'MANUAL', 'CONFIRMED'].includes(r.status || ''),
@@ -758,13 +837,15 @@ async function autoCreateNonMeteredGroups(
 
   if (scope1.length === 0) return;
 
-  // Group by (supplierId, reportingCategoryId), collecting all distinct facility IDs.
-  // Members are now keyed on non_metered_line_id, so the same facility can appear multiple
-  // times (once per input type). We track facilityIds only for the 2+ distinct facilities check.
+  // Group by (supplierId, reportingCategoryId), collecting all distinct facility IDs and
+  // distinct non-metered lines (facilityId + inputTypeId pairs).
+  // A group is created when 2+ distinct lines share the same supplier + reporting category —
+  // this covers both "same facility, two fuel types" and "two facilities, same fuel type".
   type GroupEntry = {
     supplierId: string;
     reportingCategoryId: string;
     facilityIds: Set<string>;
+    lineKeys: Set<string>; // `${facilityId}__${inputTypeId}`
   };
 
   const groupMap = new Map<string, GroupEntry>();
@@ -776,13 +857,16 @@ async function autoCreateNonMeteredGroups(
         supplierId: rec.supplierId!,
         reportingCategoryId: rec.reportingCategoryId!,
         facilityIds: new Set(),
+        lineKeys: new Set(),
       });
     }
-    groupMap.get(key)!.facilityIds.add(rec.facilityId);
+    const entry = groupMap.get(key)!;
+    entry.facilityIds.add(rec.facilityId);
+    entry.lineKeys.add(`${rec.facilityId}__${rec.categoryId}`);
   }
 
-  // Only act on groups where 2+ distinct facilities appear.
-  const multiGroups = Array.from(groupMap.values()).filter((g) => g.facilityIds.size >= 2);
+  // Only act on groups where 2+ distinct lines appear.
+  const multiGroups = Array.from(groupMap.values()).filter((g) => g.lineKeys.size >= 2);
   if (multiGroups.length === 0) return;
 
   // Fetch supplier + category names for group naming.
@@ -1029,43 +1113,80 @@ async function runInferenceForBatch(
 }
 
 // -------------------------------------------------------
-// Parse month range like "Jul 2025 - Nov 2025"
+// Parse month ranges — supports semicolon-separated segments.
+// Each segment can be:
+//   "Mon YYYY" or "Month YYYY"   — single month, e.g. "Jan 2026" or "January 2026"
+//   "Mon YYYY - Mon YYYY"        — range, e.g. "Jul 2025 - Jun 2026" or "July 2025 - June 2026"
+// Multiple segments are joined with ";", e.g.:
+//   "Jul 2025 - Nov 2025; Jan 2026"   (Dec 2025 is a gap)
+//   "Jul 2025 - Nov 2025; Jan 2026 - Mar 2026"
 // -------------------------------------------------------
-function parseMonthRange(monthsWithData: string): { startDate: string; endDate: string } | null {
-  if (!monthsWithData || !monthsWithData.trim()) return null;
+function _normalizeMonthYearToken(str: string): string {
+  const trimmed = str.trim().replace(/\s+/g, ' ');
+  const m = trimmed.match(/^(.+?)\s+(\d{4})$/);
+  if (!m) return trimmed;
+  const [, name, year] = m;
+  const titled =
+    name.length <= 3
+      ? name.slice(0, 1).toUpperCase() + name.slice(1).toLowerCase()
+      : name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+  return `${titled} ${year}`;
+}
 
-  // Excel/docs often use en dash (U+2013) or em dash — normalise so split works.
-  const normalised = monthsWithData
-    .replace(/\u2013|\u2014|\u2212/g, '-')
-    .trim();
-  const parts = normalised
-    .split('-')
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
-  if (parts.length !== 2) return null;
+function _parseMonthYear(str: string): { month: number; year: number } | null {
+  const normalized = _normalizeMonthYearToken(str);
+  if (!normalized) return null;
+  const ref = new Date(2000, 0, 1);
+  let d = parse(normalized, 'MMM yyyy', ref);
+  if (!isValid(d)) d = parse(normalized, 'MMMM yyyy', ref);
+  if (!isValid(d)) return null;
+  return { month: d.getMonth(), year: d.getFullYear() };
+}
 
-  const monthMap: Record<string, number> = {
-    Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
-    Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
-  };
-
-  const parseMonthYear = (str: string): { month: number; year: number } | null => {
-    const match = str.match(/^(\w{3})\s+(\d{4})$/);
-    if (!match) return null;
-    const month = monthMap[match[1]];
-    if (month === undefined) return null;
-    return { month, year: parseInt(match[2]) };
-  };
-
-  const start = parseMonthYear(parts[0]);
-  const end = parseMonthYear(parts[1]);
-  if (!start || !end) return null;
-
-  const startDate = `${start.year}-${String(start.month + 1).padStart(2, '0')}-01`;
-  const lastDay = new Date(end.year, end.month + 1, 0).getDate();
-  const endDate = `${end.year}-${String(end.month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-
+function _monthYearToDates(my: { month: number; year: number }): { startDate: string; endDate: string } {
+  const startDate = `${my.year}-${String(my.month + 1).padStart(2, '0')}-01`;
+  const lastDay = new Date(my.year, my.month + 1, 0).getDate();
+  const endDate = `${my.year}-${String(my.month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
   return { startDate, endDate };
+}
+
+/** Parse one segment: either "Mon YYYY" or "Mon YYYY - Mon YYYY". */
+function _parseOneSegment(segment: string): { startDate: string; endDate: string } | null {
+  // Normalise en/em dashes so splitting works.
+  const normalised = segment.replace(/\u2013|\u2014|\u2212/g, '-').trim();
+
+  // Try as a range (exactly 2 parts when split by "-").
+  const parts = normalised.split('-').map((p) => p.trim()).filter((p) => p.length > 0);
+  if (parts.length === 2) {
+    const start = _parseMonthYear(parts[0]);
+    const end = _parseMonthYear(parts[1]);
+    if (start && end) {
+      return { startDate: _monthYearToDates(start).startDate, endDate: _monthYearToDates(end).endDate };
+    }
+  }
+
+  // Try as a single month.
+  const single = _parseMonthYear(normalised);
+  if (single) return _monthYearToDates(single);
+
+  return null;
+}
+
+/**
+ * Parse MonthsWithData / MonthsDeactivated into an array of date ranges.
+ * Returns null when the string is empty or any segment is invalid.
+ */
+function parseMonthRanges(input: string): Array<{ startDate: string; endDate: string }> | null {
+  if (!input?.trim()) return null;
+  const segments = input.split(';').map((s) => s.trim()).filter((s) => s.length > 0);
+  if (segments.length === 0) return null;
+  const ranges: Array<{ startDate: string; endDate: string }> = [];
+  for (const segment of segments) {
+    const range = _parseOneSegment(segment);
+    if (!range) return null;
+    ranges.push(range);
+  }
+  return ranges;
 }
 
 function generateMonthlyPeriods(startDate: string, endDate: string): Array<{ start: string; end: string }> {
@@ -1088,8 +1209,16 @@ function generateMonthlyPeriods(startDate: string, endDate: string): Array<{ sta
 // -------------------------------------------------------
 // Cached helpers — use in-memory cache, fallback to DB
 // -------------------------------------------------------
+/** Collapse NBSP / trim so CSV/Excel quirks do not break name matching vs DB. */
+function normalizeFacilityName(name: string): string {
+  return name
+    .normalize('NFKC')
+    .replace(/\u00A0/g, ' ')
+    .trim();
+}
+
 function facilityCacheKey(name: string, address: string | null): string {
-  return `${name.trim().toLowerCase()}__${(address || '').trim().toLowerCase()}`;
+  return `${normalizeFacilityName(name).toLowerCase()}__${(address || '').trim().toLowerCase()}`;
 }
 
 async function cachedFindOrCreateFacility(
@@ -1097,7 +1226,12 @@ async function cachedFindOrCreateFacility(
   name: string,
   address: string | null,
 ): Promise<string> {
-  const key = facilityCacheKey(name, address);
+  const displayName = normalizeFacilityName(name);
+  if (!displayName) {
+    throw new Error('Missing Facility name');
+  }
+
+  const key = facilityCacheKey(displayName, address);
   const cached = ctx.facilityCache.get(key);
   if (cached) return cached;
 
@@ -1105,7 +1239,7 @@ async function cachedFindOrCreateFacility(
     .from('facilities')
     .select('id, address, created_at')
     .eq('client_id', ctx.clientId)
-    .ilike('name', name);
+    .ilike('name', displayName);
 
   const list = matches || [];
   let chosen: { id: string } | null = null;
@@ -1142,10 +1276,26 @@ async function cachedFindOrCreateFacility(
 
   const { data: created, error } = await ctx.supabase
     .from('facilities')
-    .insert([{ client_id: ctx.clientId, name, address }])
+    .insert([{ client_id: ctx.clientId, name: displayName, address }])
     .select('id')
     .single();
-  if (error) throw new Error(`Failed to create facility: ${error.message}`);
+
+  if (error) {
+    if (error.code === '23505' || error.message?.toLowerCase().includes('duplicate')) {
+      const { data: retry } = await ctx.supabase
+        .from('facilities')
+        .select('id')
+        .eq('client_id', ctx.clientId)
+        .ilike('name', displayName)
+        .limit(2);
+      const found = retry?.[0];
+      if (found) {
+        ctx.facilityCache.set(key, found.id);
+        return found.id;
+      }
+    }
+    throw new Error(`Failed to create facility: ${error.message}`);
+  }
 
   ctx.facilityCache.set(key, created.id);
   return created.id;
@@ -1200,7 +1350,8 @@ async function cachedFindOrCreateCategory(
   ctx: UploadContext,
   name: string,
 ): Promise<{ id: string; is_metered: boolean; scope: number }> {
-  const key = name.trim().toLowerCase();
+  const normalizedName = toSentenceCase(name);
+  const key = normalizedName.toLowerCase();
 
   const cached = ctx.categoryCache.get(key);
   if (cached) return cached;
@@ -1209,7 +1360,7 @@ async function cachedFindOrCreateCategory(
   const { data: existing } = await ctx.supabase
     .from('input_types')
     .select('id, is_metered, scope')
-    .ilike('name', name)
+    .ilike('name', normalizedName)
     .limit(1);
 
   if (existing && existing.length > 0) {
@@ -1224,7 +1375,7 @@ async function cachedFindOrCreateCategory(
   }
 
   throw new Error(
-    `Unknown Input Type: "${name}". Please create it in Manage Input Types before uploading.`
+    `Unknown Input Type: "${normalizedName}". Please create it in Manage Input Types before uploading.`
   );
 }
 
@@ -1462,6 +1613,7 @@ async function processMeterSetupRow(
     if (legacyUtility) inputTypeName = mapUtilityToCategory(legacyUtility);
     else throw new Error('Missing Input Type (or legacy Utility column)');
   }
+  inputTypeName = toSentenceCase(inputTypeName);
 
   const reportingCategoryCell = (() => {
     const direct = row.Category?.trim();
@@ -1516,16 +1668,16 @@ async function processMeterSetupRow(
       return '';
     })();
 
-  let dataRange: { startDate: string; endDate: string } | null = null;
+  let dataRanges: Array<{ startDate: string; endDate: string }> | null = null;
   if (monthsWithData) {
-    dataRange = parseMonthRange(monthsWithData);
-    if (!dataRange) throw new Error(`Invalid MonthsWithData format: ${monthsWithData}`);
+    dataRanges = parseMonthRanges(monthsWithData);
+    if (!dataRanges) throw new Error(`Invalid MonthsWithData format: ${monthsWithData}`);
   }
 
-  let deactivatedRange: { startDate: string; endDate: string } | null = null;
+  let deactivatedRanges: Array<{ startDate: string; endDate: string }> | null = null;
   if (monthsDeactivated) {
-    deactivatedRange = parseMonthRange(monthsDeactivated);
-    if (!deactivatedRange) throw new Error(`Invalid MonthsDeactivated format: ${monthsDeactivated}`);
+    deactivatedRanges = parseMonthRanges(monthsDeactivated);
+    if (!deactivatedRanges) throw new Error(`Invalid MonthsDeactivated format: ${monthsDeactivated}`);
   }
 
   const facilityId = await cachedFindOrCreateFacility(ctx, facilityName, address);
@@ -1546,9 +1698,11 @@ async function processMeterSetupRow(
     return { type: 'pending_seeded', created };
   }
 
-  const dataPeriods = dataRange ? generateMonthlyPeriods(dataRange.startDate, dataRange.endDate) : [];
-  const deactivatedPeriods = deactivatedRange
-    ? generateMonthlyPeriods(deactivatedRange.startDate, deactivatedRange.endDate)
+  const dataPeriods = dataRanges
+    ? dataRanges.flatMap((r) => generateMonthlyPeriods(r.startDate, r.endDate))
+    : [];
+  const deactivatedPeriods = deactivatedRanges
+    ? deactivatedRanges.flatMap((r) => generateMonthlyPeriods(r.startDate, r.endDate))
     : [];
   const dataMonthStarts = new Set(dataPeriods.map((p) => p.start));
 

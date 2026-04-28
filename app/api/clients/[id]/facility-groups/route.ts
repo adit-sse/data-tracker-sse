@@ -12,6 +12,7 @@ const MEMBERS_SELECT = `
   line:non_metered_lines(
     id,
     facility_id,
+    supplier_id,
     input_type_id,
     facility:facilities(id, name),
     input_type:input_types(id, name)
@@ -44,10 +45,11 @@ async function resolveLineIds(
   return members
     .map((m) =>
       (lines ?? []).find(
-        (l) => l.facility_id === m.facility_id && l.input_type_id === m.input_type_id
+        (l) => String(l.facility_id) === String(m.facility_id) && String(l.input_type_id) === String(m.input_type_id)
       )?.id
     )
-    .filter((id): id is string => !!id);
+    .filter((id): id is string => id != null)
+    .map(String);
 }
 
 // GET /api/clients/[id]/facility-groups — list all groups with members

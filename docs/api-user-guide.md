@@ -75,7 +75,7 @@ Creates **`PENDING`** `non_metered_records` where nothing blocking already exist
 }
 ```
 
-**Typical response:** includes `mode`, `resolved` (`facility_id`, `facility_name`, `supplier_id`, `utility_category_id`), `created`, `skipped`.
+**Typical response:** includes `mode`, `resolved` (`facility_id`, `facility_name`, `supplier_id`, `input_type_id`), `created`, `skipped`.
 
 ### curl — group
 
@@ -310,6 +310,7 @@ curl -sS -X POST "${BASE_URL}/api/ingestion/metered/error" \
 
 ## Related docs
 
+- **[ingestion-test-subject.md](./ingestion-test-subject.md)** — isolated sandbox client + seed script for safe API testing.
 - **[api-facilities-utilities-guide.md](./api-facilities-utilities-guide.md)** — facility groups, categories, and how this ties to the rest of the app.
 - **[ingestion-demo-commands.md](./ingestion-demo-commands.md)** — PowerShell examples; use **`${INGESTION_API_KEY}`** (or env) instead of inlined secrets.
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { format } from 'date-fns';
+import { format, endOfMonth, startOfMonth, isAfter, parseISO, isValid } from 'date-fns';
 import type {
   NonMeteredRowWithCoverage,
   NonMeteredMonthlyCoverage,
@@ -9,6 +9,19 @@ import type {
   InputType,
   Category,
 } from '@/types';
+
+function coerceMonthDate(monthDate: Date | string): Date {
+  if (monthDate instanceof Date) return monthDate;
+  const d = parseISO(String(monthDate));
+  return isValid(d) ? d : new Date(String(monthDate));
+}
+
+/** Months strictly after the current calendar month when the line is inactive — show as off, no edits. */
+function isInactiveForwardMonth(monthDate: Date | string, lineInactive: boolean): boolean {
+  if (!lineInactive) return false;
+  const md = coerceMonthDate(monthDate);
+  return isAfter(startOfMonth(md), endOfMonth(new Date()));
+}
 
 interface NonMeteredCoverageTableProps {
   rows: NonMeteredRowWithCoverage[];
@@ -420,18 +433,32 @@ export default function NonMeteredCoverageTable({
                     <div className="flex-1 flex items-center py-1.5">
                       {row.coverage.map((cell, idx) => {
                         const isCurrentMonth = cell.month === currentMonthLabel;
-                        const clickHandler = cell.record
-                          ? () => onCellClick?.(cell.record!)
-                          : onEmptyCellClick
-                            ? () => onEmptyCellClick(row, cell)
-                            : undefined;
+                        const lineInactive = row.isActive === false;
+                        const forwardOff = isInactiveForwardMonth(cell.monthDate, lineInactive);
+                        const emptyNoData = cell.status == null && !cell.record;
+                        /** Slate "Off" (deactivated), not gray "no data" — inactive line, future months, or any empty month. */
+                        const showAsOff = lineInactive && (forwardOff || emptyNoData);
+                        const displayCell: NonMeteredMonthlyCoverage = showAsOff
+                          ? {
+                              month: cell.month,
+                              monthDate: coerceMonthDate(cell.monthDate),
+                              status: 'DEACTIVATED',
+                            }
+                          : cell;
+                        const clickHandler = showAsOff
+                          ? undefined
+                          : cell.record
+                            ? () => onCellClick?.(cell.record!)
+                            : onEmptyCellClick
+                              ? () => onEmptyCellClick(row, cell)
+                              : undefined;
                         return (
                           <div
                             key={idx}
                             className={`flex-1 min-w-[60px] px-1 ${isCurrentMonth ? 'bg-orange-50/50' : ''}`}
                           >
                             <NonMeteredCell
-                              cell={cell}
+                              cell={displayCell}
                               onClick={clickHandler}
                             />
                           </div>
