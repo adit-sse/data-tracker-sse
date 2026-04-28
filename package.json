@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "seed:ingestion-test": "node scripts/seed-ingestion-test-subject.mjs",
+    "seed:ingestion-test:force": "node scripts/seed-ingestion-test-subject.mjs --force",
+    "seed:ingestion-test:teardown": "node scripts/seed-ingestion-test-subject.mjs --teardown"
   },
   "dependencies": {
     "@supabase/ssr": "^0.9.0",

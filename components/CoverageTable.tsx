@@ -1,10 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import ProgressBarCell from './ProgressBarCell';
 import type { MeterWithCoverage, ActualInvoice } from '@/types';
 
-import { format, endOfMonth } from 'date-fns';
+import { format, endOfMonth, startOfMonth, isAfter, parseISO, isValid } from 'date-fns';
+
+function coerceMonthDate(monthDate: Date | string): Date {
+  if (monthDate instanceof Date) return monthDate;
+  const d = parseISO(String(monthDate));
+  return isValid(d) ? d : new Date(String(monthDate));
+}
+
+/** Months strictly after the current calendar month (inactive line / meter — no data expected). */
+function isInactiveForwardMonth(monthDate: Date | string, explicitlyInactive: boolean): boolean {
+  if (!explicitlyInactive) return false;
+  const md = coerceMonthDate(monthDate);
+  return isAfter(startOfMonth(md), endOfMonth(new Date()));
+}
 
 interface CoverageTableProps {
   metersWithCoverage: MeterWithCoverage[];
@@ -14,11 +27,22 @@ interface CoverageTableProps {
   showCategoryColumn?: boolean;
 }
 
+type SortColumn =
+  | 'default'
+  | 'facility'
+  | 'supplier'
+  | 'category'
+  | 'type'
+  | 'identifier'
+  | 'status';
+
 export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickAddInvoice, onMeterUpdated, showCategoryColumn = false }: CoverageTableProps) {
   const [filterUtility, setFilterUtility] = useState<string>('ALL');
   const [filterSupplier, setFilterSupplier] = useState<string>('ALL');
   const [filterFacility, setFilterFacility] = useState<string>('ALL');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
+  const [sortColumn, setSortColumn] = useState<SortColumn>('default');
+  const [sortAscending, setSortAscending] = useState(true);
   const [togglingIsActive, setTogglingIsActive] = useState<string | null>(null);
 
   const toggleIsActive = async (meterId: string, currentIsActive: boolean) => {
@@ -98,6 +122,38 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
     
     return utilityMatch && supplierMatch && facilityMatch && statusMatch;
   });
+
+  const sortedMeters = useMemo(() => {
+    if (sortColumn === 'default') return filteredMeters;
+
+    const sortValue = (row: MeterWithCoverage): string => {
+      const meter = row.meter;
+      switch (sortColumn) {
+        case 'facility':
+          return meter.facility?.name || 'Unknown';
+        case 'supplier':
+          return meter.supplier?.name || 'No Supplier';
+        case 'category':
+          return meter.category?.name || '';
+        case 'type':
+          return meter.input_type?.name || 'N/A';
+        case 'identifier': {
+          const lookup = meter.lookup1 || '';
+          const idKind = formatIdentifierType(meter.identifier_type);
+          return `${lookup}\u0000${idKind}`;
+        }
+        case 'status':
+          return getDisplayStatus(meter).label;
+        default:
+          return '';
+      }
+    };
+
+    const mult = sortAscending ? 1 : -1;
+    return [...filteredMeters].sort(
+      (a, b) => sortValue(a).localeCompare(sortValue(b), undefined, { sensitivity: 'base' }) * mult
+    );
+  }, [filteredMeters, sortColumn, sortAscending]);
   
   if (metersWithCoverage.length === 0) {
     return (
@@ -161,9 +217,37 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
             <option value="INACTIVE">Inactive</option>
             <option value="NEEDS_ATTENTION">Needs attention</option>
           </select>
+
+          <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide ml-1">Sort:</span>
+          <select
+            value={sortColumn}
+            onChange={(e) => {
+              const v = e.target.value as SortColumn;
+              setSortColumn(v);
+              if (v === 'default') setSortAscending(true);
+            }}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+          >
+            <option value="default">Table order</option>
+            <option value="facility">Facility</option>
+            <option value="supplier">Supplier</option>
+            {showCategoryColumn && <option value="category">Category</option>}
+            <option value="type">{showCategoryColumn ? 'Input type' : 'Type'}</option>
+            <option value="identifier">Identifier</option>
+            <option value="status">Status</option>
+          </select>
+          <select
+            value={sortAscending ? 'asc' : 'desc'}
+            onChange={(e) => setSortAscending(e.target.value === 'asc')}
+            disabled={sortColumn === 'default'}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <option value="asc">A → Z</option>
+            <option value="desc">Z → A</option>
+          </select>
           
           <span className="text-sm text-gray-500 ml-auto">
-            {filteredMeters.length}/{metersWithCoverage.length} meters
+            {sortedMeters.length}/{metersWithCoverage.length} meters
           </span>
         </div>
       </div>
@@ -225,11 +309,11 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
         
         {/* Calendar-style Grid Body */}
         <div>
-        {filteredMeters.length === 0 ? (
+        {sortedMeters.length === 0 ? (
           <div className="px-4 py-8 text-center text-gray-500 text-sm border-b border-gray-200">
             No meters match your filters.
           </div>
-        ) : filteredMeters.map(({ meter, coverage }) => {
+        ) : sortedMeters.map(({ meter, coverage }) => {
           const status = getMeterServiceStatus(meter);
           return (
             <div key={meter.id} className="flex border-b border-gray-200 last:border-b-0 hover:bg-gray-50/50">
@@ -280,8 +364,9 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
               {/* Month cells - calendar event style */}
               <div className="flex-1 flex items-center py-1.5">
                 {coverage.map((monthlyCoverage, idx) => {
-                  const period_start_date = format(monthlyCoverage.monthDate, 'yyyy-MM-dd');
-                  const period_end_date = format(endOfMonth(monthlyCoverage.monthDate), 'yyyy-MM-dd');
+                  const md = coerceMonthDate(monthlyCoverage.monthDate);
+                  const period_start_date = format(md, 'yyyy-MM-dd');
+                  const period_end_date = format(endOfMonth(md), 'yyyy-MM-dd');
                   
                   const monthStart = period_start_date;
                   const monthEnd = period_end_date;
@@ -290,6 +375,21 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
                   const afterServiceEnd = !!(meter.in_service_end_date && monthStart >= meter.in_service_end_date);
                   
                   const isMonthDisabled = beforeServiceStart || afterServiceEnd;
+                  const inactiveForward = isInactiveForwardMonth(
+                    monthlyCoverage.monthDate,
+                    meter.is_active === false
+                  );
+                  const cellCoverage = inactiveForward
+                    ? {
+                        ...monthlyCoverage,
+                        monthDate: md,
+                        daysCovered: 0,
+                        percentage: 0,
+                        effectiveDaysInMonth: monthlyCoverage.daysInMonth,
+                        isDeactivatedMonth: true,
+                        gaps: undefined,
+                      }
+                    : { ...monthlyCoverage, monthDate: md };
                   const isCurrentMonth = monthlyCoverage.month === currentMonthYearLabel;
                   
                   return (
@@ -298,15 +398,19 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
                       className={`flex-1 min-w-[60px] px-1 ${isCurrentMonth ? 'bg-orange-50/50' : ''}`}
                     >
                       <ProgressBarCell
-                        coverage={monthlyCoverage}
-                        disabled={isMonthDisabled}
-                        onClick={() => onQuickAddInvoice?.({
-                          meterId: String(meter.id),
-                          facilityId: meter.facility?.id,
-                          period_start_date,
-                          period_end_date,
-                          invoices: monthlyCoverage.invoices
-                        })}
+                        coverage={cellCoverage}
+                        disabled={isMonthDisabled && !inactiveForward}
+                        onClick={
+                          inactiveForward
+                            ? undefined
+                            : () => onQuickAddInvoice?.({
+                                meterId: String(meter.id),
+                                facilityId: meter.facility?.id,
+                                period_start_date,
+                                period_end_date,
+                                invoices: monthlyCoverage.invoices
+                              })
+                        }
                       />
                     </div>
                   );

@@ -552,6 +552,7 @@ export default function ClientDetailPage() {
                 <NonMeteredCoverageTable
                   rows={nonMeteredRows}
                   fiscalYear={fiscalYear}
+                  categoryScope={1}
                   onCellClick={(record) => setNmRecordModal(record)}
                   onEmptyCellClick={(row, cell) => setNmMarkEmptyModal({ row, cell })}
                   onLineStatusToggle={async (lineId, currentIsActive) => {
@@ -577,6 +578,7 @@ export default function ClientDetailPage() {
                 <NonMeteredCoverageTable
                   rows={scope3Rows}
                   fiscalYear={fiscalYear}
+                  categoryScope={3}
                   onCellClick={(record) => setNmRecordModal(record)}
                   onEmptyCellClick={(row, cell) => setNmMarkEmptyModal({ row, cell })}
                   onLineStatusToggle={async (lineId, currentIsActive) => {

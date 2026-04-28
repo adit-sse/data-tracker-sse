@@ -4,6 +4,13 @@ export const revalidate = 0;
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value: string) {
+  return UUID_RE.test(value);
+}
+
 // PATCH /api/non-metered-lines/[id] - Update a non-metered line
 export async function PATCH(
   request: Request,
@@ -20,10 +27,27 @@ export async function PATCH(
     }
 
     if ('category_id' in body) {
-      updateData.category_id = body.category_id || null;
+      const raw = body.category_id;
+      if (raw === null || raw === '') {
+        updateData.category_id = null;
+      } else if (typeof raw === 'string') {
+        if (!isUuid(raw)) {
+          return NextResponse.json(
+            { error: 'category_id must be a category UUID' },
+            { status: 400 }
+          );
+        }
+        updateData.category_id = raw;
+      }
     }
 
     if (body.input_type_id !== undefined && typeof body.input_type_id === 'string') {
+      if (!isUuid(body.input_type_id)) {
+        return NextResponse.json(
+          { error: 'input_type_id must be a UUID' },
+          { status: 400 }
+        );
+      }
       updateData.input_type_id = body.input_type_id;
     }
 

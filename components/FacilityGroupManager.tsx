@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { FacilityGroup, Supplier, Category } from '@/types';
 
 interface FacilityStub {
@@ -269,6 +269,19 @@ interface GroupFormProps {
   onCancel: () => void;
 }
 
+/** Unique per (input type, supplier) so Diesel from two suppliers toggles independently. */
+function optionKeyFor(inputTypeId: string, supplierId: string | null | undefined) {
+  const sid = supplierId ? String(supplierId) : '';
+  return `${inputTypeId}::${sid}`;
+}
+
+function parseOptionKey(key: string): { input_type_id: string; supplier_id: string } {
+  const sep = '::';
+  const i = key.indexOf(sep);
+  if (i === -1) return { input_type_id: key, supplier_id: '' };
+  return { input_type_id: key.slice(0, i), supplier_id: key.slice(i + sep.length) };
+}
+
 function GroupForm({
   clientId,
   facilities,
@@ -280,23 +293,52 @@ function GroupForm({
   onCancel,
 }: GroupFormProps) {
   const [name, setName] = useState(initial?.name || '');
-  const [supplierId, setSupplierId] = useState(initial?.supplier_id || '');
-  const [categoryId, setCategoryId] = useState(initial?.category_id || '');
+  const [supplierId, setSupplierId] = useState(initial?.supplier_id ? String(initial.supplier_id) : '');
+  const [categoryId, setCategoryId] = useState(initial?.category_id ? String(initial.category_id) : '');
 
-  // Map of facilityId → Set<utility_category_id> (multiple types per facility allowed)
+  // Map of facilityId → Set<optionKey> where optionKey encodes input_type + supplier
   const [memberCategories, setMemberCategories] = useState<Map<string, Set<string>>>(() => {
     const map = new Map<string, Set<string>>();
+    const groupSupplier = initial?.supplier_id;
     for (const m of initial?.members || []) {
       const fid = String(m.line?.facility_id ?? '');
       if (!fid) continue;
       if (!map.has(fid)) map.set(fid, new Set());
-      if (m.line?.input_type_id) map.get(fid)!.add(String(m.line.input_type_id));
+      const itid = m.line?.input_type_id;
+      if (!itid) continue;
+      const sid = m.line?.supplier_id ?? groupSupplier;
+      map.get(fid)!.add(optionKeyFor(String(itid), sid));
     }
     return map;
   });
 
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const prevSupplierId = useRef(supplierId);
+
+  // New group: changing supplier drops utility picks that belong to another supplier
+  useEffect(() => {
+    if (initial) return;
+    if (prevSupplierId.current === supplierId) return;
+    prevSupplierId.current = supplierId;
+    if (!supplierId.trim()) return;
+    setMemberCategories((prev) => {
+      const next = new Map<string, Set<string>>();
+      let changed = false;
+      for (const [fid, keys] of Array.from(prev.entries())) {
+        const kept = new Set(
+          Array.from(keys).filter((k) => {
+            const { supplier_id: ks } = parseOptionKey(k);
+            return !ks || ks === supplierId;
+          }),
+        );
+        if (kept.size !== keys.size) changed = true;
+        if (kept.size > 0) next.set(fid, kept);
+        else if (keys.size > 0) changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [supplierId, initial]);
 
   const toggleFacility = (id: string) => {
     setMemberCategories((prev) => {
@@ -307,12 +349,12 @@ function GroupForm({
     });
   };
 
-  const toggleMemberCategory = (facilityId: string, categoryId: string) => {
+  const toggleMemberCategory = (facilityId: string, key: string) => {
     setMemberCategories((prev) => {
       const next = new Map(prev);
       const cats = new Set(next.get(facilityId) ?? []);
-      if (cats.has(categoryId)) cats.delete(categoryId);
-      else cats.add(categoryId);
+      if (cats.has(key)) cats.delete(key);
+      else cats.add(key);
       next.set(facilityId, cats);
       return next;
     });
@@ -322,16 +364,18 @@ function GroupForm({
     setFormError(null);
     if (!name.trim()) { setFormError('Group name is required'); return; }
     if (!supplierId) { setFormError('Please select a supplier'); return; }
-    if (memberCategories.size < 2) { setFormError('A group needs at least 2 facilities'); return; }
     const missingCategory = Array.from(memberCategories.values()).some((cats) => cats.size === 0);
     if (missingCategory) { setFormError('All facilities must have at least one utility type selected'); return; }
 
     setSaving(true);
     try {
-      // Flatten: one entry per (facility, category) pair
+      const effectiveSupplier = initial?.supplier_id ?? supplierId;
+      // Flatten: one entry per (facility, input type) for lines that match this group's supplier
       const facilityIds: { facility_id: string; input_type_id: string }[] = [];
-      for (const [facility_id, cats] of Array.from(memberCategories.entries())) {
-        for (const input_type_id of Array.from(cats)) {
+      for (const [facility_id, keys] of Array.from(memberCategories.entries())) {
+        for (const optKey of Array.from(keys)) {
+          const { input_type_id, supplier_id: keySupplier } = parseOptionKey(optKey);
+          if (effectiveSupplier && keySupplier && keySupplier !== effectiveSupplier) continue;
           facilityIds.push({ facility_id, input_type_id });
         }
       }
@@ -424,7 +468,11 @@ function GroupForm({
           {facilities.map((f) => {
             const checked = memberCategories.has(f.id);
             const selectedCats = memberCategories.get(f.id) ?? new Set<string>();
-            const facilityOptions = facilityCategoryMap[f.id] ?? [];
+            const rawOptions = facilityCategoryMap[f.id] ?? [];
+            const facilityOptions =
+              supplierId.trim() === ''
+                ? rawOptions
+                : rawOptions.filter((c) => !c.supplierId || c.supplierId === supplierId);
             return (
               <div
                 key={f.id}
@@ -460,12 +508,13 @@ function GroupForm({
                       <p className="text-xs text-amber-600 italic">No scope 1 records yet for this facility</p>
                     ) : (
                       <div className="flex flex-wrap gap-2">
-                        {facilityOptions.map((c, i) => {
+                        {facilityOptions.map((c) => {
                           const label = c.supplierName ? `${c.name} (${c.supplierName})` : c.name;
-                          const isCatChecked = selectedCats.has(c.id);
+                          const optKey = optionKeyFor(c.id, c.supplierId);
+                          const isCatChecked = selectedCats.has(optKey);
                           return (
                             <label
-                              key={`${c.id}__${c.supplierId ?? i}`}
+                              key={optKey}
                               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs cursor-pointer transition-colors ${
                                 isCatChecked
                                   ? 'bg-emerald-600 border-emerald-600 text-white'
@@ -475,7 +524,7 @@ function GroupForm({
                               <input
                                 type="checkbox"
                                 checked={isCatChecked}
-                                onChange={() => toggleMemberCategory(f.id, c.id)}
+                                onChange={() => toggleMemberCategory(f.id, optKey)}
                                 className="sr-only"
                               />
                               {label}
