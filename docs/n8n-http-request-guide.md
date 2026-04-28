@@ -13,6 +13,7 @@
 |-----------|----------|----------|
 | NM Pending — Group | `POST /api/ingestion/pending` | Non-metered, invoice covers multiple facilities in a group |
 | NM Pending — Line | `POST /api/ingestion/pending` | Non-metered, single site/category, no group |
+| NM Pending mode — GET | `GET /api/ingestion/pending-mode` | See if client+supplier is group vs line vs mixed before calling pending |
 | NM Confirm — Group | `POST /api/ingestion/confirm` | Confirm parsed rows for a group invoice |
 | NM Confirm — Line | `POST /api/ingestion/confirm` | Confirm parsed rows for a line invoice |
 | NM Error — Group | `POST /api/ingestion/error` | Mark a group invoice month as ERROR |
@@ -28,7 +29,49 @@
 1. Copy the JSON block for the node you want.
 2. In n8n, open your workflow canvas.
 3. Press `Ctrl+V` (or `Cmd+V`) — n8n will paste it as a ready-to-use node.
-4. Fill in the placeholder values in `jsonBody`.
+4. Fill in the placeholder values in `jsonBody` (POST nodes) or query parameters (GET nodes).
+
+---
+
+## 0 · NM Pending mode — GET
+
+Returns `pending_mode` (`group` | `line` | `mixed` | `none`), facility groups (with `category_name` for group `utility_name`), and `standalone_non_metered_line_count` so you can branch to **NM Pending — Group** vs **NM Pending — Line**.
+
+**Response:** JSON with `use_group_pending_body`, `use_line_pending_body`, `facility_groups`, etc.
+
+```json
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://data-tracker-sse-production.up.railway.app/api/ingestion/pending-mode",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "client_name", "value": "Your Client Name" },
+            { "name": "supplier_name", "value": "Your Supplier Name" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_INGESTION_API_KEY" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [0, 0],
+      "name": "NM Pending mode — GET"
+    }
+  ],
+  "connections": {},
+  "pinData": {}
+}
+```
 
 ---
 
