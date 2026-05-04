@@ -64,6 +64,8 @@ export async function resolveMeterForIngestion(
   );
   if (!line.ok) return line;
 
+  const facilityId = line.facilityId;
+
   const { data: inputType, error: catErr } = await supabase
     .from('input_types')
     .select('is_metered')
@@ -89,7 +91,7 @@ export async function resolveMeterForIngestion(
   let query = supabase
     .from('meters')
     .select('id, supplier_id')
-    .eq('facility_id', line.facilityId)
+    .eq('facility_id', facilityId)
     .eq('input_type_id', line.categoryId)
     .eq('lookup1', lookup1);
 
@@ -103,7 +105,7 @@ export async function resolveMeterForIngestion(
     const { data: looseRows } = await supabase
       .from('meters')
       .select('id, supplier_id')
-      .eq('facility_id', line.facilityId)
+      .eq('facility_id', facilityId)
       .eq('input_type_id', line.categoryId)
       .eq('lookup1', lookup1)
       .limit(2);

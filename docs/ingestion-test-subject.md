@@ -1,20 +1,22 @@
 # Ingestion API test subject (sandbox)
 
-Use this **only on a dev / staging** Supabase project (or when you accept extra rows in shared catalogs). It creates a dedicated **client** plus global **supplier**, **categories**, and **input types** whose names are prefixed with `[INGESTION TEST]` so they are easy to spot and avoid collisions with real display names.
+Use this **only on a dev / staging** Supabase project (or when you accept extra rows in shared catalogs). It creates **Test Client**, suppliers **BFcards** and **Agas national**, and several **`[INGESTION TEST]`**-prefixed **categories** and **input types** so fixtures are easy to spot and avoid collisions with real display names.
 
-Real **client** rows are untouched: all ingestion calls use the sandbox client name. Shared tables (`suppliers`, `categories`, `input_types`) gain a few rows with the test prefix; delete the sandbox **client** when done (see teardown); optional SQL removes the catalog rows if nothing else references them.
+Real **production** data is unaffected **unless** you already have a client named **`Test Client`** or suppliers **`BFcards`** / **`Agas national`**—remove or rename those first on shared databases. Shared tables gain **BFcards**, **Agas national**, plus **`[INGESTION TEST]`** catalog rows; delete the sandbox **client** when done (see teardown); optional SQL removes orphan catalog rows if nothing else references them.
 
 ## Canonical names (copy into API bodies)
 
 | Role | Exact string |
 |------|----------------|
-| Client (`client_name`, `Company`) | `[INGESTION TEST] Sandbox Client` |
-| Supplier (`supplier_name`, `Provider`) | `[INGESTION TEST] Sandbox Supplier` |
+| Client (`client_name`, `Company`) | `Test Client` |
+| Supplier (`supplier_name`, `Provider`) — BFcards (group + metered + one line) | `BFcards` |
+| Supplier — **Agas national** standalone line demo only | `Agas national` |
 | **Group** reporting category (`utility_name` for group pending/error; `Category` on NGERS rows for group confirm) | `[INGESTION TEST] Sandbox Transport` |
 | Group facility A (`Facility`) | `[INGESTION TEST] Group Site Alpha` |
 | Group facility B | `[INGESTION TEST] Group Site Beta` |
 | **Line** facility (`facility_name`, `Facility` for line flows) | `[INGESTION TEST] Line Only Site` |
-| **Line** utility (`utility_name` for line pending/error; `Category` on line confirm) | `[INGESTION TEST] Sandbox Standalone Utility` |
+| **Line** utility — BFcards (`utility_name` / `Category`) | `[INGESTION TEST] Sandbox Standalone Utility` |
+| **Line** utility — Agas national (`utility_name` / `Category`) | `[INGESTION TEST] Agas National Demo Utility` |
 | **Metered** utility (must be `is_metered`; use metered pending/confirm/error only) | `[INGESTION TEST] Sandbox Test Electricity` |
 | Test NMI string (metered `lookup1` / row `NMI`) | `999000111222333` |
 
@@ -53,6 +55,6 @@ Content-Type: application/json
 
 ## Safety notes
 
-- **`--force`** deletes the client named `[INGESTION TEST] Sandbox Client` only. If you renamed that client in the UI, teardown will not remove it.
-- Do not reuse these display names for production clients/suppliers, or resolution may match the wrong row (`ilike` / exact name lookups).
+- **`--force`** / **`--teardown`** delete client rows whose **`name`** is exactly **`Test Client`**. If that collides with unrelated data, rename your sandbox client in the UI before teardown, or delete it manually.
+- The seed **reuses** existing **`BFcards`** or **`Agas national`** supplier rows if those names already exist—use a clean dev DB or inspect **`suppliers`** after seeding.
 - Full ingestion API reference: [api-user-guide.md](./api-user-guide.md).

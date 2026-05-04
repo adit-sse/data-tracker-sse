@@ -1,9 +1,30 @@
 # n8n HTTP Request Node Templates — Ingestion API
 
-**Base URL:** `https://data-tracker-sse-production.up.railway.app`  
+**Base URL:** `https://data-tracker-sse-production-185f.up.railway.app`  
 **Auth header (all nodes):** `Authorization: Bearer <INGESTION_API_KEY>`
 
 > Replace all `"Your Client Name"`, `"Your Supplier Name"`, `"Site A"`, etc. with real values from the tracker. Names are matched case-insensitively except facility names in confirm (must match exactly).
+
+---
+
+## Logical flow — how the nodes connect
+
+```
+NM Pending mode — GET          ← check if client+supplier is group vs line vs mixed
+        ↓
+NM Pending — Scope 1 bulk      ← seed amber PENDING months (once per supplier cycle)
+        ↓  (for each invoice as it arrives, one per facility)
+NM Confirm — Group             ← turn that facility+period green (CONFIRMED)
+        ↓  (after ALL invoices for the period are submitted)
+NM Inferred Empty — Group      ← mark remaining PENDING in confirmed months as INFERRED_EMPTY
+        ↓  (if a parse fails for any invoice)
+NM Error — Group               ← mark that period red (ERROR)
+```
+
+**Key rules for group invoices:**
+- `confirm` only touches the facilities you send — other facilities and months are always left untouched.
+- Call `confirm` once per invoice as each arrives; there is no risk of overwriting other facilities.
+- Call `inferred-empty` **once** after all invoices for a period are in. It checks for confirmed months and infers empty for everything still pending in those months.
 
 ---
 
@@ -11,16 +32,19 @@
 
 | Node name | Endpoint | Use when |
 |-----------|----------|----------|
-| NM Pending — Group | `POST /api/ingestion/pending` | Non-metered, invoice covers multiple facilities in a group |
-| NM Pending — Line | `POST /api/ingestion/pending` | Non-metered, single site/category, no group |
-| NM Pending mode — GET | `GET /api/ingestion/pending-mode` | See if client+supplier is group vs line vs mixed before calling pending |
-| NM Confirm — Group | `POST /api/ingestion/confirm` | Confirm parsed rows for a group invoice |
+| NM Pending mode — GET | `GET /api/ingestion/pending-mode` | Check if client+supplier is group / line / mixed / none before calling pending |
+| NM Pending — Scope 1 bulk | `POST /api/ingestion/pending` | `client_name` + `supplier_name` only — seeds all Scope 1 groups + standalone lines |
+| NM Pending — Group (one category) | `POST /api/ingestion/pending` | Seed one NGERS group category; body includes `utility_name` |
+| NM Pending — Line | `POST /api/ingestion/pending` | Standalone line; optional `facility_name` when uniquely resolvable |
+| NM Confirm — Group | `POST /api/ingestion/confirm` | Confirm parsed rows for a group invoice (one or many facilities) |
 | NM Confirm — Line | `POST /api/ingestion/confirm` | Confirm parsed rows for a line invoice |
+| NM Inferred Empty — Group | `POST /api/ingestion/inferred-empty` | After all invoices for a period are submitted — mark remaining PENDING as INFERRED_EMPTY |
+| NM Inferred Empty — Line | `POST /api/ingestion/inferred-empty` | Same, for standalone lines |
 | NM Error — Group | `POST /api/ingestion/error` | Mark a group invoice month as ERROR |
 | NM Error — Line | `POST /api/ingestion/error` | Mark a line invoice month as ERROR |
-| Metered Pending | `POST /api/ingestion/metered/pending` | Metered utility (electricity, gas) — seed PENDING rows |
-| Metered Confirm | `POST /api/ingestion/metered/confirm` | Metered utility — confirm parsed invoice rows |
-| Metered Error | `POST /api/ingestion/metered/error` | Metered utility — mark a month as ERROR |
+| Metered Pending | `POST /api/ingestion/metered/pending` | Seed PENDING rows for a metered utility (electricity, gas) |
+| Metered Confirm | `POST /api/ingestion/metered/confirm` | Confirm parsed invoice rows for a metered utility |
+| Metered Error | `POST /api/ingestion/metered/error` | Mark a metered month as ERROR |
 
 ---
 
@@ -45,7 +69,7 @@ Returns `pending_mode` (`group` | `line` | `mixed` | `none`), facility groups (w
     {
       "parameters": {
         "method": "GET",
-        "url": "https://data-tracker-sse-production.up.railway.app/api/ingestion/pending-mode",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/pending-mode",
         "sendQuery": true,
         "specifyQuery": "keypair",
         "queryParameters": {
@@ -75,11 +99,11 @@ Returns `pending_mode` (`group` | `line` | `mixed` | `none`), facility groups (w
 
 ---
 
-## 1 · NM Pending — Group
+## 1 · NM Pending — Scope 1 bulk
 
-Seeds `PENDING` non-metered records for every fiscal month (Jul → today) across all facilities in the matching group.
+Seeds **`PENDING`** for **all** Scope 1 facility groups **and** standalone lines for this client + supplier (fiscal year through today). Body has **no** `utility_name` and **no** `mode`.
 
-**Response:** `{ "created": n, "skipped": n }`
+**Response:** `{ "scope": 1, "client_id", "supplier_id", "groups": [...], "lines": [...], "summary": { "created", "skipped" } }` · **`404`** if no Scope 1 coverage exists for the pair.
 
 ```json
 {
@@ -87,7 +111,44 @@ Seeds `PENDING` non-metered records for every fiscal month (Jul → today) acros
     {
       "parameters": {
         "method": "POST",
-        "url": "https://data-tracker-sse-production.up.railway.app/api/ingestion/pending",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/pending",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_INGESTION_API_KEY" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"client_name\": \"Your Client Name\",\n  \"supplier_name\": \"Your Supplier Name\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [0, 0],
+      "name": "NM Pending — Scope 1 bulk"
+    }
+  ],
+  "connections": {},
+  "pinData": {}
+}
+```
+
+---
+
+## 2 · NM Pending — Group (single category)
+
+Seeds `PENDING` non-metered records for every fiscal month (Jul → today) across all facilities in **one** matching group. Body includes `utility_name` (NGERS reporting category name).
+
+**Response:** `{ "mode": "group", "scope": 1, "created": n, "skipped": n }`
+
+```json
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/pending",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -102,7 +163,7 @@ Seeds `PENDING` non-metered records for every fiscal month (Jul → today) acros
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [0, 0],
-      "name": "NM Pending — Group"
+      "name": "NM Pending — Group (single category)"
     }
   ],
   "connections": {},
@@ -112,11 +173,11 @@ Seeds `PENDING` non-metered records for every fiscal month (Jul → today) acros
 
 ---
 
-## 2 · NM Pending — Line
+## 3 · NM Pending — Line
 
-Seeds `PENDING` non-metered records for a single site + category. Will create the utility category if it does not exist yet.
+Seeds `PENDING` non-metered records for **one** site + record-level **input type** (no facility group). The template below **omits** `facility_name` — use this when exactly **one** `non_metered_lines` row exists for that client + supplier + utility. `utility_name` must match an existing **Scope 1** input type. Use `resolved` in the response for the resolved site. If several sites could match, add `"facility_name": "Site A"` to the JSON body or switch to group pending.
 
-**Response:** `{ "mode": "line", "resolved": { ... }, "created": n, "skipped": n }`
+**Response:** `{ "mode": "line", "scope": 1, "resolved": { ... }, "created": n, "skipped": n }`
 
 ```json
 {
@@ -124,7 +185,7 @@ Seeds `PENDING` non-metered records for a single site + category. Will create th
     {
       "parameters": {
         "method": "POST",
-        "url": "https://data-tracker-sse-production.up.railway.app/api/ingestion/pending",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/pending",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -133,7 +194,7 @@ Seeds `PENDING` non-metered records for a single site + category. Will create th
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"mode\": \"line\",\n  \"client_name\": \"Your Client Name\",\n  \"supplier_name\": \"Your Supplier Name\",\n  \"utility_name\": \"GREASE\",\n  \"facility_name\": \"Site A\"\n}",
+        "jsonBody": "{\n  \"mode\": \"line\",\n  \"client_name\": \"Your Client Name\",\n  \"supplier_name\": \"Your Supplier Name\",\n  \"utility_name\": \"GREASE\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -149,13 +210,13 @@ Seeds `PENDING` non-metered records for a single site + category. Will create th
 
 ---
 
-## 3 · NM Confirm — Group
+## 4 · NM Confirm — Group
 
-Turns `PENDING` → `CONFIRMED` for matched rows. Sets `INFERRED_EMPTY` for group members absent from the invoice. Drops `PENDING` for months not in this payload.
+Turns `PENDING` → `CONFIRMED` for the exact facility+period rows in the payload. **Only** the facilities you send are updated — other facilities, months, and input types are untouched. Safe to call once per invoice as each arrives.
 
-Body is a **JSON array** of NGERS-style row objects.
+Body is a **JSON array** of NGERS-style row objects. Each row requires `Company`, `Facility`, `Provider`, `Category` (NGERS group category), `Input Type` (specific input type, e.g. "Diesel oil"), and `Date Range`. No `Consumption` or `Amount ($)` are stored.
 
-**Response:** `{ "mode": "group", "confirmed": n, "inferred_empty": n, "deleted_pending": n, "warnings": [] }`
+**Response:** `{ "mode": "group", "confirmed": n, "warnings": [] }`
 
 ```json
 {
@@ -163,7 +224,7 @@ Body is a **JSON array** of NGERS-style row objects.
     {
       "parameters": {
         "method": "POST",
-        "url": "https://data-tracker-sse-production.up.railway.app/api/ingestion/confirm",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/confirm",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -172,7 +233,7 @@ Body is a **JSON array** of NGERS-style row objects.
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "[\n  {\n    \"Company\": \"Your Client Name\",\n    \"Facility\": \"Site A\",\n    \"Provider\": \"Your Supplier Name\",\n    \"Category\": \"Transport Fuels\",\n    \"Consumption\": 1000,\n    \"Amount ($)\": 5000,\n    \"Date Range\": \"01/03/2026 - 31/03/2026\"\n  }\n]",
+        "jsonBody": "[\n  {\n    \"Company\": \"Your Client Name\",\n    \"Facility\": \"Site A\",\n    \"Provider\": \"Your Supplier Name\",\n    \"Category\": \"Transport Fuels\",\n    \"Input Type\": \"Diesel oil\",\n    \"Date Range\": \"01/03/2026 - 31/03/2026\"\n  }\n]",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -188,11 +249,11 @@ Body is a **JSON array** of NGERS-style row objects.
 
 ---
 
-## 4 · NM Confirm — Line
+## 5 · NM Confirm — Line
 
-Same confirm logic as group but for a single line. Body is an **object** with a `mode` and `rows` array.
+Same confirm logic as group but for a single line. Body is an **object** with `mode` and `rows`. Each row requires `Company`, `Facility`, `Provider`, `Input Type`, and `Date Range`. `Category` is optional for electricity rows.
 
-**Response:** `{ "mode": "line", "confirmed": n, "inferred_empty": n, "deleted_pending": n, "warnings": [] }`
+**Response:** `{ "mode": "line", "confirmed": n, "warnings": [] }`
 
 ```json
 {
@@ -200,7 +261,7 @@ Same confirm logic as group but for a single line. Body is an **object** with a 
     {
       "parameters": {
         "method": "POST",
-        "url": "https://data-tracker-sse-production.up.railway.app/api/ingestion/confirm",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/confirm",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -209,7 +270,7 @@ Same confirm logic as group but for a single line. Body is an **object** with a 
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"mode\": \"line\",\n  \"rows\": [\n    {\n      \"Company\": \"Your Client Name\",\n      \"Facility\": \"Site A\",\n      \"Provider\": \"Your Supplier Name\",\n      \"Category\": \"GREASE\",\n      \"Consumption\": 42.5,\n      \"Amount ($)\": 1200,\n      \"Date Range\": \"01/03/2026 - 31/03/2026\"\n    }\n  ]\n}",
+        "jsonBody": "{\n  \"mode\": \"line\",\n  \"rows\": [\n    {\n      \"Company\": \"Your Client Name\",\n      \"Facility\": \"Site A\",\n      \"Provider\": \"Your Supplier Name\",\n      \"Input Type\": \"GREASE\",\n      \"Date Range\": \"01/03/2026 - 31/03/2026\"\n    }\n  ]\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -225,7 +286,83 @@ Same confirm logic as group but for a single line. Body is an **object** with a 
 
 ---
 
-## 5 · NM Error — Group
+## 6 · NM Inferred Empty — Group
+
+Call this **after all per-facility invoices for a period have been submitted** via Confirm. For every month that has at least one `CONFIRMED` record in the group, any member still `PENDING` for that month is marked `INFERRED_EMPTY`. Months with no confirmed records are left untouched.
+
+Body requires `client_name`, `supplier_name`, and `category` (the NGERS reporting category name). Covers **all input types** in the group in one call.
+
+**Response:** `{ "mode": "group", "inferred_empty": n, "confirmed_periods_checked": n }`
+
+```json
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/inferred-empty",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_INGESTION_API_KEY" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"client_name\": \"Your Client Name\",\n  \"supplier_name\": \"Your Supplier Name\",\n  \"category\": \"Transport Fuels\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [960, 0],
+      "name": "NM Inferred Empty — Group"
+    }
+  ],
+  "connections": {},
+  "pinData": {}
+}
+```
+
+---
+
+## 7 · NM Inferred Empty — Line
+
+Same inferred-empty logic but for standalone lines (not in a group). Body requires `mode: "line"`, `client_name`, `supplier_name`, `input_type`. `facility_name` is optional when uniquely resolvable.
+
+**Response:** `{ "mode": "line", "inferred_empty": n, "confirmed_periods_checked": n }`
+
+```json
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/inferred-empty",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_INGESTION_API_KEY" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"mode\": \"line\",\n  \"client_name\": \"Your Client Name\",\n  \"supplier_name\": \"Your Supplier Name\",\n  \"input_type\": \"GREASE\",\n  \"facility_name\": \"Site A\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1200, 0],
+      "name": "NM Inferred Empty — Line"
+    }
+  ],
+  "connections": {},
+  "pinData": {}
+}
+```
+
+---
+
+## 8 · NM Error — Group
 
 Sets `PENDING` → `ERROR` for the calendar month derived from the start of `date_range`.
 
@@ -237,7 +374,7 @@ Sets `PENDING` → `ERROR` for the calendar month derived from the start of `dat
     {
       "parameters": {
         "method": "POST",
-        "url": "https://data-tracker-sse-production.up.railway.app/api/ingestion/error",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/error",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -251,7 +388,7 @@ Sets `PENDING` → `ERROR` for the calendar month derived from the start of `dat
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [960, 0],
+      "position": [0, 300],
       "name": "NM Error — Group"
     }
   ],
@@ -262,9 +399,9 @@ Sets `PENDING` → `ERROR` for the calendar month derived from the start of `dat
 
 ---
 
-## 6 · NM Error — Line
+## 9 · NM Error — Line
 
-Same as group error but scoped to one site + category.
+Same as group error but for **line** mode: `PENDING` → `ERROR` for one resolved facility + input type + month. The template **omits** `facility_name` (same uniqueness rule as §3). Add `"facility_name": "Site A"` when you must disambiguate.
 
 **Response:** `{ "updated": n, "period_start_date": "YYYY-MM-DD" }`
 
@@ -274,7 +411,7 @@ Same as group error but scoped to one site + category.
     {
       "parameters": {
         "method": "POST",
-        "url": "https://data-tracker-sse-production.up.railway.app/api/ingestion/error",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/error",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -283,12 +420,12 @@ Same as group error but scoped to one site + category.
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"mode\": \"line\",\n  \"client_name\": \"Your Client Name\",\n  \"supplier_name\": \"Your Supplier Name\",\n  \"utility_name\": \"GREASE\",\n  \"facility_name\": \"Site A\",\n  \"date_range\": \"01/03/2026 - 31/03/2026\"\n}",
+        "jsonBody": "{\n  \"mode\": \"line\",\n  \"client_name\": \"Your Client Name\",\n  \"supplier_name\": \"Your Supplier Name\",\n  \"utility_name\": \"GREASE\",\n  \"date_range\": \"01/03/2026 - 31/03/2026\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [1200, 0],
+      "position": [240, 300],
       "name": "NM Error — Line"
     }
   ],
@@ -299,9 +436,11 @@ Same as group error but scoped to one site + category.
 
 ---
 
-## 7 · Metered Pending
+## 10 · Metered Pending
 
 Seeds one `PENDING` invoice row per fiscal month (Jul → today) that is still empty for the given meter. The meter must already exist in the tracker.
+
+**Unlike non-metered line pending (§3), this endpoint always requires `facility_name`** — meters are tied to a physical site.
 
 `identifier_type` is one of: `NMI`, `MIRN`, `Account Number`, `Meter Number`.  
 `lookup2` is optional (use `null` if not needed).
@@ -314,7 +453,7 @@ Seeds one `PENDING` invoice row per fiscal month (Jul → today) that is still e
     {
       "parameters": {
         "method": "POST",
-        "url": "https://data-tracker-sse-production.up.railway.app/api/ingestion/metered/pending",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/metered/pending",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -328,7 +467,7 @@ Seeds one `PENDING` invoice row per fiscal month (Jul → today) that is still e
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [0, 300],
+      "position": [480, 300],
       "name": "Metered Pending"
     }
   ],
@@ -339,7 +478,7 @@ Seeds one `PENDING` invoice row per fiscal month (Jul → today) that is still e
 
 ---
 
-## 8 · Metered Confirm
+## 11 · Metered Confirm
 
 Updates `PENDING` → `CONFIRMED` for the matching meter + calendar month. Stores the exact period dates from `Date Range`. Drops other FY `PENDING` rows for that meter not present in the payload.
 
@@ -355,7 +494,7 @@ Optional row fields: `Input Type`, `Invoice Number`, `Invoice Date`, `Framework`
     {
       "parameters": {
         "method": "POST",
-        "url": "https://data-tracker-sse-production.up.railway.app/api/ingestion/metered/confirm",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/metered/confirm",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -369,7 +508,7 @@ Optional row fields: `Input Type`, `Invoice Number`, `Invoice Date`, `Framework`
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [240, 300],
+      "position": [720, 300],
       "name": "Metered Confirm"
     }
   ],
@@ -380,7 +519,7 @@ Optional row fields: `Input Type`, `Invoice Number`, `Invoice Date`, `Framework`
 
 ---
 
-## 9 · Metered Error
+## 12 · Metered Error
 
 Sets `PENDING` → `ERROR` for the calendar month derived from the start of `date_range`. Uses the same identifiers as Metered Pending.
 
@@ -392,7 +531,7 @@ Sets `PENDING` → `ERROR` for the calendar month derived from the start of `dat
     {
       "parameters": {
         "method": "POST",
-        "url": "https://data-tracker-sse-production.up.railway.app/api/ingestion/metered/error",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/metered/error",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -406,7 +545,7 @@ Sets `PENDING` → `ERROR` for the calendar month derived from the start of `dat
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [480, 300],
+      "position": [960, 300],
       "name": "Metered Error"
     }
   ],
@@ -424,5 +563,5 @@ Sets `PENDING` → `ERROR` for the calendar month derived from the start of `dat
 | `401` | Wrong or missing API key | Check `Authorization: Bearer ...` header value |
 | `400` | Missing required field | Check that all required body fields are present |
 | `404` | Client / supplier / group not found | Verify names match the tracker (case-insensitive) |
-| `422` | Group has no members with categories set | Configure member utility types in the tracker UI |
+| `422` | Group has no members with input types set | Configure member input types in the tracker UI |
 | `500` | Server error | Check the Railway logs |

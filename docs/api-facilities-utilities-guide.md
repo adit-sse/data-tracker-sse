@@ -1,6 +1,6 @@
 # API guide: facilities, utilities, and ingestion
 
-This document describes the HTTP APIs used to manage **facilities**, **utility categories**, **facility groups** (for multi-site invoices), **meters** (metered utilities), **non-metered records**, and the **ingestion** workflow (`pending` → `confirm` or `error`).
+This document describes the HTTP APIs used to manage **facilities**, **utility categories**, **facility groups** (for multi-site invoices), **meters** (metered utilities), **non-metered records**, and the **ingestion** workflow (`pending` → `confirm` → `inferred-empty` or `error`).
 
 ---
 
@@ -9,7 +9,7 @@ This document describes the HTTP APIs used to manage **facilities**, **utility c
 | Area | Auth |
 |------|------|
 | **All routes under `/api` except `/api/ingestion/*`** | Logged-in Supabase user (session cookie). Unauthenticated requests get `401` JSON or redirect to `/login`. |
-| **`/api/ingestion/pending`**, **`/api/ingestion/confirm`**, **`/api/ingestion/error`** | `Authorization: Bearer <INGESTION_API_KEY>` where the secret matches `INGESTION_API_KEY` in the server environment. These routes bypass the normal session check (see `middleware.ts`). |
+| **`/api/ingestion/pending`**, **`/api/ingestion/confirm`**, **`/api/ingestion/inferred-empty`**, **`/api/ingestion/error`** | `Authorization: Bearer <INGESTION_API_KEY>` where the secret matches `INGESTION_API_KEY` in the server environment. These routes bypass the normal session check (see `middleware.ts`). |
 
 Set `INGESTION_API_KEY` in `.env.local` (see `.env.local.example`).
 
@@ -28,13 +28,13 @@ Facilities belong to a client. Names are matched case-insensitively during inges
 | `PUT` | `/api/facilities/{facilityId}` | Update facility. Body: `{ "name": string, "address"?: string \| null }`. |
 | `DELETE` | `/api/facilities/{facilityId}` | Delete facility (cascades meters and their invoices per route logic). |
 
-**Scope 3 / client-wide:** For standalone line ingestion, Scope 3 can use the synthetic facility name `(Client-wide)` or omit `facility_name` in pending/error (see [Ingestion — line mode](#5-ingestion-api)). The app may create `(Client-wide)` under the client automatically.
+**Scope 3 / client-wide:** For standalone line ingestion, Scope 3 can use the synthetic facility name `(Client-wide)`. Omitting `facility_name` resolves the single matching `non_metered_lines` row when it exists, or falls back to `(Client-wide)` when none exist yet. The app may create `(Client-wide)` under the client automatically.
 
 ---
 
-## 2. Utility categories (non-metered “utility types”)
+## 2. Utility categories (non-metered "utility types")
 
-Categories are global rows in `utility_categories`. Group-level ingestion uses the **group’s** `utility_category_id` as the shared “invoice type” (e.g. Transport Fuels); each group member has its own **per-facility** category on `facility_group_members`.
+Categories are global rows in `utility_categories`. Group-level ingestion uses the **group's** `utility_category_id` as the shared "invoice type" (e.g. Transport Fuels); each group member has its own **per-facility** category on `facility_group_members`.
 
 | Method | Path | Purpose |
 |--------|------|---------|
@@ -43,19 +43,19 @@ Categories are global rows in `utility_categories`. Group-level ingestion uses t
 | `PUT` | `/api/utility-categories/{id}` | Update. Body: `{ "name": string, "scope"?: 1\|2\|3, "is_metered"?: boolean, "needs_review"?: boolean }`. |
 | `DELETE` | `/api/utility-categories/{id}` | Delete category. |
 
-**Ingestion note:** `/api/ingestion/pending` in **line** mode can **create** a category if missing (`findOrCreateUtilityCategoryForIngestion`). **Group** mode and **confirm** expect categories (and groups) to exist or match names as documented below.
+**Ingestion note:** `/api/ingestion/pending` in **line** mode requires an existing **input type** name (**Scope 1** only). It does **not** create missing input types. **Group** pending resolves the NGERS **reporting** category (`categories`) by name.
 
 ---
 
-## 3. Facility groups (required for “group” ingestion)
+## 3. Facility groups (required for "group" ingestion)
 
-A **facility group** ties a client + supplier + **one group-level utility category** to many facilities. Each **member** has `facility_id` + `utility_category_id` (the specific category for that site’s row in `non_metered_records`).
+A **facility group** ties a client + supplier + **one group-level NGERS category** to many facilities. Each **member** has `facility_id` + `input_type_id` (the specific input type tracked for that site, e.g. "Diesel oil", "Ethanol").
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/api/clients/{clientId}/facility-groups` | List groups with `supplier`, `utility_category`, and `members` (each with nested facility + category). |
+| `GET` | `/api/clients/{clientId}/facility-groups` | List groups with `supplier`, `category`, and `members` (each with nested facility + input type). |
 | `POST` | `/api/clients/{clientId}/facility-groups` | Create group + members + backfill. Body: `{ "name": string, "supplier_id": string, "utility_category_id": string, "facility_ids": { "facility_id": string, "utility_category_id": string }[] }`. |
-| `PUT` | `/api/facility-groups/{groupId}` | Update `name`, `utility_category_id`, and/or replace all members via `facility_ids` (same shape as POST). Runs backfill when members change. |
+| `PUT` | `/api/facility-groups/{groupId}` | Update `name`, `utility_category_id`, and/or replace all members via `facility_ids`. Runs backfill when members change. |
 | `DELETE` | `/api/facility-groups/{groupId}` | Delete group (members cascade per DB). |
 
 **Legacy helpers** (member add/remove without per-member utility in body):
@@ -71,11 +71,11 @@ A **facility group** ties a client + supplier + **one group-level utility catego
 
 ## 4. Meters (metered utilities)
 
-Meters attach to a facility and optionally a supplier + utility category. Used for **metered** coverage, not the non-metered ingestion trio below.
+Meters attach to a facility and optionally a supplier + utility category. Used for **metered** coverage, not the non-metered ingestion endpoints below.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/api/clients/{clientId}/meters` | All meters for the client’s facilities (with facility, supplier, utility_category). |
+| `GET` | `/api/clients/{clientId}/meters` | All meters for the client's facilities (with facility, supplier, utility_category). |
 | `PATCH` | `/api/meters/{meterId}` | Partial update: `facility_id`, `utility_category_id`, `identifier_type`, `lookup1`, `lookup2`, `supplier_id`, dates, `needs_attention`, etc. |
 
 (Additional meter routes exist under `app/api/meters` for listing/creating as needed by the app.)
@@ -96,9 +96,9 @@ Ingestion endpoints read/update these same rows for automated flows.
 
 ---
 
-## 6. Ingestion API (`pending`, `confirm`, `error`)
+## 6. Ingestion API (`pending`, `confirm`, `inferred-empty`, `error`)
 
-All three use:
+All endpoints use:
 
 ```http
 POST /api/ingestion/<endpoint>
@@ -108,119 +108,125 @@ Content-Type: application/json
 
 ### 6.1 Concepts
 
-- **Fiscal year months “through now”:** `pending` seeds PENDING rows for months in the **current fiscal year** up to the current date (see `getCurrentFiscalYearMonthsThroughNow` in code).
-- **Group mode:** Invoice covers multiple sites under one client + supplier + **group utility type**. Requires a preconfigured **facility group** whose `utility_category_id` matches `utility_name` (matched to `utility_categories.name`).
-- **Line mode:** Single facility (or client-wide for Scope 3) + supplier + **record-level** utility name. No facility group. `utility_name` is the **category** for that line (e.g. GREASE).
+- **Fiscal year months "through now":** `pending` seeds PENDING rows for months in the **current fiscal year** up to the current date.
+- **Scope 1 only:** Non-metered `pending` only seeds Scope 1 standalone lines and facility groups. Targeted calls with non–Scope 1 utilities return `400`.
+- **Group mode:** One supplier invoices multiple facilities under one client + supplier + NGERS **reporting category** (e.g. "Transport Fuels"). Each group member has its own **Input Type** (e.g. "Diesel oil", "Ethanol").
+- **Line mode (`mode: "line"`):** Single facility + supplier + **Input Type** name. No facility group.
+- **Per-facility invoicing:** `confirm` only updates the exact facility+period rows in the payload — other facilities, months, and input types are untouched. Call `inferred-empty` once all invoices for a period are in to finalise.
 
 ### 6.2 `POST /api/ingestion/pending`
 
-Creates `non_metered_records` with `status: "PENDING"` where there is no blocking row yet.
+Creates `non_metered_records` with `status: "PENDING"` where no blocking row already exists.
 
-**Group body:**
+**Bulk body (recommended — seeds all Scope 1 coverage):**
 
 ```json
-{
-  "client_name": "Client display name",
-  "supplier_name": "Supplier display name",
-  "utility_name": "Group-level utility category name"
-}
+{ "client_name": "Client display name", "supplier_name": "Supplier display name" }
 ```
 
 - Resolves client and supplier by **case-insensitive name**.
-- Finds `facility_groups` row matching `client_id`, `supplier_id`, and group `utility_category_id` for `utility_name`.
-- For each member with a non-null `utility_category_id`, for each FY month: inserts PENDING unless a row already exists for that facility + category + period, or the facility already has a “green” record from that supplier for that period (`IMPORTED`, `MANUAL`, `CONFIRMED`, `DEACTIVATED`).
+- Seeds **every** Scope 1 facility group and standalone `non_metered_lines` row for this pair.
+- **Response:** `{ "scope": 1, "client_id", "supplier_id", "groups": [...], "lines": [...], "summary": { "created", "skipped" } }`.
+- `404` if there is no Scope 1 coverage for that pair.
 
-**Response (group):** `{ "created": number, "skipped": number }`.
+**Group body (single NGERS category):**
+
+```json
+{ "client_name": "...", "supplier_name": "...", "utility_name": "Transport Fuels" }
+```
+
+- Finds `facility_groups` matching `client_id`, `supplier_id`, and the NGERS category name.
+- **Response:** `{ "mode": "group", "scope": 1, "created": number, "skipped": number }`.
 
 **Line body:**
 
 ```json
-{
-  "mode": "line",
-  "client_name": "...",
-  "supplier_name": "...",
-  "utility_name": "Record category name",
-  "facility_name": "Site name"
-}
+{ "mode": "line", "client_name": "...", "supplier_name": "...", "utility_name": "Diesel oil", "facility_name": "Site A" }
 ```
 
-- `facility_name`: required for Scope 1/2; for Scope 3, optional / can use `(Client-wide)` / `Scope 3` style labels per `resolveIngestionLine`.
-- May create the utility category if needed.
+- `utility_name` = `input_types` name (must exist; Scope 1 only).
+- `facility_name` optional when exactly **one** `non_metered_lines` row matches; `409` if several facilities match.
+- **Response:** `{ "mode": "line", "scope": 1, "resolved": {...}, "created", "skipped" }`.
 
-**Response (line):** includes `mode`, `resolved` (`facility_id`, `facility_name`, `supplier_id`, `utility_category_id`), `created`, `skipped`.
-
-**Typical errors:** `400` validation, `401` bad key, `404` missing client/supplier/group/facility, `422` group has no members with categories.
+**Typical errors:** `400`, `401`, `404`, `409` ambiguous line, `422` group has no member lines.
 
 ### 6.3 `POST /api/ingestion/confirm`
 
-Turns PENDING rows into **CONFIRMED** (with optional consumption/amount), **INFERRED_EMPTY** for group members missing from the invoice for that period, and **deletes** PENDING rows for periods not present in the payload (orphans).
+Turns `PENDING` → `CONFIRMED` for the **exact** facility+period rows in the payload. **No other records are modified.** No deletions, no automatic INFERRED_EMPTY.
 
-**Group mode body:** JSON **array** of NGERS-shaped objects (see below).
+**NGERS row fields:**
 
-- Rows are grouped by `(Company, Provider, Category)` where `Category` is the **group-level** utility type (same as group’s `utility_category`).
-- `Facility` must match a member facility **name** in the group (case-insensitive).
-- For each period in the file: members with data → CONFIRMED; members without data → INFERRED_EMPTY; PENDING for other months in that group scope → deleted.
+| Field | Required | Role |
+|-------|----------|------|
+| `Company` | Yes | Client name |
+| `Facility` | Yes | Site name (must match a group member or resolved line facility) |
+| `Provider` | Yes | Supplier name |
+| `Category` | Group: yes · Line: optional | NGERS reporting category (e.g. "Transport Fuels"). Electricity rows in line mode may omit it. |
+| `Input Type` | Yes | Specific input type (e.g. "Diesel oil", "Ethanol", "kL") |
+| `Date Range` | Yes | `"DD/MM/YYYY - DD/MM/YYYY"` |
 
-**Response (group):** `{ "mode": "group", "confirmed": number, "inferred_empty": number, "deleted_pending": number, "warnings": string[] }`.
+**Group mode body** — JSON array of rows. Multiple facilities and months can be batched:
+
+```json
+[
+  { "Company": "...", "Facility": "Site A", "Provider": "...", "Category": "Transport Fuels", "Input Type": "Diesel oil", "Date Range": "01/03/2026 - 31/03/2026" },
+  { "Company": "...", "Facility": "Site B", "Provider": "...", "Category": "Transport Fuels", "Input Type": "Diesel oil", "Date Range": "01/03/2026 - 31/03/2026" }
+]
+```
+
+**Response:** `{ "mode": "group", "confirmed": number, "warnings": string[] }`
 
 **Line mode body:**
 
 ```json
-{
-  "mode": "line",
-  "rows": [ /* NGERS rows */ ]
-}
+{ "mode": "line", "rows": [ { "Company": "...", "Facility": "Site A", "Provider": "...", "Input Type": "kL", "Date Range": "01/03/2026 - 31/03/2026" } ] }
 ```
 
-- `Category` = **record** utility name (not the group type).
-- `Facility` = site name (or consistent with line resolution).
-- No INFERRED_EMPTY for sibling facilities; only the resolved facility + category is updated; orphaned PENDING for that line are deleted.
+**Response:** `{ "mode": "line", "confirmed": number, "warnings": string[] }`
 
-**Response (line):** `{ "mode": "line", "confirmed", "inferred_empty", "deleted_pending", "warnings" }`.
+`warnings` lists skipped rows (unknown client, facility not in group, bad date, etc.) without failing the whole request.
 
-**NGERS row fields used:**
+### 6.4 `POST /api/ingestion/inferred-empty`
 
-| Field | Role |
-|--------|------|
-| `Company` | Client name |
-| `Facility` | Site name (group mode: must match member; line mode: resolves facility) |
-| `Provider` | Supplier name |
-| `Category` | Group utility type (group mode) or record utility (line mode) |
-| `Date Range` | `"DD/MM/YYYY - DD/MM/YYYY"` (inclusive-style range; parsed to period start/end) |
-| `Consumption` | Number (aggregated per period / facility) |
-| `Amount ($)` | Number (aggregated) |
+Call **after all per-facility invoices for a period have been submitted** via `confirm`. For every month that has **at least one CONFIRMED record** in the scope, any member still PENDING for that month is marked `INFERRED_EMPTY`. Months with no CONFIRMED records are left completely untouched.
 
-Other columns may exist on objects; these are what the route reads.
+**Group mode body** — covers all input types in the group in one call:
 
-### 6.4 `POST /api/ingestion/error`
+```json
+{ "client_name": "...", "supplier_name": "...", "category": "Transport Fuels" }
+```
 
-Marks **PENDING** rows as **ERROR** for a **single calendar month** derived from `date_range` (month = month of the **start** date).
+**Response:** `{ "mode": "group", "inferred_empty": number, "confirmed_periods_checked": number }`
+
+**Example:** Group has 3 facilities for March. Two are CONFIRMED. After calling this endpoint, the remaining PENDING facility → INFERRED_EMPTY. April (no CONFIRMED records) is left as PENDING.
+
+**Line mode body:**
+
+```json
+{ "mode": "line", "client_name": "...", "supplier_name": "...", "input_type": "kL", "facility_name": "Site A" }
+```
+
+**Response:** `{ "mode": "line", "inferred_empty": number, "confirmed_periods_checked": number }`
+
+### 6.5 `POST /api/ingestion/error`
+
+Marks PENDING rows as ERROR for a single calendar month derived from `date_range`.
 
 **Group body:**
 
 ```json
-{
-  "client_name": "...",
-  "supplier_name": "...",
-  "utility_name": "Group-level utility category name",
-  "date_range": "01/03/2026 - 31/03/2026"
-}
+{ "client_name": "...", "supplier_name": "...", "utility_name": "Transport Fuels", "date_range": "01/03/2026 - 31/03/2026" }
 ```
 
 **Line body:**
 
 ```json
-{
-  "mode": "line",
-  "client_name": "...",
-  "supplier_name": "...",
-  "utility_name": "Record category name",
-  "date_range": "01/03/2026 - 31/03/2026",
-  "facility_name": "Site name"
-}
+{ "mode": "line", "client_name": "...", "supplier_name": "...", "utility_name": "kL", "facility_name": "Site A", "date_range": "01/03/2026 - 31/03/2026" }
 ```
 
-**Response:** `{ "updated": number, "period_start_date": "YYYY-MM-01", ... }` or a message when no PENDING rows exist.
+`facility_name` is optional when exactly one standalone line matches; `409` if several facilities share this supplier + utility.
+
+**Response:** `{ "updated": number, "period_start_date": "YYYY-MM-DD" }` or a message when no PENDING rows exist.
 
 ---
 
@@ -228,33 +234,46 @@ Marks **PENDING** rows as **ERROR** for a **single calendar month** derived from
 
 ### Configure once (UI or session APIs)
 
-1. Ensure **client** and **supplier** exist (clients/suppliers APIs as used by your app).
+1. Ensure **client** and **supplier** exist.
 2. Create **facilities** under the client.
-3. Ensure **utility categories** exist for both the group type and per-site line items as needed.
-4. Create **facility group** with `supplier_id`, group `utility_category_id`, and `facility_ids: [{ facility_id, utility_category_id }, ...]`.
+3. Ensure **input types** (e.g. "Diesel oil", "Ethanol") and NGERS **categories** (e.g. "Transport Fuels") exist.
+4. Create **facility group** with `supplier_id`, group `utility_category_id`, and members (`facility_id` + `utility_category_id` per member — the member's specific input type).
+5. Set the **Category** on each `non_metered_lines` row via the tracker UI (the category selector). This is permanent and not overwritten by API calls.
 
-### Automated non-metered invoice (group)
+### Automated non-metered invoice (group — per-facility invoices)
 
-1. Email/workflow calls **`POST /api/ingestion/pending`** with `client_name`, `supplier_name`, `utility_name` (group type).
-2. On successful parse, call **`POST /api/ingestion/confirm`** with the NGERS row array.
-3. On failure for a period, call **`POST /api/ingestion/error`** with the same identifiers + `date_range`.
+```
+1. POST /api/ingestion/pending          ← seed amber PENDING months (once per supplier cycle)
+
+   For each invoice as it arrives:
+2. POST /api/ingestion/confirm          ← CONFIRM that facility+period (safe to call one at a time)
+
+   After ALL invoices for the period are submitted:
+3. POST /api/ingestion/inferred-empty   ← mark remaining PENDING in confirmed months as INFERRED_EMPTY
+
+   On parse failure for any invoice:
+   POST /api/ingestion/error            ← mark that period as ERROR
+```
 
 ### Automated non-metered invoice (single line / no group)
 
-1. **`POST /api/ingestion/pending`** with `mode: "line"` and `utility_name` = record category.
-2. **`POST /api/ingestion/confirm`** with `{ "mode": "line", "rows": [...] }`.
-3. **`POST /api/ingestion/error`** with `mode: "line"` when needed.
+```
+1. POST /api/ingestion/pending  (mode: "line")   ← seed PENDING
+2. POST /api/ingestion/confirm  (mode: "line")   ← CONFIRMED
+   POST /api/ingestion/error    (mode: "line")   ← ERROR on failure
+```
 
 ### Operational notes
 
-- **Confirm** removes PENDING rows for months **not** included in that confirm payload (for that group or line context). If you need amber PENDING again for other months, run **pending** again (see `docs/ingestion-demo-commands.md`).
-- **Confirm** returns **`warnings`** for skipped rows (unknown client, facility not in group, bad date range, etc.) without failing the whole request.
+- Running **`pending`** again is always safe — it skips months that already have records.
+- **`confirm`** returns `warnings` for skipped rows without failing the whole request.
+- The **category** on `non_metered_lines` rows is set via the tracker UI and is never overwritten by API calls.
 
 ---
 
 ## 8. Copy-paste examples
 
-See **[ingestion-demo-commands.md](./ingestion-demo-commands.md)** for PowerShell examples (group + line, pending / confirm / error). Replace the host and Bearer token with your environment; rotate keys if samples were ever shared.
+See **[ingestion-demo-commands.md](./ingestion-demo-commands.md)** for PowerShell examples. Replace the host and Bearer token with your environment.
 
 ---
 
@@ -262,8 +281,8 @@ See **[ingestion-demo-commands.md](./ingestion-demo-commands.md)** for PowerShel
 
 | Topic | Main route files |
 |--------|------------------|
-| Ingestion | `app/api/ingestion/pending/route.ts`, `confirm/route.ts`, `error/route.ts` |
-| Line resolution | `lib/ingestion-line.ts`, `lib/ingestion-utility-category.ts` |
+| Ingestion | `app/api/ingestion/pending/route.ts`, `confirm/route.ts`, `inferred-empty/route.ts`, `error/route.ts` |
+| Line / bulk pending | `lib/ingestion-line.ts`, `lib/ingestion-pending-scope1.ts`, `lib/ingestion-group-pending.ts`, `lib/ingestion-utility-category.ts` |
 | Facilities | `app/api/clients/[id]/facilities/route.ts`, `app/api/facilities/[id]/route.ts` |
 | Groups | `app/api/clients/[id]/facility-groups/route.ts`, `app/api/facility-groups/[id]/route.ts` |
 | Utility categories | `app/api/utility-categories/route.ts`, `app/api/utility-categories/[id]/route.ts` |

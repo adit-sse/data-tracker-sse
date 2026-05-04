@@ -6,7 +6,8 @@ import {
   getCurrentFiscalYearMonthsThroughNow,
   seedIngestionPendingNonMeteredLineMonths,
 } from '@/lib/non-metered-pending-seed';
-import { upsertNonMeteredLines } from '@/lib/non-metered-lines';
+import { seedNonMeteredFacilityGroupPending, type GroupPendingMember } from '@/lib/ingestion-group-pending';
+import { seedAllScope1NonMeteredPending } from '@/lib/ingestion-pending-scope1';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -18,15 +19,17 @@ function checkApiKey(request: Request): boolean {
 }
 
 // POST /api/ingestion/pending
-// Called by the ingestion workflow when an invoice email is received.
-// Marks all months in the current fiscal year as PENDING for every facility
-// in the matching group, using each member's specific input_type_id.
+// Scope 1 non-metered only.
 //
-// Body (group): { client_name, supplier_name, utility_name }
+// Body (default — all Scope 1 coverage): { client_name, supplier_name }
+//   Seeds PENDING for every Scope 1 facility group and standalone line for this pair.
+//
+// Body (group, optional targeting): { client_name, supplier_name, utility_name }
 //   utility_name = NGERS category name on the group (e.g. "Transport Fuel").
+//
 // Body (line): { mode: "line", client_name, supplier_name, utility_name [, facility_name] }
-//   utility_name = the record input type name (e.g. "GREASE"). No facility group required.
-//   facility_name optional for Scope 3 (uses "(Client-wide)"); required for Scope 1 / 2.
+//   utility_name = record input type name (e.g. "GREASE").
+//   Omit facility_name when exactly one non_metered_lines row matches client+supplier+utility.
 export async function POST(request: Request) {
   if (!checkApiKey(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -37,11 +40,29 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { client_name, supplier_name, utility_name, mode, facility_name } = body;
 
-    if (!client_name || !supplier_name || !utility_name) {
+    if (!client_name || !supplier_name) {
       return NextResponse.json(
-        { error: 'client_name, supplier_name and utility_name are required' },
+        { error: 'client_name and supplier_name are required' },
         { status: 400 }
       );
+    }
+
+    const utilityTrimmed = typeof utility_name === 'string' ? utility_name.trim() : '';
+
+    // ----- All Scope 1 coverage (client + supplier only) -----
+    if (!utilityTrimmed) {
+      const result = await seedAllScope1NonMeteredPending(supabase, client_name, supplier_name);
+      if (!result.ok) {
+        return NextResponse.json({ error: result.error }, { status: result.status });
+      }
+      return NextResponse.json({
+        scope: 1,
+        client_id: result.client_id,
+        supplier_id: result.supplier_id,
+        groups: result.groups,
+        lines: result.lines,
+        summary: result.summary,
+      });
     }
 
     // ----- Standalone line (not in a facility group) -----
@@ -51,10 +72,26 @@ export async function POST(request: Request) {
         client_name,
         typeof facility_name === 'string' ? facility_name.trim() : '',
         supplier_name,
-        utility_name
+        utilityTrimmed
       );
       if (!resolved.ok) {
         return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+      }
+
+      const { data: itRow } = await supabase
+        .from('input_types')
+        .select('scope')
+        .eq('id', resolved.categoryId)
+        .maybeSingle();
+
+      if (typeof itRow?.scope !== 'number' || itRow.scope !== 1) {
+        return NextResponse.json(
+          {
+            error:
+              'This endpoint only supports Scope 1 input types. Use a Scope 1 utility or omit utility_name to seed all Scope 1 coverage.',
+          },
+          { status: 400 }
+        );
       }
 
       const { facilityId, facilityName, supplierId, categoryId } = resolved;
@@ -67,7 +104,7 @@ export async function POST(request: Request) {
 
       return NextResponse.json({
         mode: 'line',
-        /** Only this facility receives PENDING rows (never other sites). */
+        scope: 1,
         resolved: {
           facility_id: facilityId,
           facility_name: facilityName,
@@ -88,23 +125,34 @@ export async function POST(request: Request) {
     if (!client) return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
     if (!supplier) return NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 });
 
-    let groupCategory: { id: string };
+    let groupCategory: { id: string; scope: number };
     try {
-      groupCategory = await findCategoryForIngestion(supabase, utility_name);
+      groupCategory = await findCategoryForIngestion(supabase, utilityTrimmed);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Unknown error';
       return NextResponse.json({ error: msg }, { status: 400 });
     }
 
-    // Find the group by its reporting category
+    if (groupCategory.scope !== 1) {
+      return NextResponse.json(
+        {
+          error:
+            'This endpoint only supports Scope 1 NGERS categories for group pending. Use a Scope 1 category or omit utility_name to seed all Scope 1 coverage.',
+        },
+        { status: 400 }
+      );
+    }
+
     const { data: group } = await supabase
       .from('facility_groups')
-      .select(`
+      .select(
+        `
         id,
         members:facility_group_members(
           line:non_metered_lines(facility_id, input_type_id)
         )
-      `)
+      `
+      )
       .eq('client_id', client.id)
       .eq('supplier_id', supplier.id)
       .eq('category_id', groupCategory.id)
@@ -113,20 +161,18 @@ export async function POST(request: Request) {
     if (!group) {
       return NextResponse.json(
         {
-          error: `No group configured for client "${client_name}", supplier "${supplier_name}", category "${utility_name}". Set it up in the tracker UI first.`,
+          error: `No group configured for client "${client_name}", supplier "${supplier_name}", category "${utilityTrimmed}". Set it up in the tracker UI first.`,
         },
         { status: 404 }
       );
     }
 
-    type MemberRow = { facility_id: string; input_type_id: string };
-    // Flatten line data into the shape the rest of this handler expects
-    const members: MemberRow[] = ((group.members ?? []) as any[])
+    const members: GroupPendingMember[] = ((group.members ?? []) as any[])
       .map((m: any) => ({
         facility_id: m.line?.facility_id,
         input_type_id: m.line?.input_type_id,
       }))
-      .filter((m): m is MemberRow => !!m.facility_id && !!m.input_type_id);
+      .filter((m): m is GroupPendingMember => !!m.facility_id && !!m.input_type_id);
 
     if (members.length === 0) {
       return NextResponse.json(
@@ -135,82 +181,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const allFacilityIds = members.map((m) => m.facility_id);
     const months = getCurrentFiscalYearMonthsThroughNow();
-    const periodStarts = months.map((m) => m.start);
-
-    // For each member, fetch existing records under its specific category (any status blocks PENDING)
-    // and any confirmed records from this supplier (any category) — those are already green.
-    const [{ data: existingExact }, { data: existingGreen }] = await Promise.all([
-      supabase
-        .from('non_metered_records')
-        .select('facility_id, input_type_id, period_start_date')
-        .in('facility_id', allFacilityIds)
-        .eq('supplier_id', supplier.id)
-        .in('period_start_date', periodStarts),
-      supabase
-        .from('non_metered_records')
-        .select('facility_id, period_start_date')
-        .in('facility_id', allFacilityIds)
-        .eq('supplier_id', supplier.id)
-        .in('period_start_date', periodStarts)
-        .in('status', ['IMPORTED', 'MANUAL', 'CONFIRMED', 'DEACTIVATED']),
-    ]);
-
-    // facility__period => set of category ids that already have records
-    const existingByCategoryKey = new Set<string>(
-      (existingExact ?? []).map(
-        (r: { facility_id: string; input_type_id: string; period_start_date: string }) =>
-          `${r.facility_id}__${r.input_type_id}__${r.period_start_date}`
-      )
-    );
-
-    // facility__period => already has a green record from this supplier (any category)
-    const greenSet = new Set<string>(
-      (existingGreen ?? []).map(
-        (r: { facility_id: string; period_start_date: string }) =>
-          `${r.facility_id}__${r.period_start_date}`
-      )
-    );
-
-    const toInsert = [];
-    for (const member of members) {
-      const catId = member.input_type_id!;
-      for (const month of months) {
-        const catKey = `${member.facility_id}__${catId}__${month.start}`;
-        const greenKey = `${member.facility_id}__${month.start}`;
-        if (!existingByCategoryKey.has(catKey) && !greenSet.has(greenKey)) {
-          toInsert.push({
-            facility_id: member.facility_id,
-            supplier_id: supplier.id,
-            input_type_id: catId,
-            period_start_date: month.start,
-            period_end_date: month.end,
-            status: 'PENDING',
-          });
-        }
-      }
-    }
-
-    await upsertNonMeteredLines(
-      supabase,
-      members.map((m) => ({
-        facilityId: m.facility_id,
-        supplierId: supplier.id,
-        inputTypeId: m.input_type_id!,
-      }))
-    );
-
-    if (toInsert.length > 0) {
-      const { error: insertError } = await supabase
-        .from('non_metered_records')
-        .insert(toInsert);
-      if (insertError) throw insertError;
-    }
+    const { created, skipped } = await seedNonMeteredFacilityGroupPending(supabase, supplier.id, members);
 
     return NextResponse.json({
-      created: toInsert.length,
-      skipped: members.length * months.length - toInsert.length,
+      mode: 'group',
+      scope: 1,
+      created,
+      skipped,
     });
   } catch (error) {
     console.error('Error in ingestion/pending:', error);
