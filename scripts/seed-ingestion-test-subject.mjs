@@ -11,8 +11,11 @@
 import { createClient } from '@supabase/supabase-js';
 
 const NAMES = {
-  client: '[INGESTION TEST] Sandbox Client',
-  supplier: '[INGESTION TEST] Sandbox Supplier',
+  client: 'Test Client',
+  supplier: 'BFcards',
+  /** Standalone line demo: Test Client + Agas national (same site as BFcards line demo, different supplier + utility) */
+  supplierAgasNational: 'Agas national',
+  inputAgasNationalLine: '[INGESTION TEST] Agas National Demo Utility',
   /** categories.name — group pending/error utility_name; NGERS Category for group confirm */
   groupCategory: '[INGESTION TEST] Sandbox Transport',
   /** Member line input_types (Scope 1 non-metered) */
@@ -94,6 +97,7 @@ async function seed() {
   const supabase = getSupabase();
 
   const supplierId = await getOrCreateSupplier(supabase, NAMES.supplier);
+  const agasSupplierId = await getOrCreateSupplier(supabase, NAMES.supplierAgasNational);
   const categoryId = await getOrCreateCategory(supabase, NAMES.groupCategory, 1);
   const inputAlphaId = await getOrCreateInputType(supabase, {
     name: NAMES.inputFuelAlpha,
@@ -107,6 +111,11 @@ async function seed() {
   });
   const inputLineId = await getOrCreateInputType(supabase, {
     name: NAMES.inputLineStandalone,
+    scope: 1,
+    is_metered: false,
+  });
+  const inputAgasLineId = await getOrCreateInputType(supabase, {
+    name: NAMES.inputAgasNationalLine,
     scope: 1,
     is_metered: false,
   });
@@ -148,6 +157,12 @@ async function seed() {
     { facility_id: facAlpha, supplier_id: supplierId, input_type_id: inputAlphaId, category_id: categoryId },
     { facility_id: facBeta, supplier_id: supplierId, input_type_id: inputBetaId, category_id: categoryId },
     { facility_id: facLine, supplier_id: supplierId, input_type_id: inputLineId, category_id: null },
+    {
+      facility_id: facLine,
+      supplier_id: agasSupplierId,
+      input_type_id: inputAgasLineId,
+      category_id: null,
+    },
   ];
   const { error: lineErr } = await supabase
     .from('non_metered_lines')
@@ -232,10 +247,12 @@ async function seed() {
     group_category_id: categoryId,
     facility_group_id: groupId,
     facilities: { alpha: facAlpha, beta: facBeta, lineOnly: facLine },
+    supplier_agas_national_id: agasSupplierId,
     input_type_ids: {
       fuelAlpha: inputAlphaId,
       fuelBeta: inputBetaId,
       lineStandalone: inputLineId,
+      agasNationalLine: inputAgasLineId,
       meteredElectric: inputMeteredId,
     },
     names: NAMES,
@@ -259,7 +276,7 @@ async function seed() {
     })}`,
   );
 
-  console.log('\n# Non-metered GROUP confirm (one month, both sites)');
+  console.log('\n# Non-metered GROUP confirm (one month — Alpha and Beta have separate Input Types)');
   console.log(
     `curl -sS -X POST "${B}/api/ingestion/confirm" -H "Authorization: Bearer ${K}" -H "Content-Type: application/json" -d ${j([
       {
@@ -267,8 +284,7 @@ async function seed() {
         Facility: NAMES.facGroupAlpha,
         Provider: NAMES.supplier,
         Category: NAMES.groupCategory,
-        Consumption: 10,
-        'Amount ($)': 100,
+        'Input Type': NAMES.inputFuelAlpha,
         'Date Range': '01/03/2026 - 31/03/2026',
       },
       {
@@ -276,14 +292,21 @@ async function seed() {
         Facility: NAMES.facGroupBeta,
         Provider: NAMES.supplier,
         Category: NAMES.groupCategory,
-        Consumption: 20,
-        'Amount ($)': 200,
+        'Input Type': NAMES.inputFuelBeta,
         'Date Range': '01/03/2026 - 31/03/2026',
       },
     ])}`,
   );
+  console.log('\n# Non-metered GROUP inferred-empty (call after all invoices for a period are confirmed)');
+  console.log(
+    `curl -sS -X POST "${B}/api/ingestion/inferred-empty" -H "Authorization: Bearer ${K}" -H "Content-Type: application/json" -d ${j({
+      client_name: NAMES.client,
+      supplier_name: NAMES.supplier,
+      category: NAMES.groupCategory,
+    })}`,
+  );
 
-  console.log('\n# Non-metered LINE pending');
+  console.log('\n# Non-metered LINE pending (BFcards)');
   console.log(
     `curl -sS -X POST "${B}/api/ingestion/pending" -H "Authorization: Bearer ${K}" -H "Content-Type: application/json" -d ${j({
       mode: 'line',
@@ -291,6 +314,16 @@ async function seed() {
       supplier_name: NAMES.supplier,
       utility_name: NAMES.inputLineStandalone,
       facility_name: NAMES.facLineOnly,
+    })}`,
+  );
+
+  console.log('\n# Non-metered LINE pending (Agas national — omit facility_name when unique)');
+  console.log(
+    `curl -sS -X POST "${B}/api/ingestion/pending" -H "Authorization: Bearer ${K}" -H "Content-Type: application/json" -d ${j({
+      mode: 'line',
+      client_name: NAMES.client,
+      supplier_name: NAMES.supplierAgasNational,
+      utility_name: NAMES.inputAgasNationalLine,
     })}`,
   );
 

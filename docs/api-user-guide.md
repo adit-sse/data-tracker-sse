@@ -1,13 +1,13 @@
 # Ingestion API guide
 
-Automated workflows call three **`POST`** endpoints under `/api/ingestion/*`. They create and update **non-metered** coverage rows (`PENDING` → `CONFIRMED`, `INFERRED_EMPTY`, or `ERROR`).
+Automated workflows call **`POST`** endpoints under `/api/ingestion/*`. They create and update **non-metered** coverage rows through the lifecycle: `PENDING` → `CONFIRMED` or `INFERRED_EMPTY` or `ERROR`.
 
-**Base URL:** your deployed origin (for example `https://your-app.example.com`) or `http://localhost:3000` for local dev.
+**Base URL:** your deployed origin (e.g. `https://your-app.example.com`) or `http://localhost:3000` for local dev.
 
 | Placeholder | Meaning |
 |-------------|---------|
 | `BASE_URL` | Origin only, no trailing slash |
-| `INGESTION_API_KEY` | Server secret; must match `INGESTION_API_KEY` in the app environment (see `.env.local.example`). Never commit it or paste it into shared docs |
+| `INGESTION_API_KEY` | Server secret; must match `INGESTION_API_KEY` in the app environment. Never commit or share it. |
 
 ---
 
@@ -22,110 +22,116 @@ Content-Type: application/json
 
 These routes **do not** use browser session cookies. A wrong or missing key returns **`401`** with `{ "error": "Unauthorized" }`.
 
-```bash
-# Load the key from your private environment; do not hard-code in committed scripts:
-export INGESTION_API_KEY='...'
-```
-
-```bash
--H "Authorization: Bearer ${INGESTION_API_KEY}"
-```
-
 ---
 
 ## Concepts
 
-- **Group mode:** One invoice covers **several facilities** under the same client + supplier + **group-level** utility type (for example “Transport Fuels”). You must configure a **facility group** in the app first; ingestion resolves it via `client_name`, `supplier_name`, and `utility_name` (the group’s category name).
-- **Line mode (`mode: "line"`):** One **site** (or client-wide Scope 3) + supplier + **record-level** utility name (for example `GREASE`). No facility group. Line **pending** can create a missing utility category; group **pending** expects the group to exist.
-- **Fiscal year:** July → June. **`pending`** seeds **`PENDING`** rows for months in the **current fiscal year through today** (see app code for exact rules).
-- **Names:** Client and supplier are matched **case-insensitively**. Facility names in **confirm** must match the tracker (group: member facility name; line: resolved site).
+- **Group mode:** One supplier invoices **several facilities** under the same client + supplier + NGERS **reporting category** (e.g. "Transport Fuels"). You must configure a **facility group** in the app first. Each member of the group has its own **Input Type** (e.g. "Diesel oil", "Ethanol").
+- **Line mode (`mode: "line"`):** A single facility + supplier + **Input Type** (e.g. "kL", "Electricity"). No facility group. The input type must already exist in Manage Input Types.
+- **Fiscal year:** July → June. `pending` seeds rows for months in the **current fiscal year through today**.
+- **Names:** Client, supplier, and category are matched **case-insensitively**. Facility names in confirm must match the tracker exactly (case-insensitive).
+- **Per-facility invoices:** Invoices often arrive one facility at a time. Call `confirm` for each as it arrives — other facilities are untouched. Once all invoices for a period are processed, call `inferred-empty` to finalise.
 
-For setup (clients, facilities, groups, categories) use the tracker UI or see [api-facilities-utilities-guide.md](./api-facilities-utilities-guide.md).
+---
+
+## Logical flow — how to fully update the tracker
+
+### Group invoice workflow (invoices arrive per-facility)
+
+```
+1. POST /api/ingestion/pending        ← seed amber PENDING months (once per supplier cycle)
+      ↓  (for each invoice as it arrives)
+2. POST /api/ingestion/confirm        ← mark that facility+period green (CONFIRMED)
+      ↓  (after ALL invoices for the period are in)
+3. POST /api/ingestion/inferred-empty ← mark any remaining PENDING in confirmed months as INFERRED_EMPTY
+      ↓  (if a parse fails for any invoice)
+   POST /api/ingestion/error          ← mark that period red (ERROR)
+```
+
+**Key rule:** `confirm` only touches the facilities you send. It never deletes or modifies records for other facilities or other months. This means you can call it one invoice at a time safely.
+
+### Single line workflow (no group)
+
+```
+1. POST /api/ingestion/pending  (mode: "line")   ← seed PENDING
+2. POST /api/ingestion/confirm  (mode: "line")   ← CONFIRMED
+   POST /api/ingestion/error    (mode: "line")   ← ERROR on failure
+```
 
 ---
 
 ## `POST /api/ingestion/pending`
 
-Creates **`PENDING`** `non_metered_records` where nothing blocking already exists for that facility + category + month (and related guards in code).
+Non-metered only. **Scope 1** input types and categories only. Creates `PENDING` `non_metered_records` where nothing blocking already exists.
 
-### Group body
+### Bulk body (recommended default)
+
+Omit `utility_name` and `mode`. Seeds **every** Scope 1 facility group and standalone line for this client + supplier pair.
+
+```json
+{
+  "client_name": "Client display name",
+  "supplier_name": "Supplier display name"
+}
+```
+
+**Response:** `{ "scope": 1, "client_id", "supplier_id", "groups": [...], "lines": [...], "summary": { "created", "skipped" } }`  
+**Errors:** `401`, `404` if no Scope 1 coverage exists for that pair.
+
+### Group body (single NGERS category)
+
+Include `utility_name` (the **reporting** category name on the facility group, e.g. "Transport Fuels").
 
 ```json
 {
   "client_name": "Client display name",
   "supplier_name": "Supplier display name",
-  "utility_name": "Group-level utility category name"
+  "utility_name": "Transport Fuels"
 }
 ```
 
-**Typical response:** `{ "created": <n>, "skipped": <n> }`.  
-**Errors:** `400` validation, `401`, `404` (missing client/supplier/group), `422` (no members with per-site categories).
+**Response:** `{ "mode": "group", "scope": 1, "created": n, "skipped": n }`
 
 ### Line body
 
-`facility_name` is required for Scope 1/2; for Scope 3 it may be omitted or use client-wide labels per app logic.
+`facility_name` is optional when exactly **one** `non_metered_lines` row exists for that client + supplier + input type. `utility_name` = the **Input Type** name (must exist, Scope 1 only).
 
 ```json
 {
   "mode": "line",
   "client_name": "...",
   "supplier_name": "...",
-  "utility_name": "Record category name",
-  "facility_name": "Site name"
+  "utility_name": "kL",
+  "facility_name": "Site A"
 }
 ```
 
-**Typical response:** includes `mode`, `resolved` (`facility_id`, `facility_name`, `supplier_id`, `input_type_id`), `created`, `skipped`.
-
-### curl — group
-
-```bash
-curl -sS -X POST "${BASE_URL}/api/ingestion/pending" \
-  -H "Authorization: Bearer ${INGESTION_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "client_name":"Your Client Name",
-    "supplier_name":"Your Supplier Name",
-    "utility_name":"Transport Fuels"
-  }'
-```
-
-### curl — line
-
-```bash
-curl -sS -X POST "${BASE_URL}/api/ingestion/pending" \
-  -H "Authorization: Bearer ${INGESTION_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "mode":"line",
-    "client_name":"Your Client Name",
-    "supplier_name":"Your Supplier Name",
-    "utility_name":"GREASE",
-    "facility_name":"Site A"
-  }'
-```
+**Response:** `{ "mode": "line", "scope": 1, "resolved": { ... }, "created": n, "skipped": n }`  
+**Errors:** `400` (unknown input type or not Scope 1), `401`, `404`, `409` (facility ambiguous — pass `facility_name`).
 
 ---
 
 ## `POST /api/ingestion/confirm`
 
-Turns **`PENDING`** into **`CONFIRMED`** (with optional consumption/amount), **`INFERRED_EMPTY`** for group members missing from the invoice for that period, and removes **`PENDING`** for months **not** present in the payload (for that group or line context).
+Turns `PENDING` → `CONFIRMED` for the exact facility+period combinations in the payload. **Nothing else is touched** — other facilities, other months, and other input types are all left as-is.
 
-**NGERS-style fields** the route reads:
+> **No** `Consumption` or `Amount ($)` are stored. **No** deletions. **No** automatic INFERRED_EMPTY.  
+> Call `POST /api/ingestion/inferred-empty` when all invoices for a period are in.
 
-| Field | Role |
-|-------|------|
-| `Company` | Client name |
-| `Facility` | Site name |
-| `Provider` | Supplier name |
-| `Category` | Group utility type (group mode) or record utility (line mode) |
-| `Date Range` | `"DD/MM/YYYY - DD/MM/YYYY"` |
-| `Consumption` | Number (summed per period/facility) |
-| `Amount ($)` | Number (summed) |
+### NGERS row fields
 
-Other columns may exist; they are ignored unless used elsewhere.
+| Field | Required | Role |
+|-------|----------|------|
+| `Company` | Yes | Client name |
+| `Facility` | Yes | Site name (must match a group member or standalone line facility) |
+| `Provider` | Yes | Supplier name |
+| `Category` | Group: yes · Line: optional | NGERS group category (e.g. "Transport Fuels"). Electricity rows in line mode may omit it. |
+| `Input Type` | Yes | Specific input type (e.g. "Diesel oil", "Ethanol", "kL", "Electricity") |
+| `Date Range` | Yes | `"DD/MM/YYYY - DD/MM/YYYY"` |
 
-### Group body — JSON **array** of rows
+### Group mode body — JSON array of rows
+
+Each row must include `Category` and `Input Type`. Multiple facilities and/or multiple months can be batched in a single call as long as they share the same `Category` + `Input Type`.
 
 ```bash
 curl -sS -X POST "${BASE_URL}/api/ingestion/confirm" \
@@ -133,52 +139,99 @@ curl -sS -X POST "${BASE_URL}/api/ingestion/confirm" \
   -H "Content-Type: application/json" \
   -d '[
     {
-      "Company":"Your Client Name",
-      "Facility":"Site A",
-      "Provider":"Your Supplier Name",
-      "Category":"Transport Fuels",
-      "Consumption":1000,
-      "Amount ($)":5000,
-      "Date Range":"01/02/2026 - 28/02/2026"
+      "Company": "Your Client Name",
+      "Facility": "Site A",
+      "Provider": "Your Supplier Name",
+      "Category": "Transport Fuels",
+      "Input Type": "Diesel oil",
+      "Date Range": "01/03/2026 - 31/03/2026"
+    },
+    {
+      "Company": "Your Client Name",
+      "Facility": "Site B",
+      "Provider": "Your Supplier Name",
+      "Category": "Transport Fuels",
+      "Input Type": "Diesel oil",
+      "Date Range": "01/03/2026 - 31/03/2026"
     }
   ]'
 ```
 
-**Typical response:** `{ "mode": "group", "confirmed", "inferred_empty", "deleted_pending", "warnings": [] }`.
+**Response:** `{ "mode": "group", "confirmed": n, "warnings": [] }`
 
-### Line body — object with `rows`
+### Line mode body — object with `rows`
+
+`Category` is optional for electricity rows.
 
 ```bash
 curl -sS -X POST "${BASE_URL}/api/ingestion/confirm" \
   -H "Authorization: Bearer ${INGESTION_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "mode":"line",
-    "rows":[
+    "mode": "line",
+    "rows": [
       {
-        "Company":"Your Client Name",
-        "Facility":"Site A",
-        "Provider":"Your Supplier Name",
-        "Category":"GREASE",
-        "Consumption":42.5,
-        "Amount ($)":1200,
-        "Date Range":"01/03/2026 - 31/03/2026"
+        "Company": "Your Client Name",
+        "Facility": "Site A",
+        "Provider": "Your Supplier Name",
+        "Input Type": "kL",
+        "Date Range": "01/03/2026 - 31/03/2026"
       }
     ]
   }'
 ```
 
-**Typical response:** `{ "mode": "line", "confirmed", "inferred_empty", "deleted_pending", "warnings": [] }`.
+**Response:** `{ "mode": "line", "confirmed": n, "warnings": [] }`
 
-**`warnings`:** skipped rows (unknown client, facility not in group, bad date range, etc.) without failing the whole request.
+---
+
+## `POST /api/ingestion/inferred-empty`
+
+Call this **after all per-facility invoices for a period have been submitted** via `confirm`. For every month that has **at least one CONFIRMED record** in the scope, any member still PENDING for that month is marked `INFERRED_EMPTY`. Months with no CONFIRMED records are left completely untouched.
+
+### Group mode body
+
+Covers **all input types** within the facility group in one call.
+
+```bash
+curl -sS -X POST "${BASE_URL}/api/ingestion/inferred-empty" \
+  -H "Authorization: Bearer ${INGESTION_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "Your Client Name",
+    "supplier_name": "Your Supplier Name",
+    "category": "Transport Fuels"
+  }'
+```
+
+**Response:** `{ "mode": "group", "inferred_empty": n, "confirmed_periods_checked": n }`
+
+**Example:** Group has Facility A (Diesel oil — CONFIRMED for March) and Facility B (Diesel oil — PENDING for March). After this call, Facility B March → `INFERRED_EMPTY`. May (no CONFIRMED records) is left as PENDING.
+
+### Line mode body
+
+For standalone lines (not in a group).
+
+```bash
+curl -sS -X POST "${BASE_URL}/api/ingestion/inferred-empty" \
+  -H "Authorization: Bearer ${INGESTION_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "line",
+    "client_name": "Your Client Name",
+    "supplier_name": "Your Supplier Name",
+    "input_type": "kL",
+    "facility_name": "Site A"
+  }'
+```
+
+**Response:** `{ "mode": "line", "inferred_empty": n, "confirmed_periods_checked": n }`
 
 ---
 
 ## `POST /api/ingestion/error`
 
-Sets **`PENDING`** → **`ERROR`** for the **calendar month** taken from the **start** date of `date_range` (first day of that month as period key).
-
-`date_range` must be `"DD/MM/YYYY - DD/MM/YYYY"`.
+Sets `PENDING` → `ERROR` for the **calendar month** taken from the start date of `date_range`.
 
 ### Group body
 
@@ -187,101 +240,73 @@ curl -sS -X POST "${BASE_URL}/api/ingestion/error" \
   -H "Authorization: Bearer ${INGESTION_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "client_name":"Your Client Name",
-    "supplier_name":"Your Supplier Name",
-    "utility_name":"Transport Fuels",
-    "date_range":"01/03/2026 - 31/03/2026"
+    "client_name": "Your Client Name",
+    "supplier_name": "Your Supplier Name",
+    "utility_name": "Transport Fuels",
+    "date_range": "01/03/2026 - 31/03/2026"
   }'
 ```
 
 ### Line body
+
+`facility_name` is optional when exactly one standalone line matches.
 
 ```bash
 curl -sS -X POST "${BASE_URL}/api/ingestion/error" \
   -H "Authorization: Bearer ${INGESTION_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "mode":"line",
-    "client_name":"Your Client Name",
-    "supplier_name":"Your Supplier Name",
-    "utility_name":"GREASE",
-    "facility_name":"Site A",
-    "date_range":"01/03/2026 - 31/03/2026"
+    "mode": "line",
+    "client_name": "Your Client Name",
+    "supplier_name": "Your Supplier Name",
+    "utility_name": "kL",
+    "facility_name": "Site A",
+    "date_range": "01/03/2026 - 31/03/2026"
   }'
 ```
 
-**Typical response:** includes `updated` (count) and `period_start_date`, or a message when there were no **`PENDING`** rows for that month.
-
----
-
-## End-to-end flows
-
-**Group invoice**
-
-1. **`POST .../pending`** with `client_name`, `supplier_name`, `utility_name` (group-level category).
-2. After a successful parse, **`POST .../confirm`** with the NGERS row **array**.
-3. On failure for a period, **`POST .../error`** with the same identifiers plus `date_range`.
-
-**Single line (no group)**
-
-1. **`POST .../pending`** with `mode: "line"` and `utility_name` = record category.
-2. **`POST .../confirm`** with `{ "mode": "line", "rows": [ ... ] }`.
-3. **`POST .../error`** with `mode: "line"` when needed.
-
-**Confirm** drops **`PENDING`** rows for months **not** in that confirm payload for the same group or line context. Run **pending** again if you need those amber months back.
+**Response:** `{ "updated": n, "period_start_date": "YYYY-MM-DD" }`
 
 ---
 
 ## Metered utilities (`actual_invoices`)
 
-Same **`INGESTION_API_KEY`** auth. Targets **metered** utility categories only (`utility_categories.is_metered = true`). The **meter must already exist** in the tracker (facility + category + identifiers).
-
-States on `actual_invoices.status`: **`PENDING`** (placeholder row, full calendar month), **`CONFIRMED`** (after confirm — **exact** `period_start_date` / `period_end_date` from `Date Range`), **`ERROR`** (after error).
-
-Coverage treats **`PENDING`** and **`ERROR`** like gaps (they do not fill days); **`CONFIRMED`** counts like other final data.
+Same `INGESTION_API_KEY` auth. Targets metered utilities only. The meter must already exist in the tracker.
 
 ### `POST /api/ingestion/metered/pending`
-
-Body: `client_name`, `supplier_name`, `utility_name` (category name), `facility_name`, `identifier_type`, `lookup1`, optional `lookup2`.
-
-Seeds one **`PENDING`** invoice per fiscal month (Jul → current month) that is still empty for that meter.
 
 ```bash
 curl -sS -X POST "${BASE_URL}/api/ingestion/metered/pending" \
   -H "Authorization: Bearer ${INGESTION_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "client_name":"Your Client Name",
-    "supplier_name":"Your Supplier Name",
-    "utility_name":"Electricity",
-    "facility_name":"Site A",
-    "identifier_type":"NMI",
-    "lookup1":"1234567890123",
-    "lookup2":null
+    "client_name": "Your Client Name",
+    "supplier_name": "Your Supplier Name",
+    "utility_name": "Electricity",
+    "facility_name": "Site A",
+    "identifier_type": "NMI",
+    "lookup1": "1234567890123",
+    "lookup2": null
   }'
 ```
 
 ### `POST /api/ingestion/metered/confirm`
-
-Body: `{ "rows": [ NGERS-style objects ] }`. Each row needs **`Company`**, **`Facility`**, **`Provider`**, **`Category`**, **`Date Range`** (`DD/MM/YYYY - DD/MM/YYYY` — stored as the **exact** ISO period), **`Consumption`**, **`Amount ($)`**, and a meter id: **`NMI`**, **`MIRN`**, **`Account Number`**, or **`Meter Number`** (optional **`Input Type`** for `lookup2`). Optional: **`Invoice Number`**, **`Invoice Date`**, **`Framework`**, **`Version`**, **`Customer`**.
-
-Updates the **`PENDING`** row for that meter + calendar month to **`CONFIRMED`** with the precise dates and amounts. Deletes other FY **`PENDING`** rows for that meter that are not in this payload.
 
 ```bash
 curl -sS -X POST "${BASE_URL}/api/ingestion/metered/confirm" \
   -H "Authorization: Bearer ${INGESTION_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "rows":[
+    "rows": [
       {
-        "Company":"Your Client Name",
-        "Facility":"Site A",
-        "Provider":"Your Supplier Name",
-        "Category":"Electricity",
-        "NMI":"1234567890123",
-        "Consumption":15000,
-        "Amount ($)":3200,
-        "Date Range":"05/02/2026 - 28/02/2026"
+        "Company": "Your Client Name",
+        "Facility": "Site A",
+        "Provider": "Your Supplier Name",
+        "Category": "Electricity",
+        "NMI": "1234567890123",
+        "Consumption": 15000,
+        "Amount ($)": 3200,
+        "Date Range": "05/03/2026 - 31/03/2026"
       }
     ]
   }'
@@ -289,20 +314,18 @@ curl -sS -X POST "${BASE_URL}/api/ingestion/metered/confirm" \
 
 ### `POST /api/ingestion/metered/error`
 
-Body: same identifiers as **metered pending**, plus **`date_range`** (`DD/MM/YYYY - DD/MM/YYYY`; month taken from **start**). Sets matching **`PENDING`** → **`ERROR`** for that month.
-
 ```bash
 curl -sS -X POST "${BASE_URL}/api/ingestion/metered/error" \
   -H "Authorization: Bearer ${INGESTION_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "client_name":"Your Client Name",
-    "supplier_name":"Your Supplier Name",
-    "utility_name":"Electricity",
-    "facility_name":"Site A",
-    "identifier_type":"NMI",
-    "lookup1":"1234567890123",
-    "date_range":"01/03/2026 - 31/03/2026"
+    "client_name": "Your Client Name",
+    "supplier_name": "Your Supplier Name",
+    "utility_name": "Electricity",
+    "facility_name": "Site A",
+    "identifier_type": "NMI",
+    "lookup1": "1234567890123",
+    "date_range": "01/03/2026 - 31/03/2026"
   }'
 ```
 
@@ -310,10 +333,8 @@ curl -sS -X POST "${BASE_URL}/api/ingestion/metered/error" \
 
 ## Related docs
 
-- **[ingestion-test-subject.md](./ingestion-test-subject.md)** — isolated sandbox client + seed script for safe API testing.
-- **[api-facilities-utilities-guide.md](./api-facilities-utilities-guide.md)** — facility groups, categories, and how this ties to the rest of the app.
-- **[ingestion-demo-commands.md](./ingestion-demo-commands.md)** — PowerShell examples; use **`${INGESTION_API_KEY}`** (or env) instead of inlined secrets.
+- **[ingestion-demo-commands.md](./ingestion-demo-commands.md)** — PowerShell copy-paste examples with Test Client.
+- **[api-facilities-utilities-guide.md](./api-facilities-utilities-guide.md)** — facility groups, categories, and app setup.
+- **[ingestion-test-subject.md](./ingestion-test-subject.md)** — isolated sandbox client + seed script.
 
-**Implementation (non-metered):** `app/api/ingestion/pending/route.ts`, `confirm/route.ts`, `error/route.ts`.
-
-**Implementation (metered):** `app/api/ingestion/metered/pending/route.ts`, `metered/confirm/route.ts`, `metered/error/route.ts`, `lib/ingestion-metered.ts`.
+**Implementation:** `app/api/ingestion/pending/route.ts`, `confirm/route.ts`, `inferred-empty/route.ts`, `error/route.ts`, `lib/ingestion-line.ts`, `lib/ingestion-pending-scope1.ts`, `lib/ingestion-group-pending.ts`, `lib/ingestion-utility-category.ts`.

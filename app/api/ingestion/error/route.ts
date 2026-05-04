@@ -36,7 +36,7 @@ function monthStart(isoDate: string): string {
 // When ingestion fails for a period, mark PENDING rows as ERROR.
 // Group body: { client_name, supplier_name, utility_name, date_range }
 // Line body: { mode: "line", client_name, supplier_name, utility_name, date_range [, facility_name] }
-//   facility_name optional for Scope 3 (same rules as /ingestion/pending line mode).
+//   Same facility_name rules as /ingestion/pending line mode.
 // date_range: "DD/MM/YYYY - DD/MM/YYYY" (month is taken from the start date)
 export async function POST(request: Request) {
   if (!checkApiKey(request)) {

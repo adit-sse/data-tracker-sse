@@ -144,7 +144,7 @@ export async function GET(request: Request) {
       standalone_non_metered_line_count,
       /** POST /api/ingestion/pending without mode: "line" */
       use_group_pending_body: pending_mode === 'group' || pending_mode === 'mixed',
-      /** POST /api/ingestion/pending with mode: "line" (+ facility_name per Scope rules) */
+      /** POST /api/ingestion/pending with mode: "line" (facility_name optional when exactly one line row matches) */
       use_line_pending_body: pending_mode === 'line' || pending_mode === 'mixed',
     });
   } catch (e) {

@@ -21,7 +21,7 @@ export async function upsertNonMeteredLine(
         input_type_id: params.inputTypeId,
         category_id: params.categoryId ?? null,
       },
-      { onConflict: 'facility_id,supplier_id,input_type_id' }
+      { onConflict: 'facility_id,supplier_id,input_type_id', ignoreDuplicates: true }
     );
   if (error) throw new Error(`Failed to register non-metered line: ${error.message}`);
 }
@@ -52,6 +52,6 @@ export async function upsertNonMeteredLines(
 
   const { error } = await supabase
     .from('non_metered_lines')
-    .upsert(rows, { onConflict: 'facility_id,supplier_id,input_type_id' });
+    .upsert(rows, { onConflict: 'facility_id,supplier_id,input_type_id', ignoreDuplicates: true });
   if (error) throw new Error(`Failed to register non-metered lines: ${error.message}`);
 }

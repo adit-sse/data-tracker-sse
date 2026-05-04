@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
-import { upsertNonMeteredLine, upsertNonMeteredLines } from '@/lib/non-metered-lines';
+import { findInputTypeForIngestion } from '@/lib/ingestion-utility-category';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -14,8 +14,6 @@ interface NGERSRow {
   Category?: string;
   'Sub-Category'?: string;
   'Input Type'?: string;
-  Consumption?: number;
-  'Amount ($)'?: number;
   'Date Range'?: string;
   [key: string]: unknown;
 }
@@ -55,38 +53,33 @@ function periodKey(d: string | null | undefined): string {
   return String(d).slice(0, 10);
 }
 
-type LineConfirmResult = {
-  confirmed: number;
-  inferred_empty: number;
-  deleted_pending: number;
-  warnings: string[];
-};
-
 /**
- * Standalone line: each row's Category = record utility (e.g. GREASE), Facility = site name.
- * No facility group; no INFERRED_EMPTY for other facilities; only deletes orphaned PENDING
- * for this facility + supplier + category.
+ * Standalone line: each row's Input Type = record utility (e.g. kL), Facility = site name.
+ * Category is optional — not used for targeting (electricity rows may omit it).
+ * Only the submitted facility+period combos are updated to CONFIRMED.
+ * No deletions; no INFERRED_EMPTY. Call POST /api/ingestion/inferred-empty to finalise.
  */
 async function processLineConfirm(
   supabase: SupabaseClient,
   rows: NGERSRow[]
-): Promise<LineConfirmResult> {
+): Promise<{ confirmed: number; warnings: string[] }> {
   let totalConfirmed = 0;
-  let totalDeletedPending = 0;
   const warnings: string[] = [];
 
   const groupedRows = new Map<string, NGERSRow[]>();
   for (const row of rows) {
     const facKey = (row.Facility ?? '').trim();
-    const key = `${row.Company}__${row.Provider}__${row.Category}__${facKey}`;
+    const inputTypeKey = (row['Input Type'] ?? '').trim();
+    const key = `${row.Company}__${row.Provider}__${inputTypeKey}__${facKey}`;
     if (!groupedRows.has(key)) groupedRows.set(key, []);
     groupedRows.get(key)!.push(row);
   }
 
   for (const [, lineRows] of Array.from(groupedRows.entries())) {
-    const { Company, Provider, Category, Facility } = lineRows[0];
-    if (!Company || !Provider || !Category) {
-      warnings.push('Row missing Company, Provider, or Category — skipped');
+    const { Company, Provider, Facility } = lineRows[0];
+    const InputType = (lineRows[0]['Input Type'] ?? '').trim();
+    if (!Company || !Provider || !InputType) {
+      warnings.push('Row missing Company, Provider, or Input Type — skipped');
       continue;
     }
 
@@ -95,7 +88,7 @@ async function processLineConfirm(
       Company,
       (Facility ?? '').trim(),
       Provider,
-      Category
+      InputType
     );
     if (!resolved.ok) {
       warnings.push(`${resolved.error} — rows skipped`);
@@ -104,12 +97,6 @@ async function processLineConfirm(
 
     const { facilityId, supplierId, categoryId } = resolved;
 
-    // Ensure line registration exists.
-    await upsertNonMeteredLine(supabase, { facilityId, supplierId, inputTypeId: categoryId });
-
-    const confirmedPeriods = new Map<string, { start: string; end: string }>();
-    const periodTotals = new Map<string, { consumption: number; amount: number }>();
-
     for (const row of lineRows) {
       if (!row['Date Range']) continue;
       const parsed = parseDateRange(row['Date Range']);
@@ -117,45 +104,22 @@ async function processLineConfirm(
         warnings.push(`Could not parse Date Range "${row['Date Range']}" — row skipped`);
         continue;
       }
-      confirmedPeriods.set(parsed.start, parsed);
-      const prev = periodTotals.get(parsed.start) ?? { consumption: 0, amount: 0 };
-      periodTotals.set(parsed.start, {
-        consumption: prev.consumption + (Number(row.Consumption) || 0),
-        amount: prev.amount + (Number(row['Amount ($)']) || 0),
-      });
-    }
 
-    if (confirmedPeriods.size === 0) continue;
+      const { data: existing } = await supabase
+        .from('non_metered_records')
+        .select('id')
+        .eq('facility_id', facilityId)
+        .eq('supplier_id', supplierId)
+        .eq('input_type_id', categoryId)
+        .eq('period_start_date', parsed.start)
+        .eq('status', 'PENDING')
+        .maybeSingle();
 
-    const confirmedPeriodStarts = Array.from(confirmedPeriods.keys());
-
-    const { data: allPending, error: pendingFetchErr } = await supabase
-      .from('non_metered_records')
-      .select('id, facility_id, input_type_id, period_start_date, status')
-      .eq('facility_id', facilityId)
-      .eq('supplier_id', supplierId)
-      .eq('input_type_id', categoryId)
-      .eq('status', 'PENDING');
-
-    if (pendingFetchErr) throw new Error(pendingFetchErr.message);
-
-    const pendingRecords = allPending ?? [];
-    const confirmedKeys = new Set(confirmedPeriodStarts.map((p) => periodKey(p)));
-
-    for (const [periodStart, period] of Array.from(confirmedPeriods.entries())) {
-      const totals = periodTotals.get(periodStart) ?? { consumption: 0, amount: 0 };
-      const pk = periodKey(periodStart);
-      const existingPending = pendingRecords.find((r) => periodKey(r.period_start_date) === pk);
-
-      if (existingPending) {
+      if (existing) {
         const { error: updErr } = await supabase
           .from('non_metered_records')
-          .update({
-            status: 'CONFIRMED',
-            consumption: totals.consumption,
-            amount: totals.amount,
-          })
-          .eq('id', existingPending.id);
+          .update({ status: 'CONFIRMED' })
+          .eq('id', existing.id);
         if (updErr) throw new Error(updErr.message);
       } else {
         const { error: upErr } = await supabase.from('non_metered_records').upsert(
@@ -163,11 +127,9 @@ async function processLineConfirm(
             facility_id: facilityId,
             supplier_id: supplierId,
             input_type_id: categoryId,
-            period_start_date: period.start,
-            period_end_date: period.end,
+            period_start_date: parsed.start,
+            period_end_date: parsed.end,
             status: 'CONFIRMED',
-            consumption: totals.consumption,
-            amount: totals.amount,
           },
           {
             onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
@@ -178,30 +140,23 @@ async function processLineConfirm(
       }
       totalConfirmed++;
     }
-
-    const orphanedPending = pendingRecords.filter(
-      (r) => !confirmedKeys.has(periodKey(r.period_start_date))
-    );
-    if (orphanedPending.length > 0) {
-      const orphanIds = orphanedPending.map((r) => r.id);
-      const { error: delErr } = await supabase.from('non_metered_records').delete().in('id', orphanIds);
-      if (delErr) throw new Error(delErr.message);
-      totalDeletedPending += orphanIds.length;
-    }
   }
 
-  return {
-    confirmed: totalConfirmed,
-    inferred_empty: 0,
-    deleted_pending: totalDeletedPending,
-    warnings,
-  };
+  return { confirmed: totalConfirmed, warnings };
 }
 
 // POST /api/ingestion/confirm
-// Group mode: JSON array of NGERS rows (Category = group-level type; inference applies).
-// Line mode: { "mode": "line", "rows": [ ... NGERS rows ... ] }
-//   Category = record utility name; Facility = site; no INFERRED_EMPTY siblings.
+//
+// Group mode: plain JSON array of NGERS rows.
+//   Category (required) = NGERS reporting category on the facility_group.
+//   Input Type (required) = filters which group members to process.
+//   Only the submitted facility+period combos are CONFIRMED. No deletions, no inference.
+//   Call POST /api/ingestion/inferred-empty after all invoices are submitted.
+//
+// Line mode: { "mode": "line", "rows": [ ... ] }
+//   Input Type (required) = utility input type to target (e.g. "kL", "Electricity").
+//   Category (optional) — electricity rows may omit it.
+//   Facility = site name. No deletions, no INFERRED_EMPTY siblings.
 export async function POST(request: Request) {
   if (!checkApiKey(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -215,12 +170,7 @@ export async function POST(request: Request) {
 
     if (Array.isArray(raw)) {
       rows = raw;
-    } else if (
-      raw &&
-      typeof raw === 'object' &&
-      raw.mode === 'line' &&
-      Array.isArray(raw.rows)
-    ) {
+    } else if (raw && typeof raw === 'object' && raw.mode === 'line' && Array.isArray(raw.rows)) {
       rows = raw.rows;
       lineMode = true;
     } else {
@@ -243,32 +193,45 @@ export async function POST(request: Request) {
     }
 
     let totalConfirmed = 0;
-    let totalInferredEmpty = 0;
-    let totalDeletedPending = 0;
     const warnings: string[] = [];
 
-    // Group rows by (Company, Provider, Category) — Category = group type
+    // Group rows by (Company, Provider, Category, InputType).
     const groupedRows = new Map<string, NGERSRow[]>();
     for (const row of rows) {
-      const key = `${row.Company}__${row.Provider}__${row.Category}`;
+      const catKey = (row.Category ?? '').trim();
+      const inputTypeKey = (row['Input Type'] ?? '').trim();
+      const key = `${row.Company}__${row.Provider}__${catKey}__${inputTypeKey}`;
       if (!groupedRows.has(key)) groupedRows.set(key, []);
       groupedRows.get(key)!.push(row);
     }
 
     for (const [, groupRows] of Array.from(groupedRows.entries())) {
       const { Company, Provider, Category } = groupRows[0];
-      if (!Company || !Provider || !Category) continue;
+      const InputType = (groupRows[0]['Input Type'] ?? '').trim();
+      if (!Company || !Provider || !Category || !InputType) {
+        warnings.push('Row missing Company, Provider, Category, or Input Type — rows skipped');
+        continue;
+      }
 
       const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
         supabase.from('clients').select('id').ilike('name', Company).single(),
         supabase.from('suppliers').select('id').ilike('name', Provider).single(),
-        // Category in the NGERS row = the reporting category on the group
         supabase.from('categories').select('id').ilike('name', Category).single(),
       ]);
 
       if (!client) { warnings.push(`Client "${Company}" not found — rows skipped`); continue; }
       if (!supplier) { warnings.push(`Supplier "${Provider}" not found — rows skipped`); continue; }
       if (!groupCategory) { warnings.push(`Category "${Category}" not found — rows skipped`); continue; }
+
+      let targetInputTypeId: string;
+      try {
+        const resolved = await findInputTypeForIngestion(supabase, InputType);
+        targetInputTypeId = resolved.id;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        warnings.push(`${msg} — rows skipped`);
+        continue;
+      }
 
       const { data: group } = await supabase
         .from('facility_groups')
@@ -294,39 +257,30 @@ export async function POST(request: Request) {
 
       const members = (group.members ?? []) as unknown as GroupMember[];
 
-      // Build lookup maps
+      // Build name → id map for members matching the target input type.
       const facilityNameToId = new Map<string, string>();
-      const facilityIdToCategory = new Map<string, string>();
       const allMemberIds: string[] = [];
 
       for (const member of members) {
         const line = member.line;
-        if (!line) continue;
+        if (!line || !line.input_type_id) continue;
+        if (line.input_type_id !== targetInputTypeId) continue;
         const fid = String(line.facility_id);
         const fname = line.facility?.name;
         if (fname) facilityNameToId.set(fname.toLowerCase(), fid);
-        if (line.input_type_id) {
-          facilityIdToCategory.set(fid, line.input_type_id);
-        }
         allMemberIds.push(fid);
       }
 
-      // Register lines for all group members.
-      await upsertNonMeteredLines(
-        supabase,
-        allMemberIds
-          .filter((fid) => facilityIdToCategory.has(fid))
-          .map((fid) => ({
-            facilityId: fid,
-            supplierId: supplier.id,
-            inputTypeId: facilityIdToCategory.get(fid)!,
-          }))
-      );
+      if (allMemberIds.length === 0) {
+        warnings.push(
+          `No group members match Input Type "${InputType}" for "${Company}" / "${Provider}" / "${Category}" — rows skipped`
+        );
+        continue;
+      }
 
-      // Extract confirmed periods and aggregate consumption/amount per (period, facility)
-      const confirmedPeriods = new Map<string, { start: string; end: string }>();
-      const periodFacilityData = new Map<string, Map<string, { consumption: number; amount: number }>>();
-
+      // CONFIRM every facility+period that appears in the payload.
+      // Facilities not in this payload and months not in this payload are left untouched —
+      // invoices may arrive separately. Call /api/ingestion/inferred-empty when done.
       for (const row of groupRows) {
         if (!row['Date Range'] || !row.Facility) continue;
 
@@ -336,139 +290,48 @@ export async function POST(request: Request) {
           continue;
         }
 
-        confirmedPeriods.set(parsed.start, parsed);
-
         const facilityId = facilityNameToId.get(row.Facility.toLowerCase());
         if (!facilityId) {
           warnings.push(`Facility "${row.Facility}" not found in group for "${Company}" — row skipped`);
           continue;
         }
 
-        if (!periodFacilityData.has(parsed.start)) {
-          periodFacilityData.set(parsed.start, new Map());
-        }
-        const byFacility = periodFacilityData.get(parsed.start)!;
-        const prev = byFacility.get(facilityId) ?? { consumption: 0, amount: 0 };
-        byFacility.set(facilityId, {
-          consumption: prev.consumption + (Number(row.Consumption) || 0),
-          amount: prev.amount + (Number(row['Amount ($)']) || 0),
-        });
-      }
+        const { data: existing } = await supabase
+          .from('non_metered_records')
+          .select('id')
+          .eq('facility_id', facilityId)
+          .eq('supplier_id', supplier.id)
+          .eq('input_type_id', targetInputTypeId)
+          .eq('period_start_date', parsed.start)
+          .eq('status', 'PENDING')
+          .maybeSingle();
 
-      if (confirmedPeriods.size === 0) continue;
-
-      const confirmedPeriodStarts = Array.from(confirmedPeriods.keys());
-
-      // Fetch all PENDING records for group members across all their categories
-      const memberCategoryIds = Array.from(new Set(
-        Array.from(facilityIdToCategory.values())
-      ));
-
-      const { data: allPending } = await supabase
-        .from('non_metered_records')
-        .select('id, facility_id, input_type_id, period_start_date, status')
-        .in('facility_id', allMemberIds)
-        .eq('supplier_id', supplier.id)
-        .in('input_type_id', memberCategoryIds)
-        .eq('status', 'PENDING');
-
-      const pendingRecords = allPending ?? [];
-      const confirmedPeriodKeySet = new Set(
-        confirmedPeriodStarts.map((p) => periodKey(p))
-      );
-
-      // Step 1: Resolve records for confirmed periods
-      for (const [periodStart, period] of Array.from(confirmedPeriods.entries())) {
-        const byFacility = periodFacilityData.get(periodStart) ?? new Map();
-        const periodStartKey = periodKey(periodStart);
-
-        for (const memberId of allMemberIds) {
-          const memberCatId = facilityIdToCategory.get(memberId);
-          if (!memberCatId) {
-            warnings.push(`Member facility ${memberId} has no utility category configured — skipped`);
-            continue;
-          }
-
-          const existingPending = pendingRecords.find(
-            (r) =>
-              String(r.facility_id) === memberId &&
-              r.input_type_id === memberCatId &&
-              periodKey(r.period_start_date) === periodStartKey
+        if (existing) {
+          await supabase
+            .from('non_metered_records')
+            .update({ status: 'CONFIRMED' })
+            .eq('id', existing.id);
+        } else {
+          await supabase.from('non_metered_records').upsert(
+            {
+              facility_id: facilityId,
+              supplier_id: supplier.id,
+              input_type_id: targetInputTypeId,
+              period_start_date: parsed.start,
+              period_end_date: parsed.end,
+              status: 'CONFIRMED',
+            },
+            {
+              onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
+              ignoreDuplicates: false,
+            }
           );
-
-          if (byFacility.has(memberId)) {
-            // Facility is present in invoice output → CONFIRMED
-            const data = byFacility.get(memberId)!;
-            if (existingPending) {
-              await supabase
-                .from('non_metered_records')
-                .update({ status: 'CONFIRMED', consumption: data.consumption, amount: data.amount })
-                .eq('id', existingPending.id);
-            } else {
-              await supabase.from('non_metered_records').upsert(
-                {
-                  facility_id: memberId,
-                  supplier_id: supplier.id,
-                  input_type_id: memberCatId,
-                  period_start_date: period.start,
-                  period_end_date: period.end,
-                  status: 'CONFIRMED',
-                  consumption: data.consumption,
-                  amount: data.amount,
-                },
-                {
-                  onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
-                  ignoreDuplicates: false,
-                }
-              );
-            }
-            totalConfirmed++;
-          } else {
-            // Facility absent from invoice → INFERRED_EMPTY
-            if (existingPending) {
-              await supabase
-                .from('non_metered_records')
-                .update({ status: 'INFERRED_EMPTY' })
-                .eq('id', existingPending.id);
-            } else {
-              await supabase.from('non_metered_records').upsert(
-                {
-                  facility_id: memberId,
-                  supplier_id: supplier.id,
-                  input_type_id: memberCatId,
-                  period_start_date: period.start,
-                  period_end_date: period.end,
-                  status: 'INFERRED_EMPTY',
-                },
-                {
-                  onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
-                  ignoreDuplicates: true,
-                }
-              );
-            }
-            totalInferredEmpty++;
-          }
         }
-      }
-
-      // Step 2: Delete PENDING records for months not covered by this invoice
-      const orphanedPending = pendingRecords.filter(
-        (r) => !confirmedPeriodKeySet.has(periodKey(r.period_start_date))
-      );
-      if (orphanedPending.length > 0) {
-        const orphanIds = orphanedPending.map((r) => r.id);
-        await supabase.from('non_metered_records').delete().in('id', orphanIds);
-        totalDeletedPending += orphanIds.length;
+        totalConfirmed++;
       }
     }
 
-    return NextResponse.json({
-      mode: 'group',
-      confirmed: totalConfirmed,
-      inferred_empty: totalInferredEmpty,
-      deleted_pending: totalDeletedPending,
-      warnings,
-    });
+    return NextResponse.json({ mode: 'group', confirmed: totalConfirmed, warnings });
   } catch (error) {
     console.error('Error in ingestion/confirm:', error);
     const detail = error instanceof Error ? error.message : String(error);
