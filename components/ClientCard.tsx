@@ -19,8 +19,8 @@ interface ClientCardProps {
 
 const cardColor = {
   gradient: 'from-emerald-500 to-emerald-600',
-  bg: 'bg-emerald-50',
-  text: 'text-emerald-600'
+  bg: 'bg-emerald-50 dark:bg-emerald-900/20',
+  text: 'text-emerald-600 dark:text-emerald-400'
 };
 
 export default function ClientCard({ client, facilitiesCount, coveragePercentage, onDeleted, onUpdated }: ClientCardProps) {
@@ -31,10 +31,10 @@ export default function ClientCard({ client, facilitiesCount, coveragePercentage
   const [deleteError, setDeleteError] = useState('');
 
   const getCoverageColor = (percentage: number) => {
-    if (percentage >= 90) return { bg: 'bg-emerald-100', text: 'text-emerald-700' };
-    if (percentage >= 70) return { bg: 'bg-amber-100', text: 'text-amber-700' };
-    if (percentage >= 50) return { bg: 'bg-orange-100', text: 'text-orange-700' };
-    return { bg: 'bg-red-100', text: 'text-red-700' };
+    if (percentage >= 90) return { bg: 'bg-emerald-100 dark:bg-emerald-900/30', text: 'text-emerald-700 dark:text-emerald-400' };
+    if (percentage >= 70) return { bg: 'bg-amber-100 dark:bg-amber-900/30', text: 'text-amber-700 dark:text-amber-400' };
+    if (percentage >= 50) return { bg: 'bg-orange-100 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-400' };
+    return { bg: 'bg-red-100 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-400' };
   };
 
   const handleDelete = async () => {
@@ -63,7 +63,7 @@ export default function ClientCard({ client, facilitiesCount, coveragePercentage
   return (
     <div className="relative group">
       <Link href={`/clients/${client.id}`}>
-        <div className="bg-white rounded-xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden border border-gray-100 hover:border-gray-200">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden border border-gray-100 dark:border-gray-700 hover:border-gray-200 dark:hover:border-gray-600">
           {/* Color accent bar */}
           <div className={`h-1.5 bg-gradient-to-r ${cardColor.gradient}`} />
           
@@ -80,7 +80,7 @@ export default function ClientCard({ client, facilitiesCount, coveragePercentage
             {/* Client Logo and Name */}
             <div className="flex items-start gap-4">
               {client.logo_url ? (
-                <div className="w-14 h-14 relative flex-shrink-0 rounded-lg overflow-hidden bg-gray-50">
+                <div className="w-14 h-14 relative flex-shrink-0 rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-700">
                   <Image 
                     src={client.logo_url} 
                     alt={`${client.name} logo`}
@@ -96,12 +96,12 @@ export default function ClientCard({ client, facilitiesCount, coveragePercentage
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <h2 className="text-lg font-semibold text-gray-900 truncate">{client.name}</h2>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">{client.name}</h2>
                 <div className="flex items-center gap-2 mt-1">
-                  <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                   </svg>
-                  <span className="text-sm text-gray-500">
+                  <span className="text-sm text-gray-500 dark:text-gray-400">
                     {facilitiesCount} {facilitiesCount === 1 ? 'facility' : 'facilities'}
                   </span>
                 </div>
@@ -109,9 +109,9 @@ export default function ClientCard({ client, facilitiesCount, coveragePercentage
             </div>
             
             {/* View Details Link */}
-            <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between">
-              <span className="text-sm text-gray-400">View details</span>
-              <svg className="w-4 h-4 text-gray-400 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between">
+              <span className="text-sm text-gray-400 dark:text-gray-500">View details</span>
+              <svg className="w-4 h-4 text-gray-400 dark:text-gray-500 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
             </div>
@@ -125,10 +125,10 @@ export default function ClientCard({ client, facilitiesCount, coveragePercentage
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowMenu(!showMenu); }}
           aria-haspopup="true"
           aria-expanded={showMenu}
-          className="p-1.5 rounded-lg bg-white/80 backdrop-blur-sm opacity-0 group-hover:opacity-100 hover:bg-gray-100 transition-all duration-200 shadow-sm"
+          className="p-1.5 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm opacity-0 group-hover:opacity-100 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 shadow-sm"
           title="Client settings"
         >
-          <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-4 h-4 text-gray-500 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
           </svg>
         </button>
@@ -140,13 +140,13 @@ export default function ClientCard({ client, facilitiesCount, coveragePercentage
               onClick={(e) => { e.stopPropagation(); setShowMenu(false); }}
             />
             <div
-              className="absolute right-0 mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-100 py-1 z-50"
+              className="absolute right-0 mt-1 w-40 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-100 dark:border-gray-700 py-1 z-50"
               onClick={(e) => e.stopPropagation()}
               role="menu"
             >
               <button
                 onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowEditModal(true); setShowMenu(false); }}
-                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -155,7 +155,7 @@ export default function ClientCard({ client, facilitiesCount, coveragePercentage
               </button>
               <button
                 onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowDeleteModal(true); setShowMenu(false); }}
-                className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                className="w-full text-left px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -170,30 +170,30 @@ export default function ClientCard({ client, facilitiesCount, coveragePercentage
       {/* Delete Modal */}
       {showDeleteModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl">
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 max-w-md w-full shadow-xl">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
-                <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
               </div>
-              <h2 className="text-xl font-semibold text-gray-900">Delete Client</h2>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Delete Client</h2>
             </div>
-            <p className="text-gray-600 mb-2">
-              Are you sure you want to delete <span className="font-medium text-gray-900">{client.name}</span>?
+            <p className="text-gray-600 dark:text-gray-300 mb-2">
+              Are you sure you want to delete <span className="font-medium text-gray-900 dark:text-gray-100">{client.name}</span>?
             </p>
-            <p className="text-sm text-gray-500 mb-5">
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">
               This will permanently remove all facilities, meters, and invoices associated with this client.
             </p>
             {deleteError && (
-              <div className="bg-red-50 border border-red-100 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-lg mb-4 text-sm">
                 {deleteError}
               </div>
             )}
             <div className="flex gap-3">
               <button 
                 onClick={() => setShowDeleteModal(false)} 
-                className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors" 
+                className="flex-1 px-4 py-2.5 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 font-medium transition-colors" 
                 disabled={deleting}
               >
                 Cancel

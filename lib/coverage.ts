@@ -112,6 +112,10 @@ export function calculateMonthlyCoverage(
     const resolvedForGaps = Array.from(dayState.keys());
     const gaps = findGaps(resolvedForGaps, monthStart, monthEnd);
 
+    const hasPending = monthlyInvoices.some(
+      inv => (inv.status || '').trim().toUpperCase() === 'PENDING'
+    );
+
     return {
       month: format(monthDate, 'MMM yy'),
       monthDate,
@@ -121,6 +125,7 @@ export function calculateMonthlyCoverage(
       daysDeactivated: daysDeactivated > 0 ? daysDeactivated : undefined,
       isDeactivatedMonth: isDeactivatedMonth || undefined,
       effectiveDaysInMonth: daysDeactivated > 0 ? effectiveDaysInMonth : undefined,
+      hasPending: hasPending || undefined,
       gaps: gaps.length > 0 ? gaps : undefined,
       invoices: monthlyInvoices.length > 0 ? monthlyInvoices : undefined
     };

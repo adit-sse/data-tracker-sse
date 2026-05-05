@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { format, endOfMonth, startOfMonth, isAfter, parseISO, isValid } from 'date-fns';
+import { format, endOfMonth, startOfMonth, isAfter, parseISO, isValid, differenceInDays } from 'date-fns';
 import type {
   NonMeteredRowWithCoverage,
   NonMeteredMonthlyCoverage,
@@ -478,7 +478,10 @@ export default function NonMeteredCoverageTable({
         <div className="flex items-center gap-5 text-sm flex-wrap">
           <span className="font-semibold text-gray-600">Legend:</span>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-5 bg-green-500 border border-green-600 rounded"></div>
+            <div className="flex rounded overflow-hidden border border-green-500">
+              <div className="w-4 h-5 bg-green-500"></div>
+              <div className="w-4 h-5 bg-green-600"></div>
+            </div>
             <span className="text-gray-700">Received</span>
           </div>
           <div className="flex items-center gap-2">
@@ -486,7 +489,10 @@ export default function NonMeteredCoverageTable({
             <span className="text-gray-700">Pending</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-5 bg-red-500 border border-red-600 rounded"></div>
+            <div className="flex rounded overflow-hidden border border-red-500">
+              <div className="w-4 h-5 bg-red-400"></div>
+              <div className="w-4 h-5 bg-red-700"></div>
+            </div>
             <span className="text-gray-700">Error</span>
           </div>
           <div className="flex items-center gap-2">
@@ -494,17 +500,27 @@ export default function NonMeteredCoverageTable({
             <span className="text-gray-700">Deactivated</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-5 bg-slate-400 border border-slate-500 rounded"></div>
+            <div className="flex rounded overflow-hidden border border-slate-400">
+              <div className="w-4 h-5 bg-slate-400"></div>
+              <div className="w-4 h-5 bg-slate-500"></div>
+            </div>
             <span className="text-gray-700">Inferred empty</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-8 h-5 bg-gray-200 border border-gray-300 rounded"></div>
             <span className="text-gray-700">No data</span>
           </div>
+          <span className="text-xs text-gray-400 ml-1">Light = recent · Dark = &gt;30 days old</span>
         </div>
       </div>
     </div>
   );
+}
+
+function isAgedRecord(createdAt: string | undefined): boolean {
+  if (!createdAt) return false;
+  const d = parseISO(createdAt);
+  return isValid(d) && differenceInDays(new Date(), d) > 30;
 }
 
 // -------------------------------------------------------
@@ -519,17 +535,19 @@ function NonMeteredCell({ cell, onClick }: NonMeteredCellProps) {
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
+  const aged = isAgedRecord(cell.record?.created_at);
+
   const getBgColor = () => {
     if (cell.status === 'IMPORTED' || cell.status === 'MANUAL' || cell.status === 'CONFIRMED')
-      return 'bg-green-500 border-green-600';
+      return aged ? 'bg-green-600 border-green-700' : 'bg-green-500 border-green-600';
     if (cell.status === 'DEACTIVATED')
       return 'bg-slate-500 border-slate-600';
     if (cell.status === 'INFERRED_EMPTY')
-      return 'bg-slate-400 border-slate-500';
+      return aged ? 'bg-slate-500 border-slate-600' : 'bg-slate-400 border-slate-500';
     if (cell.status === 'PENDING')
       return 'bg-amber-400 border-amber-500';
     if (cell.status === 'ERROR')
-      return 'bg-red-500 border-red-600';
+      return aged ? 'bg-red-700 border-red-800' : 'bg-red-400 border-red-500';
     return 'bg-gray-200 border-gray-300';
   };
 
@@ -549,12 +567,13 @@ function NonMeteredCell({ cell, onClick }: NonMeteredCellProps) {
   };
 
   const getTooltip = () => {
-    if (cell.status === 'IMPORTED') return 'Invoice received';
-    if (cell.status === 'MANUAL') return 'Marked as received';
-    if (cell.status === 'CONFIRMED') return 'Confirmed from invoice';
-    if (cell.status === 'INFERRED_EMPTY') return 'Inferred empty — click to mark as received';
+    const ageSuffix = aged && cell.status !== 'DEACTIVATED' && cell.status !== 'PENDING' ? ' · Uploaded >30 days ago' : '';
+    if (cell.status === 'IMPORTED') return `Invoice received${ageSuffix}`;
+    if (cell.status === 'MANUAL') return `Marked as received${ageSuffix}`;
+    if (cell.status === 'CONFIRMED') return `Confirmed from invoice${ageSuffix}`;
+    if (cell.status === 'INFERRED_EMPTY') return `Inferred empty — click to mark as received${ageSuffix}`;
     if (cell.status === 'PENDING') return 'Invoice received — awaiting confirmation';
-    if (cell.status === 'ERROR') return 'Ingestion error — manual fix needed';
+    if (cell.status === 'ERROR') return `Ingestion error — manual fix needed${ageSuffix}`;
     if (cell.status === 'DEACTIVATED') return 'Deactivated — no API data expected';
     if (onClick) return 'No data — click to mark as received';
     return 'No data';
