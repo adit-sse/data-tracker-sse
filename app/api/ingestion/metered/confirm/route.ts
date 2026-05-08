@@ -4,7 +4,7 @@ import { parseNgersDateRange, monthStartIso } from '@/lib/ingestion-dates';
 import {
   parseMeterIdentifierFromNgersRow,
   resolveMeterForIngestion,
-  meteredPeriodHasGreenOverlap,
+  meteredExactDuplicateExists,
   type NgersMeterRow,
 } from '@/lib/ingestion-metered';
 import { getCurrentFiscalYearMonthsThroughNow } from '@/lib/non-metered-pending-seed';
@@ -191,11 +191,11 @@ export async function POST(request: Request) {
           }
           totalConfirmed++;
         } else {
-          const blocked = await meteredPeriodHasGreenOverlap(supabase, meterId, period.start, period.end);
-          if (blocked) {
-            const blockedMsg = `Meter ${meterId}: period ${period.start}–${period.end} already has a final invoice — skipped`;
-            console.warn('[metered/confirm]', blockedMsg);
-            warnings.push(blockedMsg);
+          const isDuplicate = await meteredExactDuplicateExists(supabase, meterId, period.start, period.end);
+          if (isDuplicate) {
+            const dupMsg = `Meter ${meterId}: identical invoice period ${period.start}–${period.end} already confirmed — skipped`;
+            console.warn('[metered/confirm]', dupMsg);
+            warnings.push(dupMsg);
             continue;
           }
 

@@ -192,3 +192,25 @@ export async function meteredPeriodHasGreenOverlap(
 
   return (rows?.length ?? 0) > 0;
 }
+
+/**
+ * True if an exact-match green invoice already exists for this meter and period.
+ * Prevents submitting the identical invoice twice while still allowing
+ * legitimately overlapping invoices (e.g. Mar 16-Apr 16 and Apr 1-Apr 30).
+ */
+export async function meteredExactDuplicateExists(
+  supabase: SupabaseClient,
+  meterId: string,
+  periodStart: string,
+  periodEnd: string
+): Promise<boolean> {
+  const { data: rows } = await supabase
+    .from('actual_invoices')
+    .select('id')
+    .eq('meter_id', meterId)
+    .eq('period_start_date', periodStart)
+    .eq('period_end_date', periodEnd)
+    .in('status', [...METERED_GREEN_INVOICE_STATUSES]);
+
+  return (rows?.length ?? 0) > 0;
+}
