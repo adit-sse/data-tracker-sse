@@ -424,32 +424,35 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
       
       {/* Legend */}
       <div className="px-4 py-3 bg-gray-100 border-t border-gray-300">
-        <div className="flex items-center gap-5 text-sm">
+        <div className="flex items-center gap-5 text-sm flex-wrap">
           <span className="font-semibold text-gray-600">Legend:</span>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-5 bg-green-500 border border-green-600 rounded"></div>
-            <span className="text-gray-700">100%</span>
+            <div className="flex rounded overflow-hidden border border-green-500">
+              <div className="w-4 h-5 bg-green-500"></div>
+              <div className="w-4 h-5 bg-green-600"></div>
+            </div>
+            <span className="text-gray-700">Complete</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-5 bg-yellow-400 border border-yellow-500 rounded"></div>
-            <span className="text-gray-700">85-99%</span>
+            <div className="w-8 h-5 bg-amber-400 border border-amber-500 rounded"></div>
+            <span className="text-gray-700">Pending</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-5 bg-orange-500 border border-orange-600 rounded"></div>
-            <span className="text-gray-700">50-84%</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-5 bg-red-500 border border-red-600 rounded"></div>
-            <span className="text-gray-700">1-49%</span>
+            <div className="flex rounded overflow-hidden border border-orange-500">
+              <div className="w-4 h-5 bg-orange-400"></div>
+              <div className="w-4 h-5 bg-orange-700"></div>
+            </div>
+            <span className="text-gray-700">Incomplete</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-8 h-5 bg-gray-200 border border-gray-300 rounded"></div>
-            <span className="text-gray-700">0%</span>
+            <span className="text-gray-700">No data</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-8 h-5 bg-slate-500 border border-slate-600 rounded"></div>
             <span className="text-gray-700">Deactivated</span>
           </div>
+          <span className="text-xs text-gray-400 ml-1">Light = recent · Dark = &gt;30 days old</span>
         </div>
       </div>
     </div>

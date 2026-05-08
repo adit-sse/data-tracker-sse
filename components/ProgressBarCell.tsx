@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import { differenceInDays, parseISO, isValid } from 'date-fns';
 import type { MonthlyCoverage } from '@/types';
 
 interface ProgressBarCellProps {
@@ -9,23 +10,31 @@ interface ProgressBarCellProps {
   disabled?: boolean;
 }
 
+function isAgedRecord(createdAt: string | undefined): boolean {
+  if (!createdAt) return false;
+  const d = parseISO(createdAt);
+  return isValid(d) && differenceInDays(new Date(), d) > 30;
+}
+
 export default function ProgressBarCell({ coverage, onClick, disabled }: ProgressBarCellProps) {
-  const { daysCovered, daysInMonth, percentage, gaps, effectiveDaysInMonth, isDeactivatedMonth } = coverage;
+  const { daysCovered, daysInMonth, percentage, gaps, effectiveDaysInMonth, isDeactivatedMonth, hasPending, invoices } = coverage;
   const denom = effectiveDaysInMonth ?? daysInMonth;
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
+  const aged = isAgedRecord(invoices?.[0]?.created_at);
+
   const getBgColor = () => {
     if (isDeactivatedMonth) return 'bg-slate-500 border-slate-600';
-    if (percentage === 100) return 'bg-green-500 border-green-600';
-    if (percentage >= 85) return 'bg-yellow-400 border-yellow-500';
-    if (percentage >= 50) return 'bg-orange-500 border-orange-600';
-    if (percentage > 0) return 'bg-red-500 border-red-600';
+    if (hasPending) return 'bg-amber-400 border-amber-500';
+    if (percentage === 100) return aged ? 'bg-green-600 border-green-700' : 'bg-green-500 border-green-600';
+    if (percentage > 0) return aged ? 'bg-orange-700 border-orange-800' : 'bg-orange-400 border-orange-500';
     return 'bg-gray-200 border-gray-300';
   };
 
   const getTextColor = () => {
     if (isDeactivatedMonth) return 'text-white';
+    if (hasPending) return 'text-amber-900';
     if (percentage === 0) return 'text-gray-500';
     return 'text-white';
   };
@@ -89,10 +98,18 @@ export default function ProgressBarCell({ coverage, onClick, disabled }: Progres
           <div className="font-semibold">
             {isDeactivatedMonth
               ? 'Deactivated — no API data expected'
-              : `${daysCovered}/${denom} days (${percentage.toFixed(1)}%)`}
+              : hasPending
+              ? `Pending — ${daysCovered}/${denom} days confirmed`
+              : `${daysCovered}/${denom} days confirmed`}
           </div>
-          {gaps && gaps.length > 0 && (
+          {!isDeactivatedMonth && !hasPending && percentage > 0 && percentage < 100 && (
+            <div className="text-gray-300 text-[11px] mt-0.5">Incomplete</div>
+          )}
+          {gaps && gaps.length > 0 && !hasPending && (
             <div className="text-gray-300 text-[11px] mt-0.5">{gaps.length} gap{gaps.length > 1 ? 's' : ''}</div>
+          )}
+          {aged && !isDeactivatedMonth && !hasPending && percentage > 0 && (
+            <div className="text-gray-400 text-[11px] mt-0.5">Uploaded &gt;30 days ago</div>
           )}
           <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
         </div>

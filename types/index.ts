@@ -108,6 +108,8 @@ export interface MonthlyCoverage {
   isDeactivatedMonth?: boolean;
   /** Days we measure coverage against (daysInMonth minus deactivated-only days). */
   effectiveDaysInMonth?: number;
+  /** At least one invoice in this month has PENDING status (invoice expected but not yet confirmed). */
+  hasPending?: boolean;
   // Invoices that overlap this month (optional)
   invoices?: ActualInvoice[];
 }
@@ -274,6 +276,7 @@ export interface NonMeteredRecord {
   customer?: string | null;
   status: NonMeteredStatus;
   inferred_from_id?: string | null;
+  created_at?: string;
   // Joined
   facility?: Facility;
   supplier?: Supplier;

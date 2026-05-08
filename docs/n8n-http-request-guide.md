@@ -10,21 +10,28 @@
 ## Logical flow — how the nodes connect
 
 ```
-NM Pending mode — GET          ← check if client+supplier is group vs line vs mixed
-        ↓
-NM Pending — Scope 1 bulk      ← seed amber PENDING months (once per supplier cycle)
-        ↓  (for each invoice as it arrives, one per facility)
-NM Confirm — Group             ← turn that facility+period green (CONFIRMED)
-        ↓  (after ALL invoices for the period are submitted)
-NM Inferred Empty — Group      ← mark remaining PENDING in confirmed months as INFERRED_EMPTY
-        ↓  (if a parse fails for any invoice)
-NM Error — Group               ← mark that period red (ERROR)
+NM Mixed-Scope Check — GET     ← pre-check: does this supplier serve BOTH scope 1 & scope 2?
+        │
+        ├─ has_mixed_scopes = true  →  skip pending entirely, go straight to Confirm
+        │
+        └─ has_mixed_scopes = false
+                ↓
+        NM Pending mode — GET  ← check if client+supplier is group vs line vs mixed
+                ↓
+        NM Pending — Scope 1 bulk  ← seed amber PENDING months (once per supplier cycle)
+                ↓  (for each invoice as it arrives, one per facility)
+        NM Confirm — Group     ← turn that facility+period green (CONFIRMED)
+                ↓  (after ALL invoices for the period are submitted)
+        NM Inferred Empty — Group  ← mark remaining PENDING in confirmed months as INFERRED_EMPTY
+                ↓  (if a parse fails for any invoice)
+        NM Error — Group       ← mark that period red (ERROR)
 ```
 
 **Key rules for group invoices:**
 - `confirm` only touches the facilities you send — other facilities and months are always left untouched.
 - Call `confirm` once per invoice as each arrives; there is no risk of overwriting other facilities.
 - Call `inferred-empty` **once** after all invoices for a period are in. It checks for confirmed months and infers empty for everything still pending in those months.
+- When `has_mixed_scopes` is true, skip pending and call `confirm` directly — it will upsert a `CONFIRMED` record even with no prior `PENDING` row.
 
 ---
 
@@ -32,6 +39,7 @@ NM Error — Group               ← mark that period red (ERROR)
 
 | Node name | Endpoint | Use when |
 |-----------|----------|----------|
+| NM Mixed-Scope Check — GET | `GET /api/ingestion/mixed-scope` | Pre-check: does this supplier serve both scope 1 and scope 2 for this client? If yes, skip pending and go straight to confirm |
 | NM Pending mode — GET | `GET /api/ingestion/pending-mode` | Check if client+supplier is group / line / mixed / none before calling pending |
 | NM Pending — Scope 1 bulk | `POST /api/ingestion/pending` | `client_name` + `supplier_name` only — seeds all Scope 1 groups + standalone lines |
 | NM Pending — Group (one category) | `POST /api/ingestion/pending` | Seed one NGERS group category; body includes `utility_name` |
@@ -57,9 +65,61 @@ NM Error — Group               ← mark that period red (ERROR)
 
 ---
 
-## 0 · NM Pending mode — GET
+## 0 · NM Mixed-Scope Check — GET
 
-Returns `pending_mode` (`group` | `line` | `mixed` | `none`), facility groups (with `category_name` for group `utility_name`), and `standalone_non_metered_line_count` so you can branch to **NM Pending — Group** vs **NM Pending — Line**.
+Call this **before** anything else for a client + supplier pair. If the supplier handles both Scope 1 (fuels, LPG, etc.) **and** Scope 2 (electricity) for this client, skip pending entirely and call Confirm directly — pending is not needed and confirm will upsert a `CONFIRMED` record without a prior `PENDING` row.
+
+**Response fields to branch on:**
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `has_mixed_scopes` | boolean | `true` → skip pending, go straight to confirm |
+| `has_scope1` | boolean | Supplier has Scope 1 coverage for this client |
+| `has_scope2` | boolean | Supplier has Scope 2 coverage for this client |
+| `scope1_input_types` | string[] | Names of Scope 1 input types (e.g. `["DIESEL", "LPG"]`) |
+| `scope2_input_types` | string[] | Names of Scope 2 input types (e.g. `["ELECTRICITY"]`) |
+
+**Response:** `{ "has_mixed_scopes": true, "has_scope1": true, "has_scope2": true, "scope1_input_types": ["DIESEL", "LPG"], "scope2_input_types": ["ELECTRICITY"], ... }`
+
+```json
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/mixed-scope",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "client_name", "value": "Your Client Name" },
+            { "name": "supplier_name", "value": "Your Supplier Name" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_INGESTION_API_KEY" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [0, -300],
+      "name": "NM Mixed-Scope Check — GET"
+    }
+  ],
+  "connections": {},
+  "pinData": {}
+}
+```
+
+---
+
+## 1 · NM Pending mode — GET
+
+Only call this when `has_mixed_scopes` is `false`. Returns `pending_mode` (`group` | `line` | `mixed` | `none`), facility groups (with `category_name` for group `utility_name`), and `standalone_non_metered_line_count` so you can branch to **NM Pending — Group** vs **NM Pending — Line**.
 
 **Response:** JSON with `use_group_pending_body`, `use_line_pending_body`, `facility_groups`, etc.
 
