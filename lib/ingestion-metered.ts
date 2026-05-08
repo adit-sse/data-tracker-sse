@@ -156,23 +156,67 @@ export async function resolveMeterForIngestion(
   return { ok: true, meterId: meter.id };
 }
 
-/** True if the calendar month slot is already taken (green data, placeholder PENDING, or ERROR). */
+/**
+ * True if the calendar month slot should block a new PENDING row.
+ *
+ * Blocks when:
+ *   - A PENDING row already exists for this month (no duplicate pending needed)
+ *   - A DEACTIVATED row exists (meter was off, no invoice expected)
+ *   - Green invoices (CONFIRMED/IMPORTED/MANUAL_ENTRY) fully cover every day of the month
+ *
+ * Does NOT block when green invoices only partially cover the month — a PENDING row
+ * is still created so the workflow knows more invoices may be outstanding.
+ * ERROR rows also do not block, allowing a retry via pending.
+ */
 export async function meterMonthBlocksNewPending(
   supabase: SupabaseClient,
   meterId: string,
   monthStart: string,
   monthEnd: string
 ): Promise<boolean> {
-  const blockingStatuses = [...METERED_GREEN_INVOICE_STATUSES, 'PENDING', 'ERROR'];
-  const { data: rows } = await supabase
+  // Hard block: already pending or deactivated
+  const { data: hardRows } = await supabase
     .from('actual_invoices')
     .select('id')
     .eq('meter_id', meterId)
     .lte('period_start_date', monthEnd)
     .gte('period_end_date', monthStart)
-    .in('status', blockingStatuses);
+    .in('status', ['PENDING', 'DEACTIVATED']);
 
-  return (rows?.length ?? 0) > 0;
+  if ((hardRows?.length ?? 0) > 0) return true;
+
+  // Soft block: green records exist — only block if they fully cover every day
+  const { data: greenRows } = await supabase
+    .from('actual_invoices')
+    .select('period_start_date, period_end_date')
+    .eq('meter_id', meterId)
+    .lte('period_start_date', monthEnd)
+    .gte('period_end_date', monthStart)
+    .in('status', [...METERED_GREEN_INVOICE_STATUSES]);
+
+  if (!greenRows || greenRows.length === 0) return false;
+
+  const mStart = new Date(monthStart);
+  const mEnd = new Date(monthEnd);
+  const totalDays =
+    Math.round((mEnd.getTime() - mStart.getTime()) / 86_400_000) + 1;
+  const coveredDays = new Set<string>();
+
+  for (const row of greenRows) {
+    const start = new Date(
+      Math.max(new Date(row.period_start_date as string).getTime(), mStart.getTime())
+    );
+    const end = new Date(
+      Math.min(new Date(row.period_end_date as string).getTime(), mEnd.getTime())
+    );
+    const cur = new Date(start);
+    while (cur <= end) {
+      coveredDays.add(cur.toISOString().slice(0, 10));
+      cur.setDate(cur.getDate() + 1);
+    }
+  }
+
+  return coveredDays.size >= totalDays;
 }
 
 /** True if any “green” invoice overlaps [start, end] (used when inserting a confirmed row without a prior PENDING). */
