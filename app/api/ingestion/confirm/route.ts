@@ -26,6 +26,9 @@ interface GroupMember {
   } | null;
 }
 
+type ConfirmError = { ok: false; error: string; status: number };
+type LineConfirmResult = { ok: true; confirmed: number } | ConfirmError;
+
 function checkApiKey(request: Request): boolean {
   const authHeader = request.headers.get('Authorization');
   if (!authHeader?.startsWith('Bearer ')) return false;
@@ -47,12 +50,6 @@ function parseDateRange(dateRange: string): { start: string; end: string } | nul
   return { start, end };
 }
 
-/** Compare period keys — DB may return "2026-03-01" or ISO datetime strings */
-function periodKey(d: string | null | undefined): string {
-  if (!d) return '';
-  return String(d).slice(0, 10);
-}
-
 /**
  * Standalone line: each row's Input Type = record utility (e.g. kL), Facility = site name.
  * Category is optional — not used for targeting (electricity rows may omit it).
@@ -62,9 +59,8 @@ function periodKey(d: string | null | undefined): string {
 async function processLineConfirm(
   supabase: SupabaseClient,
   rows: NGERSRow[]
-): Promise<{ confirmed: number; warnings: string[] }> {
+): Promise<LineConfirmResult> {
   let totalConfirmed = 0;
-  const warnings: string[] = [];
 
   const groupedRows = new Map<string, NGERSRow[]>();
   for (const row of rows) {
@@ -79,8 +75,7 @@ async function processLineConfirm(
     const { Company, Provider, Facility } = lineRows[0];
     const InputType = (lineRows[0]['Input Type'] ?? '').trim();
     if (!Company || !Provider || !InputType) {
-      warnings.push('Row missing Company, Provider, or Input Type — skipped');
-      continue;
+      return { ok: false, error: 'Row missing Company, Provider, or Input Type', status: 400 };
     }
 
     const resolved = await resolveIngestionLine(
@@ -91,18 +86,22 @@ async function processLineConfirm(
       InputType
     );
     if (!resolved.ok) {
-      warnings.push(`${resolved.error} — rows skipped`);
-      continue;
+      return { ok: false, error: resolved.error, status: resolved.status };
     }
 
     const { facilityId, supplierId, categoryId } = resolved;
 
     for (const row of lineRows) {
-      if (!row['Date Range']) continue;
+      if (!row['Date Range']) {
+        return { ok: false, error: 'Row is missing Date Range', status: 422 };
+      }
       const parsed = parseDateRange(row['Date Range']);
       if (!parsed) {
-        warnings.push(`Could not parse Date Range "${row['Date Range']}" — row skipped`);
-        continue;
+        return {
+          ok: false,
+          error: `Could not parse Date Range "${row['Date Range']}" — expected format: "DD/MM/YYYY - DD/MM/YYYY"`,
+          status: 422,
+        };
       }
 
       const { data: existing } = await supabase
@@ -142,7 +141,7 @@ async function processLineConfirm(
     }
   }
 
-  return { confirmed: totalConfirmed, warnings };
+  return { ok: true, confirmed: totalConfirmed };
 }
 
 // POST /api/ingestion/confirm
@@ -157,6 +156,9 @@ async function processLineConfirm(
 //   Input Type (required) = utility input type to target (e.g. "kL", "Electricity").
 //   Category (optional) — electricity rows may omit it.
 //   Facility = site name. No deletions, no INFERRED_EMPTY siblings.
+//
+// All lookup failures (client, supplier, category, input type, facility, date range) return
+// a hard 4xx — nothing is silently skipped.
 export async function POST(request: Request) {
   if (!checkApiKey(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -189,11 +191,13 @@ export async function POST(request: Request) {
 
     if (lineMode) {
       const result = await processLineConfirm(supabase, rows);
-      return NextResponse.json({ mode: 'line', ...result });
+      if (!result.ok) {
+        return NextResponse.json({ error: result.error }, { status: result.status });
+      }
+      return NextResponse.json({ mode: 'line', confirmed: result.confirmed });
     }
 
     let totalConfirmed = 0;
-    const warnings: string[] = [];
 
     // Group rows by (Company, Provider, Category, InputType).
     const groupedRows = new Map<string, NGERSRow[]>();
@@ -209,8 +213,10 @@ export async function POST(request: Request) {
       const { Company, Provider, Category } = groupRows[0];
       const InputType = (groupRows[0]['Input Type'] ?? '').trim();
       if (!Company || !Provider || !Category || !InputType) {
-        warnings.push('Row missing Company, Provider, Category, or Input Type — rows skipped');
-        continue;
+        return NextResponse.json(
+          { error: 'Row missing Company, Provider, Category, or Input Type' },
+          { status: 400 }
+        );
       }
 
       const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
@@ -219,9 +225,15 @@ export async function POST(request: Request) {
         supabase.from('categories').select('id').ilike('name', Category).single(),
       ]);
 
-      if (!client) { warnings.push(`Client "${Company}" not found — rows skipped`); continue; }
-      if (!supplier) { warnings.push(`Supplier "${Provider}" not found — rows skipped`); continue; }
-      if (!groupCategory) { warnings.push(`Category "${Category}" not found — rows skipped`); continue; }
+      if (!client) {
+        return NextResponse.json({ error: `Client "${Company}" not found` }, { status: 404 });
+      }
+      if (!supplier) {
+        return NextResponse.json({ error: `Supplier "${Provider}" not found` }, { status: 404 });
+      }
+      if (!groupCategory) {
+        return NextResponse.json({ error: `Category "${Category}" not found` }, { status: 404 });
+      }
 
       let targetInputTypeId: string;
       try {
@@ -229,8 +241,7 @@ export async function POST(request: Request) {
         targetInputTypeId = resolved.id;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        warnings.push(`${msg} — rows skipped`);
-        continue;
+        return NextResponse.json({ error: msg }, { status: 400 });
       }
 
       const { data: group } = await supabase
@@ -251,8 +262,12 @@ export async function POST(request: Request) {
         .single();
 
       if (!group) {
-        warnings.push(`No group for "${Company}" / "${Provider}" / "${Category}" — rows skipped`);
-        continue;
+        return NextResponse.json(
+          {
+            error: `No facility group configured for "${Company}" / "${Provider}" / "${Category}"`,
+          },
+          { status: 404 }
+        );
       }
 
       const members = (group.members ?? []) as unknown as GroupMember[];
@@ -272,28 +287,43 @@ export async function POST(request: Request) {
       }
 
       if (allMemberIds.length === 0) {
-        warnings.push(
-          `No group members match Input Type "${InputType}" for "${Company}" / "${Provider}" / "${Category}" — rows skipped`
+        return NextResponse.json(
+          {
+            error: `No group members match Input Type "${InputType}" for "${Company}" / "${Provider}" / "${Category}"`,
+          },
+          { status: 404 }
         );
-        continue;
       }
 
       // CONFIRM every facility+period that appears in the payload.
       // Facilities not in this payload and months not in this payload are left untouched —
       // invoices may arrive separately. Call /api/ingestion/inferred-empty when done.
       for (const row of groupRows) {
-        if (!row['Date Range'] || !row.Facility) continue;
+        if (!row['Date Range'] || !row.Facility) {
+          return NextResponse.json(
+            { error: 'Row is missing Date Range or Facility' },
+            { status: 422 }
+          );
+        }
 
         const parsed = parseDateRange(row['Date Range']);
         if (!parsed) {
-          warnings.push(`Could not parse Date Range "${row['Date Range']}" — row skipped`);
-          continue;
+          return NextResponse.json(
+            {
+              error: `Could not parse Date Range "${row['Date Range']}" — expected format: "DD/MM/YYYY - DD/MM/YYYY"`,
+            },
+            { status: 422 }
+          );
         }
 
         const facilityId = facilityNameToId.get(row.Facility.toLowerCase());
         if (!facilityId) {
-          warnings.push(`Facility "${row.Facility}" not found in group for "${Company}" — row skipped`);
-          continue;
+          return NextResponse.json(
+            {
+              error: `Facility "${row.Facility}" not found in group for "${Company}" / "${Provider}" / "${Category}"`,
+            },
+            { status: 404 }
+          );
         }
 
         const { data: existing } = await supabase
@@ -331,7 +361,7 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ mode: 'group', confirmed: totalConfirmed, warnings });
+    return NextResponse.json({ mode: 'group', confirmed: totalConfirmed });
   } catch (error) {
     console.error('Error in ingestion/confirm:', error);
     const detail = error instanceof Error ? error.message : String(error);

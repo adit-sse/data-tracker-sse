@@ -20,10 +20,18 @@ function checkApiKey(request: Request): boolean {
   return authHeader.slice(7) === process.env.INGESTION_API_KEY;
 }
 
+type MeteredPendingOk = { ok: true; meters: number; created: number; skipped: number };
+type MeteredPendingError = { ok: false; error: string; status: number };
+type MeteredPendingResult = MeteredPendingOk | MeteredPendingError;
+
 /**
  * Seeds PENDING rows in actual_invoices for every meter belonging to this
  * client+supplier pair. Optionally narrows by utility name (input type),
  * facility name, or a specific identifier (identifier_type + lookup1).
+ *
+ * Returns a hard error if:
+ *   - facility_name is provided but no matching facility exists for this client → 404
+ *   - utility_name is provided AND meters exist for this supplier but none match → 400
  */
 async function seedMeteredPending(
   supabase: SupabaseClient,
@@ -35,7 +43,7 @@ async function seedMeteredPending(
     identifierType?: string;
     lookup1?: string;
   }
-): Promise<{ meters: number; created: number; skipped: number }> {
+): Promise<MeteredPendingResult> {
   const { data: facilities } = await supabase
     .from('facilities')
     .select('id, name')
@@ -48,11 +56,17 @@ async function seedMeteredPending(
     candidateFacilities = candidateFacilities.filter(
       (f: { id: string; name: string }) => f.name.toLowerCase() === lower
     );
-    if (candidateFacilities.length === 0) return { meters: 0, created: 0, skipped: 0 };
+    if (candidateFacilities.length === 0) {
+      return {
+        ok: false,
+        error: `Facility "${filters.facilityName}" not found for this client`,
+        status: 404,
+      };
+    }
   }
 
   const facilityIds = candidateFacilities.map((f: { id: string }) => f.id);
-  if (facilityIds.length === 0) return { meters: 0, created: 0, skipped: 0 };
+  if (facilityIds.length === 0) return { ok: true, meters: 0, created: 0, skipped: 0 };
 
   let metersQuery = supabase
     .from('meters')
@@ -69,7 +83,8 @@ async function seedMeteredPending(
   const { data: meters, error: metersErr } = await metersQuery;
   if (metersErr) throw new Error(metersErr.message);
 
-  let candidateMeters = meters ?? [];
+  const allMeters = meters ?? [];
+  let candidateMeters = allMeters;
 
   if (filters.utilityName) {
     const lower = filters.utilityName.toLowerCase();
@@ -77,9 +92,19 @@ async function seedMeteredPending(
       const name = (Array.isArray(m.input_type) ? m.input_type[0] : m.input_type)?.name;
       return typeof name === 'string' && name.toLowerCase() === lower;
     });
+
+    // Only error if meters exist for this supplier but none match the requested input type.
+    // If there are no meters at all, this is a non-metered supplier — not an error.
+    if (candidateMeters.length === 0 && allMeters.length > 0) {
+      return {
+        ok: false,
+        error: `No meters found with input type "${filters.utilityName}" for this client and supplier`,
+        status: 400,
+      };
+    }
   }
 
-  if (candidateMeters.length === 0) return { meters: 0, created: 0, skipped: 0 };
+  if (candidateMeters.length === 0) return { ok: true, meters: 0, created: 0, skipped: 0 };
 
   const months = getCurrentFiscalYearMonthsThroughNow();
   let totalCreated = 0;
@@ -113,7 +138,7 @@ async function seedMeteredPending(
     }
   }
 
-  return { meters: candidateMeters.length, created: totalCreated, skipped: totalSkipped };
+  return { ok: true, meters: candidateMeters.length, created: totalCreated, skipped: totalSkipped };
 }
 
 // POST /api/ingestion/pending
@@ -126,9 +151,16 @@ async function seedMeteredPending(
 //
 // Optional narrowing (all optional, combinable):
 //   utility_name     — non-metered: targets one NGERS group/line; metered: filters by input type name
-//   facility_name    — narrows to one facility
+//   facility_name    — narrows to one facility (404 if not found)
 //   mode: "line"     — non-metered standalone line path only (existing behaviour)
 //   identifier_type + lookup1  — targets a single specific meter only
+//
+// Hard errors returned for:
+//   - client_name not found → 404
+//   - supplier_name not found → 404
+//   - facility_name provided but not found for this client → 404
+//   - utility_name provided and meters exist but none match that input type → 400
+//   - utility_name provided but not found as NGERS category AND no metered coverage → 400
 export async function POST(request: Request) {
   if (!checkApiKey(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -265,6 +297,10 @@ export async function POST(request: Request) {
       summary: { created: number; skipped: number };
     } = { groups: [], lines: [], summary: { created: 0, skipped: 0 } };
 
+    // Track whether a targeted category lookup failed, so we can surface it
+    // if the metered path also finds nothing.
+    let categoryLookupError: string | null = null;
+
     if (!utilityTrimmed) {
       // Bulk Scope 1
       const nmResult = await seedAllScope1NonMeteredPending(supabase, client_name, supplier_name);
@@ -277,12 +313,14 @@ export async function POST(request: Request) {
       }
       // status 404 = no Scope 1 coverage for this supplier — not an error in unified mode
     } else {
-      // Targeted group (utility_name = NGERS category name)
+      // Targeted group (utility_name = NGERS category name).
+      // utility_name can also be an input type name for the metered path, so a category
+      // lookup miss is only surfaced as an error if the metered path also finds nothing.
       let groupCategory: { id: string; scope: number };
       try {
         groupCategory = await findCategoryForIngestion(supabase, utilityTrimmed);
-      } catch {
-        // Not a valid NGERS category — skip non-metered group path silently
+      } catch (e) {
+        categoryLookupError = e instanceof Error ? e.message : String(e);
         groupCategory = { id: '', scope: 0 };
       }
 
@@ -330,18 +368,23 @@ export async function POST(request: Request) {
       facilityName: facilityTrimmed || undefined,
     });
 
+    // Facility not found or input type not found — hard error regardless of non-metered result
+    if (!meteredResult.ok) {
+      return NextResponse.json({ error: meteredResult.error }, { status: meteredResult.status });
+    }
+
     // Nothing found on either side
     if (
       nonMeteredResult.summary.created === 0 &&
       nonMeteredResult.summary.skipped === 0 &&
       meteredResult.meters === 0
     ) {
-      return NextResponse.json(
-        {
-          error: `No coverage found for client "${client_name}" and supplier "${supplier_name}". Check that meters or non-metered lines are configured for this pair.`,
-        },
-        { status: 404 }
-      );
+      // Surface the category lookup failure if that's what caused the non-metered path to find nothing
+      const errorMsg = categoryLookupError
+        ? `${categoryLookupError} Also no metered coverage found for client "${client_name}" and supplier "${supplier_name}".`
+        : `No coverage found for client "${client_name}" and supplier "${supplier_name}". Check that meters or non-metered lines are configured for this pair.`;
+
+      return NextResponse.json({ error: errorMsg }, { status: 404 });
     }
 
     return NextResponse.json({
