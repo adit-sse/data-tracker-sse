@@ -46,7 +46,11 @@ function metaFromRow(row: NgersMeterRow) {
 
 // POST /api/ingestion/metered/confirm
 // Body: { "rows": [ NGERS-style rows ... ] }
-// Updates PENDING placeholder months to CONFIRMED with exact period dates from Date Range; removes other FY pendings for that meter.
+// Updates PENDING placeholder months to CONFIRMED with exact period dates from Date Range;
+// removes other FY pendings for that meter.
+//
+// All lookup failures (client, facility, supplier, input type, meter, date range) return
+// a hard 4xx — nothing is silently skipped.
 export async function POST(request: Request) {
   if (!checkApiKey(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -64,22 +68,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'rows must be non-empty' }, { status: 400 });
     }
 
-    const warnings: string[] = [];
     const groupedRows = new Map<string, NgersMeterRow[]>();
 
     for (const row of rows) {
       const iden = parseMeterIdentifierFromNgersRow(row);
       if (!iden.ok) {
-        warnings.push(iden.error);
-        continue;
+        return NextResponse.json({ error: iden.error }, { status: 400 });
       }
       const company = String(row.Company ?? '').trim();
       const provider = String(row.Provider ?? '').trim();
       const category = String(row.Category ?? '').trim();
       const fac = String(row.Facility ?? '').trim();
       if (!company || !provider || !category) {
-        warnings.push('Row missing Company, Provider, or Category — skipped');
-        continue;
+        return NextResponse.json(
+          { error: 'Row missing Company, Provider, or Category' },
+          { status: 400 }
+        );
       }
       const key = `${company}__${provider}__${category}__${fac}__${iden.identifier_type}__${iden.lookup1}`;
       if (!groupedRows.has(key)) groupedRows.set(key, []);
@@ -88,13 +92,13 @@ export async function POST(request: Request) {
 
     let totalConfirmed = 0;
     let totalDeletedPending = 0;
+    let totalSkippedDuplicates = 0;
 
     for (const [, groupRows] of Array.from(groupedRows.entries())) {
       const first = groupRows[0];
       const iden = parseMeterIdentifierFromNgersRow(first);
       if (!iden.ok) {
-        warnings.push(iden.error);
-        continue;
+        return NextResponse.json({ error: iden.error }, { status: 400 });
       }
 
       const resolved = await resolveMeterForIngestion(supabase, {
@@ -108,10 +112,7 @@ export async function POST(request: Request) {
       });
 
       if (!resolved.ok) {
-        const msg = `${resolved.error} — rows skipped`;
-        console.warn('[metered/confirm] Skipped meter group:', msg);
-        warnings.push(msg);
-        continue;
+        return NextResponse.json({ error: resolved.error }, { status: resolved.status });
       }
 
       const { meterId } = resolved;
@@ -129,11 +130,17 @@ export async function POST(request: Request) {
       const monthKeysConfirmed = new Set<string>();
 
       for (const row of groupRows) {
-        if (!row['Date Range']) continue;
+        if (!row['Date Range']) {
+          return NextResponse.json({ error: 'Row is missing Date Range' }, { status: 422 });
+        }
         const parsed = parseNgersDateRange(String(row['Date Range']));
         if (!parsed) {
-          warnings.push(`Could not parse Date Range "${row['Date Range']}" — row skipped`);
-          continue;
+          return NextResponse.json(
+            {
+              error: `Could not parse Date Range "${row['Date Range']}" — expected format: "DD/MM/YYYY - DD/MM/YYYY"`,
+            },
+            { status: 422 }
+          );
         }
         confirmedPeriods.set(parsed.start, parsed);
         monthKeysConfirmed.add(monthStartIso(parsed.start));
@@ -193,9 +200,8 @@ export async function POST(request: Request) {
         } else {
           const isDuplicate = await meteredExactDuplicateExists(supabase, meterId, period.start, period.end);
           if (isDuplicate) {
-            const dupMsg = `Meter ${meterId}: identical invoice period ${period.start}–${period.end} already confirmed — skipped`;
-            console.warn('[metered/confirm]', dupMsg);
-            warnings.push(dupMsg);
+            // Idempotent: already confirmed — safe to skip
+            totalSkippedDuplicates++;
             continue;
           }
 
@@ -237,7 +243,7 @@ export async function POST(request: Request) {
       mode: 'metered',
       confirmed: totalConfirmed,
       deleted_pending: totalDeletedPending,
-      warnings,
+      skipped_duplicates: totalSkippedDuplicates,
     });
   } catch (error) {
     console.error('Error in ingestion/metered/confirm:', error);

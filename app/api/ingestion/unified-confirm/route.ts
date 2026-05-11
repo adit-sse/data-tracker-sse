@@ -27,6 +27,10 @@ interface GroupMember {
   } | null;
 }
 
+type ProcessorOk<T extends object> = T & { ok: true };
+type ProcessorError = { ok: false; error: string; status: number };
+type ProcessorResult<T extends object> = ProcessorOk<T> | ProcessorError;
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 function checkApiKey(request: Request): boolean {
@@ -71,9 +75,8 @@ function classifyRow(row: UnifiedRow): RowType {
 async function processNonMeteredGroupRows(
   supabase: SupabaseClient,
   rows: UnifiedRow[]
-): Promise<{ confirmed: number; warnings: string[] }> {
+): Promise<ProcessorResult<{ confirmed: number }>> {
   let totalConfirmed = 0;
-  const warnings: string[] = [];
 
   const groupedRows = new Map<string, UnifiedRow[]>();
   for (const row of rows) {
@@ -91,8 +94,11 @@ async function processNonMeteredGroupRows(
     const InputType = typeof groupRows[0]['Input Type'] === 'string' ? (groupRows[0]['Input Type'] as string).trim() : '';
 
     if (!Company || !Provider || !Category || !InputType) {
-      warnings.push('Non-metered group row missing Company, Provider, Category, or Input Type — rows skipped');
-      continue;
+      return {
+        ok: false,
+        error: 'Non-metered group row missing Company, Provider, Category, or Input Type',
+        status: 400,
+      };
     }
 
     const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
@@ -101,9 +107,9 @@ async function processNonMeteredGroupRows(
       supabase.from('categories').select('id').ilike('name', Category).single(),
     ]);
 
-    if (!client) { warnings.push(`Client "${Company}" not found — rows skipped`); continue; }
-    if (!supplier) { warnings.push(`Supplier "${Provider}" not found — rows skipped`); continue; }
-    if (!groupCategory) { warnings.push(`Category "${Category}" not found — rows skipped`); continue; }
+    if (!client) return { ok: false, error: `Client "${Company}" not found`, status: 404 };
+    if (!supplier) return { ok: false, error: `Supplier "${Provider}" not found`, status: 404 };
+    if (!groupCategory) return { ok: false, error: `Category "${Category}" not found`, status: 404 };
 
     let targetInputTypeId: string;
     try {
@@ -111,8 +117,7 @@ async function processNonMeteredGroupRows(
       targetInputTypeId = resolved.id;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      warnings.push(`${msg} — rows skipped`);
-      continue;
+      return { ok: false, error: msg, status: 400 };
     }
 
     const { data: group } = await supabase
@@ -133,8 +138,11 @@ async function processNonMeteredGroupRows(
       .single();
 
     if (!group) {
-      warnings.push(`No group for "${Company}" / "${Provider}" / "${Category}" — rows skipped`);
-      continue;
+      return {
+        ok: false,
+        error: `No facility group configured for "${Company}" / "${Provider}" / "${Category}"`,
+        status: 404,
+      };
     }
 
     const members = (group.members ?? []) as unknown as GroupMember[];
@@ -152,25 +160,37 @@ async function processNonMeteredGroupRows(
     }
 
     if (allMemberIds.length === 0) {
-      warnings.push(`No group members match Input Type "${InputType}" for "${Company}" / "${Provider}" / "${Category}" — rows skipped`);
-      continue;
+      return {
+        ok: false,
+        error: `No group members match Input Type "${InputType}" for "${Company}" / "${Provider}" / "${Category}"`,
+        status: 404,
+      };
     }
 
     for (const row of groupRows) {
       const dateRange = typeof row['Date Range'] === 'string' ? row['Date Range'] : '';
       const facility = typeof row.Facility === 'string' ? row.Facility.trim() : '';
-      if (!dateRange || !facility) continue;
+
+      if (!dateRange || !facility) {
+        return { ok: false, error: 'Row is missing Date Range or Facility', status: 422 };
+      }
 
       const parsed = parseDateRangeDDMMYYYY(dateRange);
       if (!parsed) {
-        warnings.push(`Could not parse Date Range "${dateRange}" — row skipped`);
-        continue;
+        return {
+          ok: false,
+          error: `Could not parse Date Range "${dateRange}" — expected format: "DD/MM/YYYY - DD/MM/YYYY"`,
+          status: 422,
+        };
       }
 
       const facilityId = facilityNameToId.get(facility.toLowerCase());
       if (!facilityId) {
-        warnings.push(`Facility "${facility}" not found in group for "${Company}" — row skipped`);
-        continue;
+        return {
+          ok: false,
+          error: `Facility "${facility}" not found in group for "${Company}" / "${Provider}" / "${Category}"`,
+          status: 404,
+        };
       }
 
       const { data: existing } = await supabase
@@ -210,7 +230,7 @@ async function processNonMeteredGroupRows(
     }
   }
 
-  return { confirmed: totalConfirmed, warnings };
+  return { ok: true, confirmed: totalConfirmed };
 }
 
 // ── Non-metered LINE processor ────────────────────────────────────────────────
@@ -218,9 +238,8 @@ async function processNonMeteredGroupRows(
 async function processNonMeteredLineRows(
   supabase: SupabaseClient,
   rows: UnifiedRow[]
-): Promise<{ confirmed: number; warnings: string[] }> {
+): Promise<ProcessorResult<{ confirmed: number }>> {
   let totalConfirmed = 0;
-  const warnings: string[] = [];
 
   const groupedRows = new Map<string, UnifiedRow[]>();
   for (const row of rows) {
@@ -238,26 +257,33 @@ async function processNonMeteredLineRows(
     const InputType = typeof lineRows[0]['Input Type'] === 'string' ? (lineRows[0]['Input Type'] as string).trim() : '';
 
     if (!Company || !Provider || !InputType) {
-      warnings.push('Non-metered line row missing Company, Provider, or Input Type — rows skipped');
-      continue;
+      return {
+        ok: false,
+        error: 'Non-metered line row missing Company, Provider, or Input Type',
+        status: 400,
+      };
     }
 
     const resolved = await resolveIngestionLine(supabase, Company, Facility, Provider, InputType);
     if (!resolved.ok) {
-      warnings.push(`${resolved.error} — rows skipped`);
-      continue;
+      return { ok: false, error: resolved.error, status: resolved.status };
     }
 
     const { facilityId, supplierId, categoryId } = resolved;
 
     for (const row of lineRows) {
       const dateRange = typeof row['Date Range'] === 'string' ? row['Date Range'] : '';
-      if (!dateRange) continue;
+      if (!dateRange) {
+        return { ok: false, error: 'Row is missing Date Range', status: 422 };
+      }
 
       const parsed = parseDateRangeDDMMYYYY(dateRange);
       if (!parsed) {
-        warnings.push(`Could not parse Date Range "${dateRange}" — row skipped`);
-        continue;
+        return {
+          ok: false,
+          error: `Could not parse Date Range "${dateRange}" — expected format: "DD/MM/YYYY - DD/MM/YYYY"`,
+          status: 422,
+        };
       }
 
       const { data: existing } = await supabase
@@ -297,7 +323,7 @@ async function processNonMeteredLineRows(
     }
   }
 
-  return { confirmed: totalConfirmed, warnings };
+  return { ok: true, confirmed: totalConfirmed };
 }
 
 // ── Metered processor ─────────────────────────────────────────────────────────
@@ -334,25 +360,27 @@ function metaFromRow(row: NgersMeterRow) {
 async function processMeteredRows(
   supabase: SupabaseClient,
   rows: NgersMeterRow[]
-): Promise<{ confirmed: number; deleted_pending: number; warnings: string[] }> {
+): Promise<ProcessorResult<{ confirmed: number; deleted_pending: number; skipped_duplicates: number }>> {
   let totalConfirmed = 0;
   let totalDeletedPending = 0;
-  const warnings: string[] = [];
+  let totalSkippedDuplicates = 0;
 
   const groupedRows = new Map<string, NgersMeterRow[]>();
   for (const row of rows) {
     const iden = parseMeterIdentifierFromNgersRow(row);
     if (!iden.ok) {
-      warnings.push(iden.error);
-      continue;
+      return { ok: false, error: iden.error, status: 400 };
     }
     const company = String(row.Company ?? '').trim();
     const provider = String(row.Provider ?? '').trim();
     const category = String(row.Category ?? '').trim();
     const fac = String(row.Facility ?? '').trim();
     if (!company || !provider || !category) {
-      warnings.push('Metered row missing Company, Provider, or Category — skipped');
-      continue;
+      return {
+        ok: false,
+        error: 'Metered row missing Company, Provider, or Category',
+        status: 400,
+      };
     }
     const key = `${company}__${provider}__${category}__${fac}__${iden.identifier_type}__${iden.lookup1}`;
     if (!groupedRows.has(key)) groupedRows.set(key, []);
@@ -363,8 +391,7 @@ async function processMeteredRows(
     const first = groupRows[0];
     const iden = parseMeterIdentifierFromNgersRow(first);
     if (!iden.ok) {
-      warnings.push(iden.error);
-      continue;
+      return { ok: false, error: iden.error, status: 400 };
     }
 
     const resolved = await resolveMeterForIngestion(supabase, {
@@ -378,8 +405,7 @@ async function processMeteredRows(
     });
 
     if (!resolved.ok) {
-      warnings.push(`${resolved.error} — rows skipped`);
-      continue;
+      return { ok: false, error: resolved.error, status: resolved.status };
     }
 
     const { meterId } = resolved;
@@ -397,11 +423,16 @@ async function processMeteredRows(
     const monthKeysConfirmed = new Set<string>();
 
     for (const row of groupRows) {
-      if (!row['Date Range']) continue;
+      if (!row['Date Range']) {
+        return { ok: false, error: 'Metered row is missing Date Range', status: 422 };
+      }
       const parsed = parseNgersDateRange(String(row['Date Range']));
       if (!parsed) {
-        warnings.push(`Could not parse Date Range "${row['Date Range']}" — row skipped`);
-        continue;
+        return {
+          ok: false,
+          error: `Could not parse Date Range "${row['Date Range']}" — expected format: "DD/MM/YYYY - DD/MM/YYYY"`,
+          status: 422,
+        };
       }
       confirmedPeriods.set(parsed.start, parsed);
       monthKeysConfirmed.add(monthStartIso(parsed.start));
@@ -461,7 +492,8 @@ async function processMeteredRows(
       } else {
         const isDuplicate = await meteredExactDuplicateExists(supabase, meterId, period.start, period.end);
         if (isDuplicate) {
-          warnings.push(`Meter ${meterId}: identical invoice period ${period.start}–${period.end} already confirmed — skipped`);
+          // Idempotent: already confirmed — safe to skip
+          totalSkippedDuplicates++;
           continue;
         }
 
@@ -499,7 +531,7 @@ async function processMeteredRows(
     }
   }
 
-  return { confirmed: totalConfirmed, deleted_pending: totalDeletedPending, warnings };
+  return { ok: true, confirmed: totalConfirmed, deleted_pending: totalDeletedPending, skipped_duplicates: totalSkippedDuplicates };
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -515,10 +547,13 @@ async function processMeteredRows(
 //
 // Body: flat JSON array of NGERS rows (types can be mixed in one request).
 //
-// Response:
+// All lookup failures (client, supplier, category, input type, facility, date range) return
+// a hard 4xx — nothing is silently skipped.
+//
+// Response on success:
 //   {
-//     "non_metered": { "confirmed": n, "warnings": [] },
-//     "metered":     { "confirmed": n, "deleted_pending": n, "warnings": [] }
+//     "non_metered": { "confirmed": n },
+//     "metered":     { "confirmed": n, "deleted_pending": n, "skipped_duplicates": n }
 //   }
 export async function POST(request: Request) {
   if (!checkApiKey(request)) {
@@ -552,21 +587,34 @@ export async function POST(request: Request) {
     const [nonMeteredGroupResult, nonMeteredLineResult, meteredResult] = await Promise.all([
       nmGroupRows.length > 0
         ? processNonMeteredGroupRows(supabase, nmGroupRows)
-        : Promise.resolve({ confirmed: 0, warnings: [] }),
+        : Promise.resolve({ ok: true as const, confirmed: 0 }),
       nmLineRows.length > 0
         ? processNonMeteredLineRows(supabase, nmLineRows)
-        : Promise.resolve({ confirmed: 0, warnings: [] }),
+        : Promise.resolve({ ok: true as const, confirmed: 0 }),
       meteredRows.length > 0
         ? processMeteredRows(supabase, meteredRows)
-        : Promise.resolve({ confirmed: 0, deleted_pending: 0, warnings: [] }),
+        : Promise.resolve({ ok: true as const, confirmed: 0, deleted_pending: 0, skipped_duplicates: 0 }),
     ]);
+
+    if (!nonMeteredGroupResult.ok) {
+      return NextResponse.json({ error: nonMeteredGroupResult.error }, { status: nonMeteredGroupResult.status });
+    }
+    if (!nonMeteredLineResult.ok) {
+      return NextResponse.json({ error: nonMeteredLineResult.error }, { status: nonMeteredLineResult.status });
+    }
+    if (!meteredResult.ok) {
+      return NextResponse.json({ error: meteredResult.error }, { status: meteredResult.status });
+    }
 
     return NextResponse.json({
       non_metered: {
         confirmed: nonMeteredGroupResult.confirmed + nonMeteredLineResult.confirmed,
-        warnings: [...nonMeteredGroupResult.warnings, ...nonMeteredLineResult.warnings],
       },
-      metered: meteredResult,
+      metered: {
+        confirmed: meteredResult.confirmed,
+        deleted_pending: meteredResult.deleted_pending,
+        skipped_duplicates: meteredResult.skipped_duplicates,
+      },
     });
   } catch (error) {
     console.error('Error in ingestion/unified-confirm:', error);
