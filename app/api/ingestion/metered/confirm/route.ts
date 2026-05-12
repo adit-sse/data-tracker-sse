@@ -94,6 +94,8 @@ export async function POST(request: Request) {
     let totalDeletedPending = 0;
     let totalSkippedDuplicates = 0;
 
+    const confirmedAt = new Date().toISOString();
+
     for (const [, groupRows] of Array.from(groupedRows.entries())) {
       const first = groupRows[0];
       const iden = parseMeterIdentifierFromNgersRow(first);
@@ -180,6 +182,7 @@ export async function POST(request: Request) {
               consumption: totals.consumption,
               amount: totals.amount,
               status: 'CONFIRMED',
+              confirmed_at: confirmedAt,
               invoice_number: meta.invoice_number,
               invoice_date: meta.invoice_date,
               framework: meta.framework,
@@ -212,6 +215,7 @@ export async function POST(request: Request) {
             consumption: totals.consumption,
             amount: totals.amount,
             status: 'CONFIRMED',
+            confirmed_at: confirmedAt,
             invoice_number: meta.invoice_number,
             invoice_date: meta.invoice_date,
             framework: meta.framework,

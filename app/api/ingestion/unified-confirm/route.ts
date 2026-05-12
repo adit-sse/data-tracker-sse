@@ -74,7 +74,8 @@ function classifyRow(row: UnifiedRow): RowType {
 
 async function processNonMeteredGroupRows(
   supabase: SupabaseClient,
-  rows: UnifiedRow[]
+  rows: UnifiedRow[],
+  confirmedAt: string
 ): Promise<ProcessorResult<{ confirmed: number }>> {
   let totalConfirmed = 0;
 
@@ -206,7 +207,7 @@ async function processNonMeteredGroupRows(
       if (existing) {
         const { error: updErr } = await supabase
           .from('non_metered_records')
-          .update({ status: 'CONFIRMED' })
+          .update({ status: 'CONFIRMED', confirmed_at: confirmedAt })
           .eq('id', existing.id);
         if (updErr) throw new Error(updErr.message);
       } else {
@@ -218,6 +219,7 @@ async function processNonMeteredGroupRows(
             period_start_date: parsed.start,
             period_end_date: parsed.end,
             status: 'CONFIRMED',
+            confirmed_at: confirmedAt,
           },
           {
             onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
@@ -237,7 +239,8 @@ async function processNonMeteredGroupRows(
 
 async function processNonMeteredLineRows(
   supabase: SupabaseClient,
-  rows: UnifiedRow[]
+  rows: UnifiedRow[],
+  confirmedAt: string
 ): Promise<ProcessorResult<{ confirmed: number }>> {
   let totalConfirmed = 0;
 
@@ -299,7 +302,7 @@ async function processNonMeteredLineRows(
       if (existing) {
         const { error: updErr } = await supabase
           .from('non_metered_records')
-          .update({ status: 'CONFIRMED' })
+          .update({ status: 'CONFIRMED', confirmed_at: confirmedAt })
           .eq('id', existing.id);
         if (updErr) throw new Error(updErr.message);
       } else {
@@ -311,6 +314,7 @@ async function processNonMeteredLineRows(
             period_start_date: parsed.start,
             period_end_date: parsed.end,
             status: 'CONFIRMED',
+            confirmed_at: confirmedAt,
           },
           {
             onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
@@ -359,7 +363,8 @@ function metaFromRow(row: NgersMeterRow) {
 
 async function processMeteredRows(
   supabase: SupabaseClient,
-  rows: NgersMeterRow[]
+  rows: NgersMeterRow[],
+  confirmedAt: string
 ): Promise<ProcessorResult<{ confirmed: number; deleted_pending: number; skipped_duplicates: number }>> {
   let totalConfirmed = 0;
   let totalDeletedPending = 0;
@@ -472,6 +477,7 @@ async function processMeteredRows(
             consumption: totals.consumption,
             amount: totals.amount,
             status: 'CONFIRMED',
+            confirmed_at: confirmedAt,
             invoice_number: meta.invoice_number,
             invoice_date: meta.invoice_date,
             framework: meta.framework,
@@ -504,6 +510,7 @@ async function processMeteredRows(
           consumption: totals.consumption,
           amount: totals.amount,
           status: 'CONFIRMED',
+          confirmed_at: confirmedAt,
           invoice_number: meta.invoice_number,
           invoice_date: meta.invoice_date,
           framework: meta.framework,
@@ -572,6 +579,7 @@ export async function POST(request: Request) {
     }
 
     const rows = raw as UnifiedRow[];
+    const confirmedAt = new Date().toISOString();
 
     const meteredRows: NgersMeterRow[] = [];
     const nmGroupRows: UnifiedRow[] = [];
@@ -586,13 +594,13 @@ export async function POST(request: Request) {
 
     const [nonMeteredGroupResult, nonMeteredLineResult, meteredResult] = await Promise.all([
       nmGroupRows.length > 0
-        ? processNonMeteredGroupRows(supabase, nmGroupRows)
+        ? processNonMeteredGroupRows(supabase, nmGroupRows, confirmedAt)
         : Promise.resolve({ ok: true as const, confirmed: 0 }),
       nmLineRows.length > 0
-        ? processNonMeteredLineRows(supabase, nmLineRows)
+        ? processNonMeteredLineRows(supabase, nmLineRows, confirmedAt)
         : Promise.resolve({ ok: true as const, confirmed: 0 }),
       meteredRows.length > 0
-        ? processMeteredRows(supabase, meteredRows)
+        ? processMeteredRows(supabase, meteredRows, confirmedAt)
         : Promise.resolve({ ok: true as const, confirmed: 0, deleted_pending: 0, skipped_duplicates: 0 }),
     ]);
 

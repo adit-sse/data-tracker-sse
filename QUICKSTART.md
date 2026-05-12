@@ -1,70 +1,70 @@
-# Quick Start Guide
+# Quick start
 
-Get the Invoice Tracker running in 5 minutes!
+Short path to a running app. Full detail is in [README.md](README.md).
 
 ## Prerequisites
 
-- Node.js 18+ installed
-- Supabase account (free tier works)
+- Node.js 18+  
+- Supabase project  
 
-## Step 1: Install Dependencies
+## 1. Install
 
 ```bash
 cd invoice-tracker
 npm install
 ```
 
-## Step 2: Set Up Supabase
+## 2. Database
 
-1. Go to https://supabase.com and create a new project
-2. Wait for the database to initialize (~2 minutes)
-3. Go to **SQL Editor** in the Supabase dashboard
-4. Copy and paste the contents of `supabase-init.sql`
-5. Click **Run** to create all tables
+1. Open Supabase **SQL Editor**.  
+2. Apply migrations from [`supabase/migrations/`](supabase/migrations/) **in numeric order** (`001` … `010`). See the table in README for what each file does.  
+3. Do **not** rely on root `supabase-init.sql` as your schema—it is an outdated UUID starter and does not match the migration chain.
 
-## Step 3: Configure Environment
+If you do not already have the pre-migration baseline these files expect, get a schema export or baseline script from your team before applying.
 
-1. Copy the example env file:
-   ```bash
-   cp .env.local.example .env.local
-   ```
+## 3. Auth bootstrap
 
-2. In Supabase dashboard, go to **Settings** → **API**
-3. Copy your **Project URL** and **anon public key**
-4. Update `.env.local`:
-   ```env
-   NEXT_PUBLIC_SUPABASE_URL=your-project-url
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-   ```
+1. Enable **Authentication** (e.g. Email) in Supabase.  
+2. After migration `002`, create at least one user in the dashboard.  
+3. Promote and assign clients (SQL examples are in comments at the bottom of `002_auth_rls_membership.sql`):  
+   - insert into `app_admins` for operators who manage membership / clients;  
+   - insert into `client_members` so users can read/write data for specific `client_id`s.
 
-## Step 4: Run the App
+## 4. Environment
+
+```bash
+cp .env.local.example .env.local
+```
+
+Fill in:
+
+- `NEXT_PUBLIC_SUPABASE_URL`  
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` (publishable or anon — **not** the secret key)  
+- `SUPABASE_SECRET_KEY` for server-side ingestion / admin DB paths  
+- `INGESTION_API_KEY` if you call `/api/ingestion/*`  
+
+## 5. Run
 
 ```bash
 npm run dev
 ```
 
-Open http://localhost:3000 🎉
+Visit `http://localhost:3000`. You should be sent to **`/login`** until you sign in.
 
-## Step 5: Try It Out
+## 6. Smoke test
 
-1. **Add a Client**: Click "Add Client" and enter "Test Company"
-2. **Add a Facility**: Click on the client → "Add Facility" → Enter "Main Office"
-3. **Upload Sample Data**: Click "Upload Invoices" → Select `sample-invoices.csv`
-4. **View Coverage**: See the 12-month coverage dashboard with progress bars!
+1. Sign in as a user with `client_members` (or an app admin).  
+2. Open a client (or create one if your role allows).  
+3. Add a facility and try **Upload Invoices** with data that matches current column expectations (see README / upload errors).  
+4. Confirm coverage widgets load without API errors.
 
 ## Troubleshooting
 
-**"Failed to fetch"**: Check `.env.local` has correct Supabase credentials
+| Symptom | Check |
+| ------- | ----- |
+| Always at login | Credentials, Auth provider, cookies |
+| 401 on APIs | Session missing; middleware requires user |
+| Empty lists / RLS errors | `client_members` rows for your user |
+| Import / ingestion failures | `INGESTION_API_KEY`, `SUPABASE_SECRET_KEY`, migration completeness |
 
-**"Database error"**: Make sure `supabase-init.sql` ran successfully
-
-**CSV import errors**: Check the CSV format matches `sample-invoices.csv`
-
-## Next Steps
-
-- Upload your own invoice data
-- Add more clients and facilities
-- Explore the coverage dashboard
-- Filter by utility type
-
-Need help? Check the full [README.md](README.md)
+Next: [README.md](README.md) for architecture, model overview, and migration reference.

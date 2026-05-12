@@ -1,6 +1,6 @@
 # API guide: facilities, utilities, and ingestion
 
-This document describes the HTTP APIs used to manage **facilities**, **utility categories**, **facility groups** (for multi-site invoices), **meters** (metered utilities), **non-metered records**, and the **ingestion** workflow (`pending` → `confirm` → `inferred-empty` or `error`).
+This document describes the HTTP APIs used to manage **facilities**, **input types** (legacy HTTP paths still say “utility-categories”), **NGERS categories**, **facility groups** (for multi-site invoices), **meters** (metered utilities), **non-metered records**, and the **ingestion** workflow (`pending` → `confirm` → `inferred-empty` or `error`).
 
 ---
 
@@ -32,16 +32,18 @@ Facilities belong to a client. Names are matched case-insensitively during inges
 
 ---
 
-## 2. Utility categories (non-metered "utility types")
+## 2. Input types (non-metered “utility types”)
 
-Categories are global rows in `utility_categories`. Group-level ingestion uses the **group's** `utility_category_id` as the shared "invoice type" (e.g. Transport Fuels); each group member has its own **per-facility** category on `facility_group_members`.
+**Table:** `input_types` (migrated from the old `utility_categories` name). The REST list still lives under `/api/utility-categories` for compatibility.
+
+**NGERS reporting groups** live in `categories` (Scope 1 & 3). A **facility group** stores one `category_id` for the shared reporting bucket (e.g. Transport Fuels). Each **member** resolves to a `non_metered_lines` row identified by `(facility_id, supplier_id, input_type_id)` and is stored in `facility_group_members` as `non_metered_line_id`.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/api/utility-categories` | List all categories. |
+| `GET` | `/api/utility-categories` | List all **input types**. |
 | `POST` | `/api/utility-categories` | Upsert by name. Body: `{ "name": string, "scope"?: number, "is_metered"?: boolean }`. |
 | `PUT` | `/api/utility-categories/{id}` | Update. Body: `{ "name": string, "scope"?: 1\|2\|3, "is_metered"?: boolean, "needs_review"?: boolean }`. |
-| `DELETE` | `/api/utility-categories/{id}` | Delete category. |
+| `DELETE` | `/api/utility-categories/{id}` | Delete input type. |
 
 **Ingestion note:** `/api/ingestion/pending` in **line** mode requires an existing **input type** name (**Scope 1** only). It does **not** create missing input types. **Group** pending resolves the NGERS **reporting** category (`categories`) by name.
 
@@ -49,20 +51,20 @@ Categories are global rows in `utility_categories`. Group-level ingestion uses t
 
 ## 3. Facility groups (required for "group" ingestion)
 
-A **facility group** ties a client + supplier + **one group-level NGERS category** to many facilities. Each **member** has `facility_id` + `input_type_id` (the specific input type tracked for that site, e.g. "Diesel oil", "Ethanol").
+A **facility group** ties a client + supplier + optional **`category_id`** (NGERS reporting row) to many **non-metered lines**. Members are stored as `non_metered_line_id` rows; the API accepts `facility_ids: { facility_id, input_type_id }[]` and resolves matching `non_metered_lines` for the group’s `supplier_id`.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/api/clients/{clientId}/facility-groups` | List groups with `supplier`, `category`, and `members` (each with nested facility + input type). |
-| `POST` | `/api/clients/{clientId}/facility-groups` | Create group + members + backfill. Body: `{ "name": string, "supplier_id": string, "utility_category_id": string, "facility_ids": { "facility_id": string, "utility_category_id": string }[] }`. |
-| `PUT` | `/api/facility-groups/{groupId}` | Update `name`, `utility_category_id`, and/or replace all members via `facility_ids`. Runs backfill when members change. |
+| `GET` | `/api/clients/{clientId}/facility-groups` | List groups with `supplier`, `category`, and `members` (each member exposes nested `non_metered_lines` / facility / input type). |
+| `POST` | `/api/clients/{clientId}/facility-groups` | Create group + members + backfill. Body: `{ "name": string, "supplier_id": string, "category_id"?: string \| null, "facility_ids": { "facility_id": string, "input_type_id": string }[] }`. |
+| `PUT` | `/api/facility-groups/{groupId}` | Update `name`, `category_id`, and/or replace all members via `facility_ids` (same shape as `POST`). Runs backfill when members change. |
 | `DELETE` | `/api/facility-groups/{groupId}` | Delete group (members cascade per DB). |
 
-**Legacy helpers** (member add/remove without per-member utility in body):
+**Member shortcuts** (may not match all deployments if `facility_group_members` stores `non_metered_line_id` only — prefer group `PUT` with `facility_ids`):
 
 | Method | Path | Body |
 |--------|------|------|
-| `POST` | `/api/facility-groups/{groupId}/members` | `{ "facility_id": string }` — may leave `utility_category_id` null; prefer `PUT` on the group with full `facility_ids` for ingestion. |
+| `POST` | `/api/facility-groups/{groupId}/members` | `{ "facility_id": string }` |
 | `DELETE` | `/api/facility-groups/{groupId}/members` | `{ "facility_id": string }` |
 
 **UI helper:** `GET /api/clients/{clientId}/facility-utility-categories?scope=1` returns a map of `facilityId →` category options (from existing non-metered data), useful for picking member categories.
@@ -71,12 +73,12 @@ A **facility group** ties a client + supplier + **one group-level NGERS category
 
 ## 4. Meters (metered utilities)
 
-Meters attach to a facility and optionally a supplier + utility category. Used for **metered** coverage, not the non-metered ingestion endpoints below.
+Meters attach to a facility and optionally a supplier + **input type** + optional **reporting `category_id`**. Used for **metered** coverage, not the non-metered ingestion endpoints below.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/api/clients/{clientId}/meters` | All meters for the client's facilities (with facility, supplier, utility_category). |
-| `PATCH` | `/api/meters/{meterId}` | Partial update: `facility_id`, `utility_category_id`, `identifier_type`, `lookup1`, `lookup2`, `supplier_id`, dates, `needs_attention`, etc. |
+| `GET` | `/api/clients/{clientId}/meters` | All meters for the client's facilities (with facility, supplier, input type, category). |
+| `PATCH` | `/api/meters/{meterId}` | Partial update: `facility_id`, `input_type_id`, `category_id`, `identifier_type`, `lookup1`, `lookup2`, `supplier_id`, dates, `needs_attention`, `is_active`, etc. |
 
 (Additional meter routes exist under `app/api/meters` for listing/creating as needed by the app.)
 
@@ -88,7 +90,7 @@ These rows power the non-metered coverage grid (`PENDING`, `CONFIRMED`, `INFERRE
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/api/non-metered-records` | Create row. Required: `facility_id`, `utility_category_id`, `period_start_date`, `period_end_date`. Optional: `supplier_id`, `status` (default `MANUAL`), `consumption`, `unit`, `amount`, invoice fields, `sub_category`. |
+| `POST` | `/api/non-metered-records` | Create row. Required: `facility_id`, `input_type_id`, `period_start_date`, `period_end_date`. Optional: `supplier_id`, `status` (default `MANUAL`), `consumption`, `unit`, `amount`, invoice fields, `sub_category`. |
 | `PATCH` | `/api/non-metered-records/{id}` | Allowed keys: `status`, `consumption`, `unit`, `amount`, `invoice_number`, `invoice_date`, `sub_category`, `input_type`, `framework`, `version`, `customer`. |
 | `DELETE` | `/api/non-metered-records/{id}` | Delete record. Returns `204` on success. |
 
@@ -237,7 +239,7 @@ Marks PENDING rows as ERROR for a single calendar month derived from `date_range
 1. Ensure **client** and **supplier** exist.
 2. Create **facilities** under the client.
 3. Ensure **input types** (e.g. "Diesel oil", "Ethanol") and NGERS **categories** (e.g. "Transport Fuels") exist.
-4. Create **facility group** with `supplier_id`, group `utility_category_id`, and members (`facility_id` + `utility_category_id` per member — the member's specific input type).
+4. Create **facility group** with `supplier_id`, optional group `category_id` (NGERS row), and members as `{ facility_id, input_type_id }[]` (must match existing `non_metered_lines` for that supplier).
 5. Set the **Category** on each `non_metered_lines` row via the tracker UI (the category selector). This is permanent and not overwritten by API calls.
 
 ### Automated non-metered invoice (group — per-facility invoices)
@@ -285,6 +287,7 @@ See **[ingestion-demo-commands.md](./ingestion-demo-commands.md)** for PowerShel
 | Line / bulk pending | `lib/ingestion-line.ts`, `lib/ingestion-pending-scope1.ts`, `lib/ingestion-group-pending.ts`, `lib/ingestion-utility-category.ts` |
 | Facilities | `app/api/clients/[id]/facilities/route.ts`, `app/api/facilities/[id]/route.ts` |
 | Groups | `app/api/clients/[id]/facility-groups/route.ts`, `app/api/facility-groups/[id]/route.ts` |
-| Utility categories | `app/api/utility-categories/route.ts`, `app/api/utility-categories/[id]/route.ts` |
+| Input types (paths: utility-categories) | `app/api/utility-categories/route.ts`, `app/api/utility-categories/[id]/route.ts`; see also `app/api/input-types/*` |
+| Categories (NGERS) | `app/api/categories/route.ts`, `app/api/categories/[id]/route.ts` |
 | Non-metered CRUD | `app/api/non-metered-records/route.ts`, `app/api/non-metered-records/[id]/route.ts` |
 | Auth | `middleware.ts` |

@@ -15,11 +15,11 @@ export interface Facility {
   created_at?: string;
 }
 
-/** NGERS grouping — Scope 1 or Scope 3 only (e.g. "Stationary Energy", "Transport") */
+/** NGERS grouping — Scope 1, 2, or 3 (e.g. "Stationary Energy", "Transport", "Electricity") */
 export interface Category {
   id: string;
   name: string;
-  scope: 1 | 3;
+  scope: 1 | 2 | 3;
   created_at?: string;
 }
 
@@ -90,6 +90,7 @@ export interface ActualInvoice {
   customer?: string;
   status?: string;
   created_at?: string;
+  confirmed_at?: string;
   // Joined data
   meter?: Meter;
 }
@@ -168,7 +169,7 @@ export interface CSVRow {
 // CSV Upload types - Simplified meter setup format
 export interface MeterSetupRow {
   Facility?: string;
-  /** NGERS / reporting group (Scope 1 or 3). Optional for Scope 2 (e.g. electricity). */
+  /** NGERS / reporting group (Scope 1, 2, or 3). */
   Category?: string;
   /** Specific input type name — must exist in Manage Input Types */
   'Input Type'?: string;
@@ -277,6 +278,7 @@ export interface NonMeteredRecord {
   status: NonMeteredStatus;
   inferred_from_id?: string | null;
   created_at?: string;
+  confirmed_at?: string;
   // Joined
   facility?: Facility;
   supplier?: Supplier;

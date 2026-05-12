@@ -12,6 +12,13 @@ export const METERED_GREEN_INVOICE_STATUSES = [
 
 export type NgersMeterRow = Record<string, unknown>;
 
+/** Normalize cell values from CSV (string) or JSON APIs (often number for NMIs / account #s). */
+function meterIdCell(v: unknown): string {
+  if (typeof v === 'string') return v.trim();
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v).trim();
+  return '';
+}
+
 /** Pick NMI / MIRN / Account / Meter id from a NGERS-style row (same precedence as CSV upload). */
 export function parseMeterIdentifierFromNgersRow(
   row: NgersMeterRow
@@ -19,21 +26,19 @@ export function parseMeterIdentifierFromNgersRow(
   const inputType =
     typeof row['Input Type'] === 'string' ? (row['Input Type'] as string).trim() || null : null;
 
-  const nmi = typeof row.NMI === 'string' ? row.NMI.trim() : '';
+  const nmi = meterIdCell(row.NMI);
   if (nmi) {
     return { ok: true, identifier_type: 'NMI', lookup1: nmi, lookup2: inputType };
   }
-  const mirn = typeof row.MIRN === 'string' ? row.MIRN.trim() : '';
+  const mirn = meterIdCell(row.MIRN);
   if (mirn) {
     return { ok: true, identifier_type: 'MIRN', lookup1: mirn, lookup2: inputType };
   }
-  const acct =
-    typeof row['Account Number'] === 'string' ? (row['Account Number'] as string).trim() : '';
+  const acct = meterIdCell(row['Account Number']);
   if (acct) {
     return { ok: true, identifier_type: 'ACCOUNT_NUMBER', lookup1: acct, lookup2: inputType };
   }
-  const meterNum =
-    typeof row['Meter Number'] === 'string' ? (row['Meter Number'] as string).trim() : '';
+  const meterNum = meterIdCell(row['Meter Number']);
   if (meterNum) {
     return { ok: true, identifier_type: 'METER_NUMBER', lookup1: meterNum, lookup2: inputType };
   }

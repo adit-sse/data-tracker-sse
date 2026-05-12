@@ -1,4 +1,9 @@
--- Invoice Tracking System - Database Schema
+-- DEPRECATED / OUT OF DATE — do not use as the source of truth for this codebase.
+-- The application expects the schema built by ordered files under supabase/migrations/
+-- (see README.md). This script describes an older UUID-based sketch and does not
+-- match types, keys, or table names (e.g. input_types, categories, non_metered_lines).
+--
+-- Invoice Tracking System - Database Schema (historical reference only)
 -- Run this in your Supabase SQL Editor
 
 -- 1. Create clients table

@@ -33,6 +33,7 @@ export async function POST(request: Request) {
   }
 
   try {
+    const pendingReceivedAt = new Date().toISOString();
     const supabase = createSupabaseServiceRoleClient();
     const body = await request.json();
     const { client_name, supplier_name, utility_name, facility_name, identifier_type, lookup1, lookup2 } =
@@ -72,6 +73,7 @@ export async function POST(request: Request) {
       period_start_date: string;
       period_end_date: string;
       status: string;
+      created_at: string;
     }> = [];
 
     for (const month of months) {
@@ -83,6 +85,7 @@ export async function POST(request: Request) {
         period_start_date: month.start,
         period_end_date: month.end,
         status: 'PENDING',
+        created_at: pendingReceivedAt,
       });
     }
 

@@ -13,7 +13,7 @@ interface InputType {
 interface Category {
   id: string;
   name: string;
-  scope: 1 | 3;
+  scope: 1 | 2 | 3;
 }
 
 type Tab = 'input-types' | 'categories';

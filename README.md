@@ -1,293 +1,201 @@
 # Invoice Tracking System
 
-A Next.js application for tracking utility invoices (electricity, gas, fuel, oil) across multiple clients and facilities. Features include coverage visualization with progress bars, CSV/XLSX import, and comprehensive dashboard views.
+Next.js app for tracking utility and emissions-related invoices across clients and facilities: metered (electricity, gas, …) and non-metered Scope 1 / Scope 3 lines, facility groups for shared invoices, CSV/XLSX import, and fiscal-year coverage dashboards.
 
 ## Features
 
-- ✅ Multi-client invoice tracking
-- ✅ Facility and meter management
-- ✅ CSV/XLSX bulk import
-- ✅ 12-month coverage dashboard with progress bars
-- ✅ Color-coded coverage indicators (Green=100%, Yellow=85-99%, Orange=50-84%, Red=1-49%, Grey=0%)
-- ✅ Fiscal year support (July-June)
-- ✅ Gap detection and tooltips
-- ✅ Responsive design
+- Multi-client tracking with facilities, suppliers, and reference data management  
+- **Metered** coverage: meters linked to `input_types`, optional NGERS **categories**  
+- **Non-metered** coverage: `non_metered_lines`, records, facility groups, pending/inferred flows  
+- CSV/XLSX bulk import with scope-aware validation (`Category`, `Input Type`, optional reporting category, etc.)  
+- 12-month (July–June) coverage views, progress bars, gap tooltips, deactivated / pending handling  
+- **Supabase Auth**: session cookies; unauthenticated users redirect to `/login`  
+- Row Level Security (RLS) by client membership; optional ingestion API key + service role for automation  
 
-## Tech Stack
+## Tech stack
 
-- **Frontend**: Next.js 14 (App Router), React, Tailwind CSS
-- **Backend**: Supabase (PostgreSQL)
-- **File Parsing**: Papa Parse (CSV), XLSX
-- **Date Handling**: date-fns
+- **App**: Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS  
+- **Data**: Supabase (PostgreSQL + Auth)  
+- **Supabase clients**: `@supabase/ssr` — browser client (`lib/supabase/client.ts`), cookie-based server client (`lib/supabase/server.ts`), service-role client for trusted server paths (`lib/supabase/service.ts`)  
+- **Parsing**: Papa Parse (CSV), XLSX  
+- **Dates**: date-fns  
 
 ## Prerequisites
 
-- Node.js 18+ 
-- Supabase account and project
-- npm or yarn
+- Node.js 18+  
+- Supabase project with Auth enabled  
+- npm  
 
-## Setup Instructions
+---
 
-### 1. Clone and Install
+## Setup
+
+### 1. Clone and install
 
 ```bash
 cd invoice-tracker
 npm install
 ```
 
-### 2. Configure Supabase
+### 2. Database schema (source of truth)
 
-Create a Supabase project at https://supabase.com
+**Use the ordered SQL in [`supabase/migrations/`](supabase/migrations/)**, not the legacy `supabase-init.sql` at the repo root.
 
-#### Create Database Tables
+The migrations evolve an existing relational schema (integer primary keys on core tables, `utility_categories` later renamed to **`input_types`**, new **`categories`** table for NGERS groupings, non-metered tables, RLS, etc.). Applying them in order keeps the database aligned with the application code.
 
-Run the following SQL in your Supabase SQL Editor:
+| Order | File | Summary |
+| ----- | ---- | ------- |
+| 1 | `001_scope_expansion.sql` | Scope / metered flags on lookup table; `facility_groups`, `facility_group_members`, `non_metered_records` |
+| 2 | `002_auth_rls_membership.sql` | `profiles`, `app_admins`, `client_members`; RLS policies |
+| 3 | `003_non_metered_deactivated_status.sql` | Extended `non_metered_records` status values |
+| 4 | `004_non_metered_lines.sql` | `non_metered_lines` registration table |
+| 5 | `005_meters_is_active.sql` | `meters.is_active` |
+| 6 | `006_non_metered_lines_is_active.sql` | `non_metered_lines.is_active` |
+| 7 | `007_non_metered_lines_sub_category.sql` | Line-level sub-category (superseded by `008` for lines) |
+| 8 | `008_rename_utility_categories_to_input_types.sql` | **`categories`**; rename **`utility_categories` → `input_types`**; FK column renames; `category_id` on meters/lines |
+| 9 | `009_non_metered_records_created_at.sql` | `non_metered_records.created_at` |
+| 10 | `010_actual_invoices_created_at.sql` | `actual_invoices.created_at` |
 
-```sql
--- Clients table
-CREATE TABLE clients (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  name TEXT NOT NULL,
-  logo_url TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+Run each file **once**, in numeric order, in the Supabase SQL Editor (or your migration runner), against a database that already matches the **pre-001** baseline your team uses.
 
--- Facilities table
-CREATE TABLE facilities (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  address TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+**Important**
 
--- Utility categories table
-CREATE TABLE utility_categories (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE
-);
+- Root **`supabase-init.sql`** is an **outdated UUID-based starter**. It does **not** match the migration chain (types, keys, and table names differ). Do not follow README-only DDL from older copies of this file; you will get a database the code does not expect.  
+- If you have an **empty** Supabase project and no shared baseline dump, coordinate with the team for a full baseline or an export—do not assume `supabase-init.sql` + migrations composes cleanly without manual fixes.  
 
--- Insert utility categories
-INSERT INTO utility_categories (name) VALUES 
-  ('ELECTRICITY'),
-  ('GAS'),
-  ('FUEL'),
-  ('OIL');
+Optional: `supabase-migration-mirn.sql` adds the `MIRN` meter identifier check if you maintain an older DB without it.
 
--- Suppliers table
-CREATE TABLE suppliers (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+### 3. Supabase Auth and access control
 
--- Meters table
-CREATE TABLE meters (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  facility_id UUID REFERENCES facilities(id) ON DELETE CASCADE,
-  supplier_id UUID REFERENCES suppliers(id),
-  utility_category_id UUID REFERENCES utility_categories(id),
-  identifier_type TEXT NOT NULL CHECK (identifier_type IN ('NMI', 'ACCOUNT_NUMBER', 'METER_NUMBER', 'REGISTRATION_PLATE', 'CARD_NUMBER', 'FACILITY_LEVEL')),
-  lookup1 TEXT NOT NULL,
-  lookup2 TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+1. In Supabase **Authentication**, enable Email (or your chosen provider). Consider disabling public sign-up if users are provisioned by admins.  
+2. After **`002_auth_rls_membership.sql`**, bootstrap access (SQL Editor), for example:  
+   - Create a user under **Authentication → Users**.  
+   - `INSERT INTO public.app_admins (user_id) VALUES ('<auth-user-uuid>');`  
+   - `INSERT INTO public.client_members (user_id, client_id) VALUES ('<auth-user-uuid>', <client_id>);`  
+3. See comments at the bottom of `002_auth_rls_membership.sql` for the full pattern.
 
--- Actual invoices table
-CREATE TABLE actual_invoices (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  meter_id UUID REFERENCES meters(id) ON DELETE CASCADE,
-  invoice_number TEXT,
-  invoice_date TEXT,
-  period_start_date DATE NOT NULL,
-  period_end_date DATE NOT NULL,
-  consumption NUMERIC,
-  amount NUMERIC,
-  framework TEXT,
-  version TEXT,
-  input_type TEXT,
-  emissions_factor NUMERIC,
-  customer TEXT,
-  status TEXT DEFAULT 'IMPORTED',
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Create indexes for better performance
-CREATE INDEX idx_facilities_client ON facilities(client_id);
-CREATE INDEX idx_meters_facility ON meters(facility_id);
-CREATE INDEX idx_invoices_meter ON actual_invoices(meter_id);
-CREATE INDEX idx_invoices_period ON actual_invoices(period_start_date, period_end_date);
-```
-
-#### Optional: Create Storage Bucket for Client Logos
-
-1. Go to Storage in Supabase Dashboard
-2. Create a new bucket named `client-logos`
-3. Set to Public
-4. Set file size limit to 5MB
-5. Allow image types: image/png, image/jpeg, image/svg+xml
-
-### 3. Environment Variables
-
-Create `.env.local` file in the root directory:
+### 4. Environment variables
 
 ```bash
 cp .env.local.example .env.local
 ```
 
-Edit `.env.local` and add your Supabase credentials:
+| Variable | Purpose |
+| -------- | ------- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Publishable/anon key (browser + middleware + server user sessions) — **never** the secret/service key |
+| `SUPABASE_SECRET_KEY` | Server-only service role (`sb_secret_…`) for ingestion / RLS bypass — never expose to the client |
+| `SUPABASE_SERVICE_ROLE_KEY` | Optional legacy JWT if you have not moved to secret keys |
+| `INGESTION_API_KEY` | Bearer token for `/api/ingestion/*` routes |
 
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-```
+`lib/supabase/guard-public-key.ts` rejects wiring the secret key into `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 
-### 4. Run Development Server
+### 5. Storage (optional)
+
+For client logos: create a public bucket (e.g. `client-logos`), size and MIME limits as appropriate.
+
+### 6. Run the dev server
 
 ```bash
 npm run dev
 ```
 
-Open http://localhost:3000 in your browser.
+Open `http://localhost:3000`. Without a session you are redirected to **`/login`**; after sign-in, `next` query param returns you to the requested path.
 
-## Usage
+---
 
-### 1. Create a Client
+## Authentication and routing
 
-1. Click "Add Client" on the home page
-2. Enter client name
-3. Click "Create"
+- **`middleware.ts`** uses `createServerClient` from `@supabase/ssr` with request cookies, calls `auth.getUser()`, and:  
+  - allows **`/login`** and **`/api/ingestion/*`** without a session;  
+  - returns **401 JSON** for other `/api/*` without a user;  
+  - **redirects** page requests to **`/login?next=…`** when unauthenticated.  
+- **`/login`** uses `createSupabaseBrowserClient()` and `signInWithPassword`.  
+- Authenticated API routes use **`createSupabaseServerClient()`** so RLS applies as the signed-in user.
 
-### 2. Add Facilities
+---
 
-1. Navigate to the client detail page
-2. Click "Add Facility"
-3. Enter facility name and optional address
-4. Click "Create Facility"
-
-### 3. Upload Invoices
-
-1. Navigate to the client detail page
-2. Click "Upload Invoices"
-3. Upload a CSV or XLSX file with the following columns:
-
-**Required Columns:**
-- `Company` - Client name
-- `Facility` - Facility name
-- `Category` - ELECTRICITY, GAS, FUEL, or OIL
-- `Provider` - Supplier name
-- `Date Range` - Format: DD/MM/YYYY-DD/MM/YYYY (e.g., "01/12/2025-31/12/2025")
-
-**Meter Identifier (at least one required):**
-- `NMI` - National Meter Identifier (for electricity)
-- `Account Number` - Account number (for gas)
-- `Meter Number` - Meter number
-
-**Optional Columns:**
-- `Invoice Number`
-- `Invoice Date`
-- `Amount($)`
-- `Consumption`
-- `Input Type`
-- `Framework`
-- `Version`
-- `Customer`
-- `Output (tCO2-e)`
-- `Supply Address`
-
-### 4. View Coverage Dashboard
-
-The client detail page shows:
-- List of facilities with meter counts
-- 12-month coverage table (July-June fiscal year)
-- Progress bars showing coverage percentage
-- Color-coded indicators
-- Hover tooltips showing gap details
-
-## CSV Import Example
-
-See `sample-invoices.csv` for an example file format.
-
-## Project Structure
+## Project structure (high level)
 
 ```
 invoice-tracker/
 ├── app/
-│   ├── api/
-│   │   └── clients/
-│   │       ├── route.ts              # List/create clients
-│   │       └── [id]/
-│   │           ├── route.ts          # Get/update client
-│   │           ├── facilities/
-│   │           │   └── route.ts      # List/create facilities
-│   │           ├── coverage/
-│   │           │   └── route.ts      # Get coverage data
-│   │           └── upload/
-│   │               └── route.ts      # Process CSV upload
-│   ├── clients/
-│   │   └── [id]/
-│   │       ├── page.tsx              # Client detail page
-│   │       ├── facilities/
-│   │       │   └── new/
-│   │       │       └── page.tsx      # Add facility page
-│   │       └── upload/
-│   │           └── page.tsx          # Upload invoices page
-│   ├── layout.tsx                    # Root layout
-│   ├── page.tsx                      # Home page
-│   └── globals.css                   # Global styles
-├── components/
-│   ├── ClientCard.tsx                # Client card component
-│   ├── CoverageTable.tsx             # Coverage dashboard table
-│   ├── FacilityForm.tsx              # Add facility form
-│   ├── FileUpload.tsx                # File upload component
-│   └── ProgressBarCell.tsx           # Progress bar cell
+│   ├── api/                    # REST handlers (clients, facilities, meters, coverage, input-types, categories, ingestion, …)
+│   ├── clients/[id]/           # Client dashboard, upload, facilities, meters, invoices, debug
+│   ├── login/                  # Sign-in
+│   ├── layout.tsx
+│   ├── page.tsx                # Home (client list)
+│   └── globals.css
+├── components/                 # UI (coverage tables, modals, upload, reference data, …)
 ├── lib/
-│   ├── coverage.ts                   # Coverage calculation utilities
-│   └── supabase.ts                   # Supabase client
-├── types/
-│   └── index.ts                      # TypeScript type definitions
+│   ├── supabase/
+│   │   ├── client.ts           # Browser Supabase client
+│   │   ├── server.ts           # Cookie server client (RLS as user)
+│   │   ├── service.ts          # Service role (trusted server only)
+│   │   └── guard-public-key.ts
+│   ├── coverage.ts             # Coverage math
+│   └── ingestion-*.ts, …       # Import / pipeline helpers
+├── types/index.ts              # Shared TS shapes
+├── supabase/migrations/        # Ordered schema + RLS (canonical)
+├── docs/                       # Additional guides (e.g. n8n, APIs)
 └── package.json
 ```
 
-## Coverage Calculation
+---
 
-The system calculates coverage by:
-1. For each meter, gather all invoices
-2. For each month in the fiscal year:
-   - Extract all days covered by invoice periods
-   - Count unique covered days
-   - Calculate percentage: (covered days / total days in month) × 100
-3. Color-code based on percentage thresholds
+## Data model (conceptual)
+
+After all migrations:
+
+- **`clients`**, **`facilities`**, **`suppliers`** — org structure and vendors  
+- **`input_types`** — specific fuels/inputs (formerly `utility_categories`); scope, metered flags  
+- **`categories`** — NGERS-style reporting groups (Scope 1 & 3); Scope 2 rows typically omit category at line level  
+- **`meters`** — metered assets; `input_type_id`, optional `category_id`, `is_active`  
+- **`actual_invoices`** — metered invoice periods  
+- **`non_metered_lines`** — registered non-metered lines (like meters for coverage UI); `input_type_id`, optional `category_id`, `is_active`  
+- **`non_metered_records`** — non-metered invoice periods / statuses  
+- **`facility_groups`** / **`facility_group_members`** — supplier-level grouping for invoices covering multiple facilities/lines  
+- **`profiles`**, **`app_admins`**, **`client_members`** — auth profiles and who sees which client data  
+
+Exact columns and constraints live in the migration files.
+
+---
+
+## Usage
+
+### Clients and facilities
+
+Create clients (admins per RLS), open a client, add facilities and meters or non-metered lines as needed. Manage global **input types** and **categories** from the UI where exposed.
+
+### Upload
+
+Use **Upload Invoices** on a client. The importer expects columns aligned with the current pipeline—including **`Category`** (input-type column name in sheets; must match configured **input types**) and **`Input Type`** where applicable, plus facility, supplier, date range, and meter identifiers for metered rows. Unknown input types should be created in **Manage Input Types** before upload. See `sample-invoices.csv` only if it has been kept in sync with the importer; when in doubt, validate against the upload error messages and `app/api/clients/[id]/upload/route.ts`.
+
+### Coverage
+
+Client pages show fiscal-year coverage for metered and non-metered views; colors reflect coverage thresholds and gaps (see `lib/coverage.ts`).
+
+---
 
 ## Troubleshooting
 
-### CSV Import Errors
+- **Redirect loop / always at login**: Check Auth users exist, cookies allowed, `NEXT_PUBLIC_*` keys correct.  
+- **401 on `/api/*`**: Not logged in, or session expired; sign in again.  
+- **RLS / empty data**: User missing from `client_members`, or not an `app_admins` row for admin-only actions.  
+- **Ingestion failures**: `INGESTION_API_KEY`, `SUPABASE_SECRET_KEY`, and route paths under `/api/ingestion/*`.  
+- **Schema errors**: Confirm migrations ran in order on the intended baseline; do not mix `supabase-init.sql` with migrations.
 
-- **"Missing required fields"**: Ensure Company, Facility, Category, Provider, and Date Range columns exist
-- **"Invalid date range format"**: Use DD/MM/YYYY-DD/MM/YYYY format
-- **"Invalid category"**: Category must be ELECTRICITY, GAS, FUEL, or OIL (case-insensitive)
-- **"No meter identifier found"**: Include at least one of: NMI, Account Number, or Meter Number
+---
 
-### Database Connection Issues
+## Scripts
 
-- Verify `.env.local` has correct Supabase URL and key
-- Check Supabase project is active
-- Verify tables are created in Supabase SQL Editor
+- `npm run dev` — development server  
+- `npm run build` / `npm start` — production build  
+- `npm run lint` — ESLint  
+- `npm run seed:ingestion-test` — optional ingestion test seed (see script help)  
 
-## Future Enhancements
-
-- Logo upload functionality
-- Invoice PDF export
-- Email notifications for missing coverage
-- Date range selector for custom fiscal years
-- Invoice status workflow
-- Advanced filtering and search
-- Dark mode
+---
 
 ## License
 
 MIT
-
-## Support
-
-For issues or questions, please create an issue in the repository.

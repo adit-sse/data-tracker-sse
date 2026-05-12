@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 // GET /api/categories - List all NGERS categories
-// Optional ?scope=1 or ?scope=3 filter
+// Optional ?scope=1, ?scope=2, or ?scope=3 filter
 export async function GET(request: Request) {
   try {
     const supabase = createSupabaseServerClient();
@@ -35,8 +35,8 @@ export async function POST(request: Request) {
     if (!name?.trim()) {
       return NextResponse.json({ error: 'name is required' }, { status: 400 });
     }
-    if (![1, 3].includes(Number(scope))) {
-      return NextResponse.json({ error: 'scope must be 1 or 3 (Scope 2 has no category)' }, { status: 400 });
+    if (![1, 2, 3].includes(Number(scope))) {
+      return NextResponse.json({ error: 'scope must be 1, 2, or 3' }, { status: 400 });
     }
 
     const { data, error } = await supabase

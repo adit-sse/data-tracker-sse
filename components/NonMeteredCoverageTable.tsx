@@ -523,6 +523,12 @@ function isAgedRecord(createdAt: string | undefined): boolean {
   return isValid(d) && differenceInDays(new Date(), d) > 30;
 }
 
+function formatTimestamp(iso: string | undefined): string | null {
+  if (!iso) return null;
+  const d = parseISO(iso);
+  return isValid(d) ? format(d, 'd MMM yyyy, h:mm a') : null;
+}
+
 // -------------------------------------------------------
 // Individual month cell for non-metered grid
 // -------------------------------------------------------
@@ -566,17 +572,29 @@ function NonMeteredCell({ cell, onClick }: NonMeteredCellProps) {
     return 'text-white';
   };
 
-  const getTooltip = () => {
+  const getTooltip = (): { title: string; detail?: string } => {
     const ageSuffix = aged && cell.status !== 'DEACTIVATED' && cell.status !== 'PENDING' ? ' · Uploaded >30 days ago' : '';
-    if (cell.status === 'IMPORTED') return `Invoice received${ageSuffix}`;
-    if (cell.status === 'MANUAL') return `Marked as received${ageSuffix}`;
-    if (cell.status === 'CONFIRMED') return `Confirmed from invoice${ageSuffix}`;
-    if (cell.status === 'INFERRED_EMPTY') return `Inferred empty — click to mark as received${ageSuffix}`;
-    if (cell.status === 'PENDING') return 'Invoice received — awaiting confirmation';
-    if (cell.status === 'ERROR') return `Ingestion error — manual fix needed${ageSuffix}`;
-    if (cell.status === 'DEACTIVATED') return 'Deactivated — no API data expected';
-    if (onClick) return 'No data — click to mark as received';
-    return 'No data';
+    if (cell.status === 'PENDING') {
+      const ts = formatTimestamp(cell.record?.created_at);
+      return {
+        title: 'Invoice received — awaiting confirmation',
+        detail: ts ? `Invoice Received: ${ts}` : undefined,
+      };
+    }
+    if (cell.status === 'CONFIRMED') {
+      const ts = formatTimestamp(cell.record?.confirmed_at);
+      return {
+        title: `Confirmed from invoice${ageSuffix}`,
+        detail: ts ? `Uploaded: ${ts}` : undefined,
+      };
+    }
+    if (cell.status === 'IMPORTED') return { title: `Invoice received${ageSuffix}` };
+    if (cell.status === 'MANUAL') return { title: `Marked as received${ageSuffix}` };
+    if (cell.status === 'INFERRED_EMPTY') return { title: `Inferred empty — click to mark as received${ageSuffix}` };
+    if (cell.status === 'ERROR') return { title: `Ingestion error — manual fix needed${ageSuffix}` };
+    if (cell.status === 'DEACTIVATED') return { title: 'Deactivated — no API data expected' };
+    if (onClick) return { title: 'No data — click to mark as received' };
+    return { title: 'No data' };
   };
 
   const handleMouseEnter = () => {
@@ -604,7 +622,7 @@ function NonMeteredCell({ cell, onClick }: NonMeteredCellProps) {
         className="relative"
       >
         {content}
-        <CellTooltip pos={tooltipPos} text={getTooltip()} />
+        <CellTooltip pos={tooltipPos} tooltip={getTooltip()} />
       </div>
     );
   }
@@ -621,19 +639,22 @@ function NonMeteredCell({ cell, onClick }: NonMeteredCellProps) {
       >
         {content}
       </button>
-      <CellTooltip pos={tooltipPos} text={getTooltip()} />
+      <CellTooltip pos={tooltipPos} tooltip={getTooltip()} />
     </>
   );
 }
 
-function CellTooltip({ pos, text }: { pos: { x: number; y: number } | null; text: string }) {
+function CellTooltip({ pos, tooltip }: { pos: { x: number; y: number } | null; tooltip: { title: string; detail?: string } }) {
   if (!pos) return null;
   return (
     <div
       className="fixed z-[9999] bg-gray-900 text-white text-xs rounded px-3 py-2 shadow-xl pointer-events-none whitespace-nowrap"
       style={{ left: pos.x, top: pos.y, transform: 'translateX(-50%)' }}
     >
-      {text}
+      <div className="font-semibold">{tooltip.title}</div>
+      {tooltip.detail && (
+        <div className="text-amber-300 text-[11px] mt-0.5">{tooltip.detail}</div>
+      )}
       <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
     </div>
   );
