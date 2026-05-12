@@ -10,6 +10,7 @@ import {
   meteredExactDuplicateExists,
   type NgersMeterRow,
 } from '@/lib/ingestion-metered';
+import { eachMonthStartIsoOverlapping, syncMeteredGapPendingForMonths } from '@/lib/metered-gap-pending';
 import { getCurrentFiscalYearMonthsThroughNow } from '@/lib/non-metered-pending-seed';
 
 export const dynamic = 'force-dynamic';
@@ -364,11 +365,20 @@ function metaFromRow(row: NgersMeterRow) {
 async function processMeteredRows(
   supabase: SupabaseClient,
   rows: NgersMeterRow[],
-  confirmedAt: string
-): Promise<ProcessorResult<{ confirmed: number; deleted_pending: number; skipped_duplicates: number }>> {
+  confirmedAt: string,
+  pruneOrphanPending: boolean
+): Promise<
+  ProcessorResult<{
+    confirmed: number;
+    deleted_pending: number;
+    skipped_duplicates: number;
+    gap_pending_inserted: number;
+  }>
+> {
   let totalConfirmed = 0;
   let totalDeletedPending = 0;
   let totalSkippedDuplicates = 0;
+  let totalGapPendingInserted = 0;
 
   const groupedRows = new Map<string, NgersMeterRow[]>();
   for (const row of rows) {
@@ -415,14 +425,6 @@ async function processMeteredRows(
 
     const { meterId } = resolved;
 
-    const { data: allPending, error: pendErr } = await supabase
-      .from('actual_invoices')
-      .select('id, period_start_date')
-      .eq('meter_id', meterId)
-      .eq('status', 'PENDING');
-
-    if (pendErr) throw new Error(pendErr.message);
-
     const confirmedPeriods = new Map<string, { start: string; end: string }>();
     const periodTotals = new Map<string, { consumption: number; amount: number }>();
     const monthKeysConfirmed = new Set<string>();
@@ -440,7 +442,9 @@ async function processMeteredRows(
         };
       }
       confirmedPeriods.set(parsed.start, parsed);
-      monthKeysConfirmed.add(monthStartIso(parsed.start));
+      for (const m of eachMonthStartIsoOverlapping(parsed.start, parsed.end)) {
+        monthKeysConfirmed.add(m);
+      }
       const prev = periodTotals.get(parsed.start) ?? { consumption: 0, amount: 0 };
       periodTotals.set(parsed.start, {
         consumption: prev.consumption + (Number(row.Consumption) || 0),
@@ -454,14 +458,15 @@ async function processMeteredRows(
 
     for (const [periodStartKey, period] of Array.from(confirmedPeriods.entries())) {
       const totals = periodTotals.get(periodStartKey) ?? { consumption: 0, amount: 0 };
-      const monthStart = monthStartIso(periodStartKey);
 
       const { data: pendingList } = await supabase
         .from('actual_invoices')
         .select('id')
         .eq('meter_id', meterId)
         .eq('status', 'PENDING')
-        .eq('period_start_date', monthStart);
+        .lte('period_start_date', period.end)
+        .gte('period_end_date', period.start)
+        .order('period_start_date', { ascending: true });
 
       const pendings = pendingList ?? [];
 
@@ -524,21 +529,43 @@ async function processMeteredRows(
       }
     }
 
-    const fyMonthStarts = new Set(getCurrentFiscalYearMonthsThroughNow().map((m) => m.start));
-    const orphaned = (allPending ?? []).filter((r) => {
-      const pk = periodKey(r.period_start_date);
-      return !monthKeysConfirmed.has(pk) && fyMonthStarts.has(pk);
-    });
+    const gapSync = await syncMeteredGapPendingForMonths(
+      supabase,
+      meterId,
+      monthKeysConfirmed,
+      confirmedAt
+    );
+    totalDeletedPending += gapSync.deleted;
+    totalGapPendingInserted += gapSync.inserted;
 
-    if (orphaned.length > 0) {
-      const orphanIds = orphaned.map((r) => r.id);
-      const { error: delErr } = await supabase.from('actual_invoices').delete().in('id', orphanIds);
-      if (delErr) throw new Error(delErr.message);
-      totalDeletedPending += orphanIds.length;
+    if (pruneOrphanPending) {
+      const fyMonthStarts = new Set(getCurrentFiscalYearMonthsThroughNow().map((m) => m.start));
+      const { data: pendingNow, error: pnErr } = await supabase
+        .from('actual_invoices')
+        .select('id, period_start_date')
+        .eq('meter_id', meterId)
+        .eq('status', 'PENDING');
+      if (pnErr) throw new Error(pnErr.message);
+      const orphaned = (pendingNow ?? []).filter((r) => {
+        const pendingMonthStart = monthStartIso(periodKey(r.period_start_date));
+        return !monthKeysConfirmed.has(pendingMonthStart) && fyMonthStarts.has(pendingMonthStart);
+      });
+      if (orphaned.length > 0) {
+        const orphanIds = orphaned.map((r) => r.id);
+        const { error: delErr } = await supabase.from('actual_invoices').delete().in('id', orphanIds);
+        if (delErr) throw new Error(delErr.message);
+        totalDeletedPending += orphanIds.length;
+      }
     }
   }
 
-  return { ok: true, confirmed: totalConfirmed, deleted_pending: totalDeletedPending, skipped_duplicates: totalSkippedDuplicates };
+  return {
+    ok: true,
+    confirmed: totalConfirmed,
+    deleted_pending: totalDeletedPending,
+    skipped_duplicates: totalSkippedDuplicates,
+    gap_pending_inserted: totalGapPendingInserted,
+  };
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -552,7 +579,8 @@ async function processMeteredRows(
 //   No meter identifier + non-empty Category        → non-metered group path (facility_groups)
 //   No meter identifier + no Category               → non-metered line path (non_metered_lines)
 //
-// Body: flat JSON array of NGERS rows (types can be mixed in one request).
+// Body: non-empty JSON array of NGERS rows (types can be mixed), or
+//       { "rows": [ ... ], "prune_orphan_pending"?: boolean } for optional legacy FY-wide pending prune.
 //
 // All lookup failures (client, supplier, category, input type, facility, date range) return
 // a hard 4xx — nothing is silently skipped.
@@ -560,7 +588,7 @@ async function processMeteredRows(
 // Response on success:
 //   {
 //     "non_metered": { "confirmed": n },
-//     "metered":     { "confirmed": n, "deleted_pending": n, "skipped_duplicates": n }
+//     "metered":     { "confirmed": n, "deleted_pending": n, "skipped_duplicates": n, "gap_pending_inserted": n }
 //   }
 export async function POST(request: Request) {
   if (!checkApiKey(request)) {
@@ -571,14 +599,35 @@ export async function POST(request: Request) {
     const supabase = createSupabaseServiceRoleClient();
     const raw = await request.json();
 
-    if (!Array.isArray(raw) || raw.length === 0) {
+    let rows: UnifiedRow[];
+    let pruneOrphanPending = false;
+
+    if (Array.isArray(raw)) {
+      if (raw.length === 0) {
+        return NextResponse.json(
+          { error: 'Request body must be a non-empty JSON array of NGERS rows' },
+          { status: 400 }
+        );
+      }
+      rows = raw as UnifiedRow[];
+    } else if (
+      raw &&
+      typeof raw === 'object' &&
+      Array.isArray((raw as { rows?: unknown }).rows) &&
+      ((raw as { rows: unknown[] }).rows as unknown[]).length > 0
+    ) {
+      rows = (raw as { rows: UnifiedRow[] }).rows;
+      pruneOrphanPending = Boolean((raw as { prune_orphan_pending?: unknown }).prune_orphan_pending);
+    } else {
       return NextResponse.json(
-        { error: 'Request body must be a non-empty JSON array of NGERS rows' },
+        {
+          error:
+            'Request body must be a non-empty JSON array of NGERS rows, or an object { "rows": [ ... ] }',
+        },
         { status: 400 }
       );
     }
 
-    const rows = raw as UnifiedRow[];
     const confirmedAt = new Date().toISOString();
 
     const meteredRows: NgersMeterRow[] = [];
@@ -600,8 +649,14 @@ export async function POST(request: Request) {
         ? processNonMeteredLineRows(supabase, nmLineRows, confirmedAt)
         : Promise.resolve({ ok: true as const, confirmed: 0 }),
       meteredRows.length > 0
-        ? processMeteredRows(supabase, meteredRows, confirmedAt)
-        : Promise.resolve({ ok: true as const, confirmed: 0, deleted_pending: 0, skipped_duplicates: 0 }),
+        ? processMeteredRows(supabase, meteredRows, confirmedAt, pruneOrphanPending)
+        : Promise.resolve({
+            ok: true as const,
+            confirmed: 0,
+            deleted_pending: 0,
+            skipped_duplicates: 0,
+            gap_pending_inserted: 0,
+          }),
     ]);
 
     if (!nonMeteredGroupResult.ok) {
@@ -622,6 +677,7 @@ export async function POST(request: Request) {
         confirmed: meteredResult.confirmed,
         deleted_pending: meteredResult.deleted_pending,
         skipped_duplicates: meteredResult.skipped_duplicates,
+        gap_pending_inserted: meteredResult.gap_pending_inserted,
       },
     });
   } catch (error) {

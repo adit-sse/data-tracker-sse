@@ -7,6 +7,7 @@ import {
   meteredExactDuplicateExists,
   type NgersMeterRow,
 } from '@/lib/ingestion-metered';
+import { eachMonthStartIsoOverlapping, syncMeteredGapPendingForMonths } from '@/lib/metered-gap-pending';
 import { getCurrentFiscalYearMonthsThroughNow } from '@/lib/non-metered-pending-seed';
 
 export const dynamic = 'force-dynamic';
@@ -45,9 +46,10 @@ function metaFromRow(row: NgersMeterRow) {
 }
 
 // POST /api/ingestion/metered/confirm
-// Body: { "rows": [ NGERS-style rows ... ] }
-// Updates PENDING placeholder months to CONFIRMED with exact period dates from Date Range;
-// removes other FY pendings for that meter.
+// Body: { "rows": [ NGERS-style rows ... ], "prune_orphan_pending"?: boolean }
+// Updates PENDING rows overlapping the confirmed period to CONFIRMED with exact dates;
+// reconciles gap PENDING for partial months; optional prune_orphan_pending restores legacy
+// FY-wide deletion of PENDING rows for months not present in this request.
 //
 // All lookup failures (client, facility, supplier, input type, meter, date range) return
 // a hard 4xx — nothing is silently skipped.
@@ -67,6 +69,8 @@ export async function POST(request: Request) {
     if (rows.length === 0) {
       return NextResponse.json({ error: 'rows must be non-empty' }, { status: 400 });
     }
+
+    const pruneOrphanPending = Boolean((body as { prune_orphan_pending?: unknown }).prune_orphan_pending);
 
     const groupedRows = new Map<string, NgersMeterRow[]>();
 
@@ -93,6 +97,7 @@ export async function POST(request: Request) {
     let totalConfirmed = 0;
     let totalDeletedPending = 0;
     let totalSkippedDuplicates = 0;
+    let totalGapPendingInserted = 0;
 
     const confirmedAt = new Date().toISOString();
 
@@ -119,14 +124,6 @@ export async function POST(request: Request) {
 
       const { meterId } = resolved;
 
-      const { data: allPending, error: pendErr } = await supabase
-        .from('actual_invoices')
-        .select('id, period_start_date')
-        .eq('meter_id', meterId)
-        .eq('status', 'PENDING');
-
-      if (pendErr) throw new Error(pendErr.message);
-
       const confirmedPeriods = new Map<string, { start: string; end: string }>();
       const periodTotals = new Map<string, { consumption: number; amount: number }>();
       const monthKeysConfirmed = new Set<string>();
@@ -145,7 +142,9 @@ export async function POST(request: Request) {
           );
         }
         confirmedPeriods.set(parsed.start, parsed);
-        monthKeysConfirmed.add(monthStartIso(parsed.start));
+        for (const m of eachMonthStartIsoOverlapping(parsed.start, parsed.end)) {
+          monthKeysConfirmed.add(m);
+        }
         const prev = periodTotals.get(parsed.start) ?? { consumption: 0, amount: 0 };
         periodTotals.set(parsed.start, {
           consumption: prev.consumption + (Number(row.Consumption) || 0),
@@ -159,14 +158,15 @@ export async function POST(request: Request) {
 
       for (const [periodStartKey, period] of Array.from(confirmedPeriods.entries())) {
         const totals = periodTotals.get(periodStartKey) ?? { consumption: 0, amount: 0 };
-        const monthStart = monthStartIso(periodStartKey);
 
         const { data: pendingList } = await supabase
           .from('actual_invoices')
           .select('id')
           .eq('meter_id', meterId)
           .eq('status', 'PENDING')
-          .eq('period_start_date', monthStart);
+          .lte('period_start_date', period.end)
+          .gte('period_end_date', period.start)
+          .order('period_start_date', { ascending: true });
 
         const pendings = pendingList ?? [];
 
@@ -229,17 +229,33 @@ export async function POST(request: Request) {
         }
       }
 
-      const fyMonthStarts = new Set(getCurrentFiscalYearMonthsThroughNow().map((m) => m.start));
-      const orphaned = (allPending ?? []).filter((r) => {
-        const pk = periodKey(r.period_start_date);
-        return !monthKeysConfirmed.has(pk) && fyMonthStarts.has(pk);
-      });
+      const gapSync = await syncMeteredGapPendingForMonths(
+        supabase,
+        meterId,
+        monthKeysConfirmed,
+        confirmedAt
+      );
+      totalDeletedPending += gapSync.deleted;
+      totalGapPendingInserted += gapSync.inserted;
 
-      if (orphaned.length > 0) {
-        const orphanIds = orphaned.map((r) => r.id);
-        const { error: delErr } = await supabase.from('actual_invoices').delete().in('id', orphanIds);
-        if (delErr) throw new Error(delErr.message);
-        totalDeletedPending += orphanIds.length;
+      if (pruneOrphanPending) {
+        const fyMonthStarts = new Set(getCurrentFiscalYearMonthsThroughNow().map((m) => m.start));
+        const { data: pendingNow, error: pnErr } = await supabase
+          .from('actual_invoices')
+          .select('id, period_start_date')
+          .eq('meter_id', meterId)
+          .eq('status', 'PENDING');
+        if (pnErr) throw new Error(pnErr.message);
+        const orphaned = (pendingNow ?? []).filter((r) => {
+          const pendingMonthStart = monthStartIso(periodKey(r.period_start_date));
+          return !monthKeysConfirmed.has(pendingMonthStart) && fyMonthStarts.has(pendingMonthStart);
+        });
+        if (orphaned.length > 0) {
+          const orphanIds = orphaned.map((r) => r.id);
+          const { error: delErr } = await supabase.from('actual_invoices').delete().in('id', orphanIds);
+          if (delErr) throw new Error(delErr.message);
+          totalDeletedPending += orphanIds.length;
+        }
       }
     }
 
@@ -248,6 +264,7 @@ export async function POST(request: Request) {
       confirmed: totalConfirmed,
       deleted_pending: totalDeletedPending,
       skipped_duplicates: totalSkippedDuplicates,
+      gap_pending_inserted: totalGapPendingInserted,
     });
   } catch (error) {
     console.error('Error in ingestion/metered/confirm:', error);
