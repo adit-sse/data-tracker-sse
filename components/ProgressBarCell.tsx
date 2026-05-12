@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { differenceInDays, parseISO, isValid } from 'date-fns';
+import { differenceInDays, parseISO, isValid, format } from 'date-fns';
 import type { MonthlyCoverage } from '@/types';
 
 interface ProgressBarCellProps {
@@ -16,6 +16,12 @@ function isAgedRecord(createdAt: string | undefined): boolean {
   return isValid(d) && differenceInDays(new Date(), d) > 30;
 }
 
+function formatTimestamp(iso: string | undefined): string | null {
+  if (!iso) return null;
+  const d = parseISO(iso);
+  return isValid(d) ? format(d, 'd MMM yyyy, h:mm a') : null;
+}
+
 export default function ProgressBarCell({ coverage, onClick, disabled }: ProgressBarCellProps) {
   const { daysCovered, daysInMonth, percentage, gaps, effectiveDaysInMonth, isDeactivatedMonth, hasPending, invoices } = coverage;
   const denom = effectiveDaysInMonth ?? daysInMonth;
@@ -23,6 +29,13 @@ export default function ProgressBarCell({ coverage, onClick, disabled }: Progres
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   const aged = isAgedRecord(invoices?.[0]?.created_at);
+
+  const pendingInvoice = invoices?.find(inv => (inv.status ?? '').toUpperCase() === 'PENDING');
+  const confirmedInvoice = invoices?.find(
+    inv => (inv.status ?? '').toUpperCase() === 'CONFIRMED' || (inv.status ?? '').toUpperCase() === 'IMPORTED'
+  );
+  const receivedAt = formatTimestamp(pendingInvoice?.created_at);
+  const uploadedAt = formatTimestamp(confirmedInvoice?.confirmed_at);
 
   const getBgColor = () => {
     if (isDeactivatedMonth) return 'bg-slate-500 border-slate-600';
@@ -102,6 +115,12 @@ export default function ProgressBarCell({ coverage, onClick, disabled }: Progres
               ? `Pending — ${daysCovered}/${denom} days confirmed`
               : `${daysCovered}/${denom} days confirmed`}
           </div>
+          {hasPending && receivedAt && (
+            <div className="text-amber-300 text-[11px] mt-0.5">Invoice Received: {receivedAt}</div>
+          )}
+          {!isDeactivatedMonth && !hasPending && percentage > 0 && uploadedAt && (
+            <div className="text-gray-300 text-[11px] mt-0.5">Uploaded: {uploadedAt}</div>
+          )}
           {!isDeactivatedMonth && !hasPending && percentage > 0 && percentage < 100 && (
             <div className="text-gray-300 text-[11px] mt-0.5">Incomplete</div>
           )}

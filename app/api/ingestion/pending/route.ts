@@ -42,7 +42,8 @@ async function seedMeteredPending(
     facilityName?: string;
     identifierType?: string;
     lookup1?: string;
-  }
+  },
+  pendingReceivedAt: string
 ): Promise<MeteredPendingResult> {
   const { data: facilities } = await supabase
     .from('facilities')
@@ -116,6 +117,7 @@ async function seedMeteredPending(
       period_start_date: string;
       period_end_date: string;
       status: string;
+      created_at: string;
     }> = [];
 
     for (const month of months) {
@@ -128,6 +130,7 @@ async function seedMeteredPending(
         period_start_date: month.start,
         period_end_date: month.end,
         status: 'PENDING',
+        created_at: pendingReceivedAt,
       });
     }
 
@@ -167,6 +170,7 @@ export async function POST(request: Request) {
   }
 
   try {
+    const pendingReceivedAt = new Date().toISOString();
     const supabase = createSupabaseServiceRoleClient();
     const body = await request.json();
     const { client_name, supplier_name, utility_name, mode, facility_name, identifier_type, lookup1, lookup2 } =
@@ -213,6 +217,7 @@ export async function POST(request: Request) {
         facilityId: resolved.facilityId,
         supplierId: resolved.supplierId,
         inputTypeId: resolved.categoryId,
+        pendingReceivedAt,
       });
 
       return NextResponse.json({
@@ -252,6 +257,7 @@ export async function POST(request: Request) {
         period_start_date: string;
         period_end_date: string;
         status: string;
+        created_at: string;
       }> = [];
 
       for (const month of months) {
@@ -263,6 +269,7 @@ export async function POST(request: Request) {
           period_start_date: month.start,
           period_end_date: month.end,
           status: 'PENDING',
+          created_at: pendingReceivedAt,
         });
       }
 
@@ -303,7 +310,7 @@ export async function POST(request: Request) {
 
     if (!utilityTrimmed) {
       // Bulk Scope 1
-      const nmResult = await seedAllScope1NonMeteredPending(supabase, client_name, supplier_name);
+      const nmResult = await seedAllScope1NonMeteredPending(supabase, client_name, supplier_name, pendingReceivedAt);
       if (nmResult.ok) {
         nonMeteredResult = {
           groups: nmResult.groups,
@@ -350,7 +357,8 @@ export async function POST(request: Request) {
             const { created, skipped } = await seedNonMeteredFacilityGroupPending(
               supabase,
               supplier.id,
-              members
+              members,
+              pendingReceivedAt
             );
             nonMeteredResult = {
               groups: [{ category_name: utilityTrimmed, created, skipped }],
@@ -366,7 +374,7 @@ export async function POST(request: Request) {
     const meteredResult = await seedMeteredPending(supabase, client.id, supplier.id, {
       utilityName: utilityTrimmed || undefined,
       facilityName: facilityTrimmed || undefined,
-    });
+    }, pendingReceivedAt);
 
     // Facility not found or input type not found — hard error regardless of non-metered result
     if (!meteredResult.ok) {

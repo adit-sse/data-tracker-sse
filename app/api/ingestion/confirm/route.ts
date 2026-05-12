@@ -58,7 +58,8 @@ function parseDateRange(dateRange: string): { start: string; end: string } | nul
  */
 async function processLineConfirm(
   supabase: SupabaseClient,
-  rows: NGERSRow[]
+  rows: NGERSRow[],
+  confirmedAt: string
 ): Promise<LineConfirmResult> {
   let totalConfirmed = 0;
 
@@ -117,7 +118,7 @@ async function processLineConfirm(
       if (existing) {
         const { error: updErr } = await supabase
           .from('non_metered_records')
-          .update({ status: 'CONFIRMED' })
+          .update({ status: 'CONFIRMED', confirmed_at: confirmedAt })
           .eq('id', existing.id);
         if (updErr) throw new Error(updErr.message);
       } else {
@@ -129,6 +130,7 @@ async function processLineConfirm(
             period_start_date: parsed.start,
             period_end_date: parsed.end,
             status: 'CONFIRMED',
+            confirmed_at: confirmedAt,
           },
           {
             onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
@@ -166,6 +168,7 @@ export async function POST(request: Request) {
 
   try {
     const supabase = createSupabaseServiceRoleClient();
+    const confirmedAt = new Date().toISOString();
     const raw = await request.json();
     let rows: NGERSRow[];
     let lineMode = false;
@@ -190,7 +193,7 @@ export async function POST(request: Request) {
     }
 
     if (lineMode) {
-      const result = await processLineConfirm(supabase, rows);
+      const result = await processLineConfirm(supabase, rows, confirmedAt);
       if (!result.ok) {
         return NextResponse.json({ error: result.error }, { status: result.status });
       }
@@ -339,7 +342,7 @@ export async function POST(request: Request) {
         if (existing) {
           await supabase
             .from('non_metered_records')
-            .update({ status: 'CONFIRMED' })
+            .update({ status: 'CONFIRMED', confirmed_at: confirmedAt })
             .eq('id', existing.id);
         } else {
           await supabase.from('non_metered_records').upsert(
@@ -350,6 +353,7 @@ export async function POST(request: Request) {
               period_start_date: parsed.start,
               period_end_date: parsed.end,
               status: 'CONFIRMED',
+              confirmed_at: confirmedAt,
             },
             {
               onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',

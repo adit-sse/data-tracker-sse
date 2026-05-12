@@ -67,17 +67,12 @@ export async function GET(request: Request) {
     const facilityIds = (facilities ?? []).map((f: { id: string }) => f.id);
 
     if (facilityIds.length === 0) {
-      return NextResponse.json({
-        client_id: client.id,
-        client_name: client.name,
-        supplier_id: supplier.id,
-        supplier_name: supplier.name,
-        has_scope1: false,
-        has_scope2: false,
-        has_mixed_scopes: false,
-        scope1_input_types: [],
-        scope2_input_types: [],
-      });
+      return NextResponse.json(
+        {
+          error: `No meters or non-metered lines configured for client "${client_name}" and supplier "${supplier_name}". Check that the client+supplier pairing is set up correctly before running ingestion.`,
+        },
+        { status: 404 }
+      );
     }
 
     // Fetch all meters for this client+supplier, with their input type scope
@@ -110,22 +105,35 @@ export async function GET(request: Request) {
 
     const scope1Names = new Set<string>();
     const scope2Names = new Set<string>();
+    const nullScopeNames = new Set<string>();
 
     for (const row of meterRows ?? []) {
       const it = resolveInputType((row as { input_types: InputTypeEmbed }).input_types);
       if (!it) continue;
       if (it.scope === 1) scope1Names.add(it.name);
-      if (it.scope === 2) scope2Names.add(it.name);
+      else if (it.scope === 2) scope2Names.add(it.name);
+      else nullScopeNames.add(it.name);
     }
 
     for (const row of lineRows ?? []) {
       const it = resolveInputType((row as { input_types: InputTypeEmbed }).input_types);
       if (!it) continue;
       if (it.scope === 1) scope1Names.add(it.name);
+      else if (it.scope !== 2) nullScopeNames.add(it.name);
     }
 
     const has_scope1 = scope1Names.size > 0;
     const has_scope2 = scope2Names.size > 0;
+    const totalRows = (meterRows?.length ?? 0) + (lineRows?.length ?? 0);
+
+    if (totalRows === 0) {
+      return NextResponse.json(
+        {
+          error: `No meters or non-metered lines configured for client "${client_name}" and supplier "${supplier_name}". Check that the client+supplier pairing is set up correctly before running ingestion.`,
+        },
+        { status: 404 }
+      );
+    }
 
     return NextResponse.json({
       client_id: client.id,
@@ -137,6 +145,9 @@ export async function GET(request: Request) {
       has_mixed_scopes: has_scope1 && has_scope2,
       scope1_input_types: Array.from(scope1Names).sort(),
       scope2_input_types: Array.from(scope2Names).sort(),
+      ...(nullScopeNames.size > 0 && {
+        warning: `${nullScopeNames.size} input type(s) have no scope set and were excluded from scope detection: ${Array.from(nullScopeNames).sort().join(', ')}. Fix these in Manage Input Types.`,
+      }),
     });
   } catch (e) {
     console.error('GET /api/ingestion/mixed-scope:', e);

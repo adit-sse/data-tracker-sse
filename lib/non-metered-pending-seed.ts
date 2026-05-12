@@ -52,9 +52,16 @@ const GREEN_STATUSES = ['IMPORTED', 'MANUAL', 'CONFIRMED', 'DEACTIVATED'] as con
  */
 export async function seedIngestionPendingNonMeteredLineMonths(
   supabase: SupabaseClient,
-  params: { facilityId: string; supplierId: string; inputTypeId: string; categoryId?: string | null }
+  params: {
+    facilityId: string;
+    supplierId: string;
+    inputTypeId: string;
+    categoryId?: string | null;
+    /** When POST /api/ingestion/pending ran — stored as created_at so UI shows invoice-received time. */
+    pendingReceivedAt?: string;
+  }
 ): Promise<number> {
-  const { facilityId, supplierId, inputTypeId, categoryId } = params;
+  const { facilityId, supplierId, inputTypeId, categoryId, pendingReceivedAt } = params;
 
   await upsertNonMeteredLine(supabase, { facilityId, supplierId, inputTypeId, categoryId });
   const months = getCurrentFiscalYearMonthsThroughNow();
@@ -97,6 +104,7 @@ export async function seedIngestionPendingNonMeteredLineMonths(
     period_end_date: string;
     status: string;
     inferred_from_id: null;
+    created_at: string;
   }> = [];
 
   for (const month of months) {
@@ -111,6 +119,7 @@ export async function seedIngestionPendingNonMeteredLineMonths(
         period_end_date: month.end,
         status: 'PENDING',
         inferred_from_id: null,
+        created_at: pendingReceivedAt ?? new Date().toISOString(),
       });
     }
   }

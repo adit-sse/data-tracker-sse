@@ -20,7 +20,8 @@ function firstCategory(category: CategoryEmbed): { id: string; name: string; sco
 export async function seedAllScope1NonMeteredPending(
   supabase: SupabaseClient,
   clientName: string,
-  supplierName: string
+  supplierName: string,
+  pendingReceivedAt?: string
 ): Promise<
   | {
       ok: true;
@@ -116,7 +117,12 @@ export async function seedAllScope1NonMeteredPending(
       continue;
     }
 
-    const { created, skipped } = await seedNonMeteredFacilityGroupPending(supabase, supplier.id, members);
+    const { created, skipped } = await seedNonMeteredFacilityGroupPending(
+      supabase,
+      supplier.id,
+      members,
+      pendingReceivedAt
+    );
     sumCreated += created;
     sumSkipped += skipped;
     groupsOut.push({
@@ -183,6 +189,7 @@ export async function seedAllScope1NonMeteredPending(
         facilityId: r.facility_id,
         supplierId: supplier.id,
         inputTypeId: r.input_type_id,
+        pendingReceivedAt,
       });
 
       sumCreated += created;

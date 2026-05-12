@@ -14,8 +14,8 @@ export async function PUT(request: Request, { params }: { params: { id: string }
     if (!name?.trim()) {
       return NextResponse.json({ error: 'name is required' }, { status: 400 });
     }
-    if (scope !== undefined && ![1, 3].includes(Number(scope))) {
-      return NextResponse.json({ error: 'scope must be 1 or 3' }, { status: 400 });
+    if (scope !== undefined && ![1, 2, 3].includes(Number(scope))) {
+      return NextResponse.json({ error: 'scope must be 1, 2, or 3' }, { status: 400 });
     }
 
     const payload: Record<string, unknown> = { name: name.trim() };

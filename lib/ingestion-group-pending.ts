@@ -11,8 +11,10 @@ export type GroupPendingMember = { facility_id: string; input_type_id: string };
 export async function seedNonMeteredFacilityGroupPending(
   supabase: SupabaseClient,
   supplierId: string,
-  members: GroupPendingMember[]
+  members: GroupPendingMember[],
+  pendingReceivedAt?: string
 ): Promise<{ created: number; skipped: number }> {
+  const receivedAt = pendingReceivedAt ?? new Date().toISOString();
   if (members.length === 0) {
     return { created: 0, skipped: 0 };
   }
@@ -65,6 +67,7 @@ export async function seedNonMeteredFacilityGroupPending(
           period_start_date: month.start,
           period_end_date: month.end,
           status: 'PENDING',
+          created_at: receivedAt,
         });
       }
     }
