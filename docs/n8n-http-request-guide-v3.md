@@ -3,7 +3,7 @@
 **Base URL:** `https://data-tracker-sse-production-185f.up.railway.app`  
 **Auth header (all nodes):** `Authorization: Bearer <INGESTION_API_KEY>`
 
-> **What changed from v2:** Confirm is now a single unified endpoint. `POST /api/ingestion/unified-confirm` handles non-metered group, non-metered line, and metered rows in one call — auto-detected per row from the presence of `NMI`/`MIRN`/`Account Number`/`Meter Number`. The old separate confirm endpoints still work but are no longer needed for standard workflows.
+> **What changed from v2:** Confirm is now a single unified endpoint. `POST /api/ingestion/unified-confirm` handles non-metered group, non-metered line, and metered rows in one call — auto-detected per row from the presence of `NMI`/`MIRN`/`Account Number`/`Meter Number`. The old separate confirm endpoints still work but are no longer needed for standard workflows. This guide also documents **`GET /api/ingestion/pending-mode`** (see **Pending Mode — GET**, section **2b**) for discovering group categories and standalone-line presence before pending or after confirms.
 
 ---
 
@@ -14,6 +14,8 @@ Pending — Unified          ← seed PENDING months once per supplier cycle (al
         ↓  (for each invoice as it arrives)
 Confirm — Unified          ← turn PENDING → CONFIRMED for all row types in one call
         ↓  (after ALL invoices for a period are submitted — non-metered only)
+Pending Mode — GET         ← optional: read which group categories + standalone lines exist (drive inferred-empty)
+        ↓
 NM Inferred Empty          ← mark remaining non-metered PENDING as INFERRED_EMPTY
         ↓  (if a parse fails)
 Error — NM / Metered       ← mark that period as ERROR
@@ -23,6 +25,7 @@ Error — NM / Metered       ← mark that period as ERROR
 - Call **Pending — Unified** once at the start of each supplier invoice cycle. It skips months that already have any record.
 - **Confirm — Unified** auto-detects row type per row — metered and non-metered rows can be mixed in the same array.
 - Confirm only touches what you send. Other facilities, months, and scopes are always left as-is.
+- **Pending Mode — GET** is read-only configuration for this client+supplier. Use it **before** pending to branch group vs line bodies, or **after** all confirms to loop **NM Inferred Empty — Group** (each `facility_groups[].category_name`). It also returns `standalone_non_metered_line_count` (not per-line details — use **NM Inferred Empty — Line** when you already know each standalone line).
 - Inferred Empty is non-metered only — metered months have no "inferred" concept.
 
 ---
@@ -48,6 +51,7 @@ The unified confirm classifies each row independently before processing:
 | Pending — Unified (specific meter) | `POST /api/ingestion/pending` | Seed one specific meter by NMI/MIRN/etc. |
 | Pending — Line (non-metered) | `POST /api/ingestion/pending` | Standalone Scope 1 line only |
 | **Confirm — Unified** ⭐ NEW | `POST /api/ingestion/unified-confirm` | Confirm any mix of metered + non-metered group + non-metered line rows in one call |
+| Pending Mode — GET | `GET /api/ingestion/pending-mode` | Discover non-metered setup: `pending_mode`, `facility_groups` (with `category_name` for inferred-empty loops), `standalone_non_metered_line_count`; optional before pending or after confirms |
 | NM Confirm — Group | `POST /api/ingestion/confirm` | Confirm non-metered group rows only (legacy) |
 | NM Confirm — Line | `POST /api/ingestion/confirm` | Confirm non-metered line rows only (legacy) |
 | Metered Confirm | `POST /api/ingestion/metered/confirm` | Confirm metered rows only (legacy) |
@@ -259,7 +263,7 @@ Turns `PENDING` → `CONFIRMED` for every row in the payload. Row type is **auto
 
 **Metered behaviour:** Updates the matching `PENDING` placeholder to `CONFIRMED` with exact period dates and consumption/amount from the row. Any other `PENDING` rows in the fiscal year for that meter that were not in the payload are deleted (they represent months with no invoice).
 
-**Non-metered behaviour:** Only the submitted facility+period combos are confirmed. Other facilities and months are left untouched. Call `POST /api/ingestion/inferred-empty` after all invoices for a period are submitted.
+**Non-metered behaviour:** Only the submitted facility+period combos are confirmed. Other facilities and months are left untouched. Call `POST /api/ingestion/inferred-empty` after all invoices for a period are submitted. Use **Pending Mode — GET** (section **2b**) if you need the list of group `category` values to loop inferred-empty.
 
 ```json
 {
@@ -292,9 +296,77 @@ Turns `PENDING` → `CONFIRMED` for every row in the payload. Row type is **auto
 
 ---
 
+## 2b · Pending Mode — GET *(new in this guide)*
+
+Read-only snapshot for this client+supplier: which **facility groups** exist (with NGERS **`category_name`** for each), whether **standalone** non-metered lines exist, and flags that mirror the old pending body choice (`use_group_pending_body`, `use_line_pending_body`).
+
+**Query:** `client_name`, `supplier_name` (case-insensitive), same Bearer auth as other ingestion routes.
+
+**Typical uses:**
+- **Before** `POST /api/ingestion/pending` — branch on `pending_mode` (`group` / `line` / `mixed` / `none`).
+- **After** all **Confirm — Unified** calls for a period — loop **NM Inferred Empty — Group** once per `facility_groups[]` entry where `category_name` is set (that string is the `category` body field on `POST /api/ingestion/inferred-empty`).
+
+**Response:** Ingestion endpoints keep using **names** (`client_name`, `supplier_name`, `category` on inferred-empty). This GET only accepts those two query names as well. The JSON body below shows the fields you usually **branch on** or pass to the next node; the live API may also include `client_id`, `supplier_id`, and per-group `id` / `category_id` / `name` for debugging or linking — you do not send those to `pending`, `unified-confirm`, or `inferred-empty`.
+
+```json
+{
+  "client_name": "Your Client Name",
+  "supplier_name": "Your Supplier Name",
+  "pending_mode": "mixed",
+  "facility_groups": [
+    {
+      "category_name": "Transport Fuels",
+      "member_count": 3,
+      "ready_for_group_pending": true
+    }
+  ],
+  "standalone_non_metered_line_count": 1,
+  "use_group_pending_body": true,
+  "use_line_pending_body": true
+}
+```
+
+```json
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/pending-mode",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            { "name": "client_name", "value": "Your Client Name" },
+            { "name": "supplier_name", "value": "Your Supplier Name" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_INGESTION_API_KEY" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [0, 200],
+      "name": "Pending Mode — GET"
+    }
+  ],
+  "connections": {},
+  "pinData": {}
+}
+```
+
+---
+
 ## 3 · NM Inferred Empty — Group *(unchanged)*
 
 Call after all invoices for a period are submitted. Marks remaining non-metered `PENDING` in confirmed months as `INFERRED_EMPTY`.
+
+Use **`category`** = the NGERS reporting category for that facility group (same string as **`facility_groups[].category_name`** from **Pending Mode — GET**, section **2b**, when you loop one inferred-empty call per group).
 
 **Response:** `{ "mode": "group", "inferred_empty": n, "confirmed_periods_checked": n }`
 

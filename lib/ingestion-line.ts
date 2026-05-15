@@ -153,3 +153,73 @@ export async function resolveIngestionLine(
     status: 404,
   };
 }
+
+/**
+ * Group-style confirm payloads include NGERS Category + Input Type + Facility.
+ * When there is no matching `facility_groups` row, resolve the facility via
+ * `non_metered_lines` (same client/supplier/category/input_type/facility name).
+ */
+export async function resolveNonMeteredCoverageWithoutFacilityGroup(
+  supabase: SupabaseClient,
+  params: {
+    clientId: string;
+    clientName: string;
+    facilityName: string;
+    supplierId: string;
+    supplierName: string;
+    categoryId: string;
+    categoryName: string;
+    inputTypeId: string;
+    inputTypeName: string;
+  }
+): Promise<{ ok: true; facilityId: string } | { ok: false; error: string; status: number }> {
+  const facTrimmed = params.facilityName.trim();
+  if (!facTrimmed) {
+    return { ok: false, error: 'Row is missing Facility', status: 422 };
+  }
+
+  const { data: facility, error: facErr } = await supabase
+    .from('facilities')
+    .select('id')
+    .eq('client_id', params.clientId)
+    .ilike('name', facTrimmed)
+    .limit(1)
+    .maybeSingle();
+
+  if (facErr) {
+    return { ok: false, error: facErr.message, status: 500 };
+  }
+  if (!facility) {
+    return {
+      ok: false,
+      error: `Facility "${params.facilityName}" not found for client "${params.clientName}"`,
+      status: 404,
+    };
+  }
+
+  const facilityId = String(facility.id);
+
+  const { data: line, error: lineErr } = await supabase
+    .from('non_metered_lines')
+    .select('id')
+    .eq('facility_id', facilityId)
+    .eq('supplier_id', params.supplierId)
+    .eq('input_type_id', params.inputTypeId)
+    .eq('category_id', params.categoryId)
+    .limit(1)
+    .maybeSingle();
+
+  if (lineErr) {
+    return { ok: false, error: lineErr.message, status: 500 };
+  }
+
+  if (!line) {
+    return {
+      ok: false,
+      error: `No facility group for "${params.clientName}" / "${params.supplierName}" / "${params.categoryName}" and no matching non_metered_lines row for facility "${params.facilityName}" with Input Type "${params.inputTypeName}".`,
+      status: 404,
+    };
+  }
+
+  return { ok: true, facilityId };
+}

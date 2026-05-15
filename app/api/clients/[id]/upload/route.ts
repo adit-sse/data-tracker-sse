@@ -1381,7 +1381,9 @@ async function cachedFindOrCreateCategory(
 }
 
 /**
- * Resolve public.categories row for NGERS grouping. Scope 2 input types do not use this FK.
+ * Resolve public.categories row for NGERS grouping (Scope 1, 2, and 3).
+ * Category may be left blank; when set, it must match the input type's scope
+ * (e.g. Scope 2 electricity uses the ELECTRICITY reporting category from migration 011).
  */
 async function cachedResolveReportingCategory(
   ctx: UploadContext,
@@ -1390,12 +1392,6 @@ async function cachedResolveReportingCategory(
 ): Promise<string | null> {
   const trimmed = rawName?.trim() ?? '';
   if (!trimmed) return null;
-
-  if (inputTypeScope === 2) {
-    throw new Error(
-      `Category "${trimmed}" is not used with Scope 2 input types (e.g. purchased electricity). Leave Category blank for those rows.`,
-    );
-  }
 
   const key = trimmed.toLowerCase();
   let row = ctx.reportingCategoryCache.get(key);
@@ -1423,6 +1419,9 @@ async function cachedResolveReportingCategory(
 
   if (inputTypeScope === 1 && row.scope !== 1) {
     throw new Error(`Category "${trimmed}" is Scope ${row.scope}, but this Input Type is Scope 1.`);
+  }
+  if (inputTypeScope === 2 && row.scope !== 2) {
+    throw new Error(`Category "${trimmed}" is Scope ${row.scope}, but this Input Type is Scope 2.`);
   }
   if (inputTypeScope === 3 && row.scope !== 3) {
     throw new Error(`Category "${trimmed}" is Scope ${row.scope}, but this Input Type is Scope 3.`);
