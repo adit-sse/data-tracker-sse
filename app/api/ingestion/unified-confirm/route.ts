@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
-import { resolveIngestionLine } from '@/lib/ingestion-line';
+import { resolveIngestionLine, resolveNonMeteredCoverageWithoutFacilityGroup } from '@/lib/ingestion-line';
 import { findInputTypeForIngestion } from '@/lib/ingestion-utility-category';
 import { parseNgersDateRange, monthStartIso } from '@/lib/ingestion-dates';
 import {
@@ -139,34 +139,29 @@ async function processNonMeteredGroupRows(
       .eq('category_id', groupCategory.id)
       .single();
 
-    if (!group) {
-      return {
-        ok: false,
-        error: `No facility group configured for "${Company}" / "${Provider}" / "${Category}"`,
-        status: 404,
-      };
-    }
+    const useFacilityGroup = Boolean(group);
 
-    const members = (group.members ?? []) as unknown as GroupMember[];
     const facilityNameToId = new Map<string, string>();
-    const allMemberIds: string[] = [];
 
-    for (const member of members) {
-      const line = member.line;
-      if (!line || !line.input_type_id) continue;
-      if (line.input_type_id !== targetInputTypeId) continue;
-      const fid = String(line.facility_id);
-      const fname = line.facility?.name;
-      if (fname) facilityNameToId.set(fname.toLowerCase(), fid);
-      allMemberIds.push(fid);
-    }
+    if (useFacilityGroup) {
+      const members = (group!.members ?? []) as unknown as GroupMember[];
 
-    if (allMemberIds.length === 0) {
-      return {
-        ok: false,
-        error: `No group members match Input Type "${InputType}" for "${Company}" / "${Provider}" / "${Category}"`,
-        status: 404,
-      };
+      for (const member of members) {
+        const line = member.line;
+        if (!line || !line.input_type_id) continue;
+        if (line.input_type_id !== targetInputTypeId) continue;
+        const fid = String(line.facility_id);
+        const fname = line.facility?.name;
+        if (fname) facilityNameToId.set(fname.toLowerCase(), fid);
+      }
+
+      if (facilityNameToId.size === 0) {
+        return {
+          ok: false,
+          error: `No group members match Input Type "${InputType}" for "${Company}" / "${Provider}" / "${Category}"`,
+          status: 404,
+        };
+      }
     }
 
     for (const row of groupRows) {
@@ -186,13 +181,33 @@ async function processNonMeteredGroupRows(
         };
       }
 
-      const facilityId = facilityNameToId.get(facility.toLowerCase());
-      if (!facilityId) {
-        return {
-          ok: false,
-          error: `Facility "${facility}" not found in group for "${Company}" / "${Provider}" / "${Category}"`,
-          status: 404,
-        };
+      let facilityId: string;
+      if (useFacilityGroup) {
+        const fid = facilityNameToId.get(facility.toLowerCase());
+        if (!fid) {
+          return {
+            ok: false,
+            error: `Facility "${facility}" not found in group for "${Company}" / "${Provider}" / "${Category}"`,
+            status: 404,
+          };
+        }
+        facilityId = fid;
+      } else {
+        const lineResolved = await resolveNonMeteredCoverageWithoutFacilityGroup(supabase, {
+          clientId: client.id,
+          clientName: Company,
+          facilityName: facility,
+          supplierId: supplier.id,
+          supplierName: Provider,
+          categoryId: groupCategory.id,
+          categoryName: Category,
+          inputTypeId: targetInputTypeId,
+          inputTypeName: InputType,
+        });
+        if (!lineResolved.ok) {
+          return { ok: false, error: lineResolved.error, status: lineResolved.status };
+        }
+        facilityId = lineResolved.facilityId;
       }
 
       const { data: existing } = await supabase

@@ -96,8 +96,8 @@ export default function UploadPage() {
             </li>
             <li>
               <strong>Facility / meter setup:</strong> Facility, Input Type (name from Manage Input
-              Types), Supplier, Address, optional Category (NGERS reporting group for Scope 1 and 3 —
-              leave blank for Scope 2 e.g. electricity), MonthsWithData, DataPointCount (optional),
+              Types), Supplier, Address, optional Category (NGERS reporting group; for Scope 2
+              electricity use the Electricity category, or leave blank), MonthsWithData, DataPointCount (optional),
               Identifier, MonthsDeactivated. Month ranges: <code className="text-xs">Jul 2025 - Nov 2025</code>.
               Legacy templates may use a <code className="text-xs">Utility</code> column instead of Input Type.
             </li>
