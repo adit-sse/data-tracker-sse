@@ -221,6 +221,7 @@ export interface FacilityGroupMember {
     supplier_id?: string;
     facility?: Facility;
     input_type?: InputType;
+    supplier?: Supplier;
   };
 }
 

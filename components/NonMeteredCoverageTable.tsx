@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { format, endOfMonth, startOfMonth, isAfter, parseISO, isValid, differenceInDays } from 'date-fns';
+import ConfirmModal from './ConfirmModal';
 import type {
   NonMeteredRowWithCoverage,
   NonMeteredMonthlyCoverage,
@@ -32,6 +33,7 @@ interface NonMeteredCoverageTableProps {
   onEmptyCellClick?: (row: NonMeteredRowWithCoverage, cell: NonMeteredMonthlyCoverage) => void;
   onLineStatusToggle?: (lineId: string, currentIsActive: boolean) => void;
   onUpdateLine?: (lineId: string, field: 'category_id' | 'input_type_id', value: string | null) => Promise<void>;
+  onDeleteLine?: (lineId: string) => Promise<void>;
 }
 
 export default function NonMeteredCoverageTable({
@@ -42,6 +44,7 @@ export default function NonMeteredCoverageTable({
   onEmptyCellClick,
   onLineStatusToggle,
   onUpdateLine,
+  onDeleteLine,
 }: NonMeteredCoverageTableProps) {
   const [filterSupplier, setFilterSupplier] = useState<string>('ALL');
   const [filterFacility, setFilterFacility] = useState<string>('ALL');
@@ -49,6 +52,9 @@ export default function NonMeteredCoverageTable({
   const [filterGroup, setFilterGroup] = useState<string>('ALL');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [togglingLineId, setTogglingLineId] = useState<string | null>(null);
+  const [deletingRow, setDeletingRow] = useState<NonMeteredRowWithCoverage | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Inline editing state
   const [editingCell, setEditingCell] = useState<{
@@ -137,6 +143,20 @@ export default function NonMeteredCoverageTable({
     }
   };
 
+  const handleConfirmDelete = async () => {
+    if (!deletingRow || !onDeleteLine) return;
+    setDeleteLoading(true);
+    setDeleteError(null);
+    try {
+      await onDeleteLine(deletingRow.lineId);
+      setDeletingRow(null);
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : 'Failed to delete line');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   const suppliers = Array.from(new Set(rows.map((r) => r.supplierName))).sort();
   const facilityNames = Array.from(new Set(rows.map((r) => r.facilityName))).sort();
   const inputTypeNames = Array.from(new Set(rows.map((r) => r.inputTypeName))).sort();
@@ -168,6 +188,7 @@ export default function NonMeteredCoverageTable({
   const currentMonthLabel = format(now, 'MMM yy');
 
   return (
+    <>
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       {/* Filter Controls */}
       <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
@@ -258,6 +279,11 @@ export default function NonMeteredCoverageTable({
             <div className="w-[100px] min-w-[100px] px-2 py-3 border-r border-gray-300 text-center">
               <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Status</span>
             </div>
+            {onDeleteLine && (
+              <div className="w-[44px] min-w-[44px] px-1 py-3 border-r border-gray-300 text-center">
+                <span className="sr-only">Actions</span>
+              </div>
+            )}
             <div className="flex-1 flex">
               {monthLabels.map((month) => {
                 const parts = month.split(' ');
@@ -428,6 +454,23 @@ export default function NonMeteredCoverageTable({
                         </span>
                       )}
                     </div>
+                    {onDeleteLine && (
+                      <div className="w-[44px] min-w-[44px] px-1 py-3 border-r border-gray-200 flex items-center justify-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeleteError(null);
+                            setDeletingRow(row);
+                          }}
+                          title="Delete line"
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
 
                     {/* Month cells */}
                     <div className="flex-1 flex items-center py-1.5">
@@ -514,6 +557,35 @@ export default function NonMeteredCoverageTable({
         </div>
       </div>
     </div>
+
+    {deletingRow && onDeleteLine && (
+      <ConfirmModal
+        title="Delete Scope 1 Line"
+        message={
+          <>
+            Delete this line and all of its coverage records?
+            <span className="block mt-2 font-medium text-gray-900">
+              {deletingRow.facilityName} · {deletingRow.supplierName} · {deletingRow.inputTypeName}
+            </span>
+          </>
+        }
+        subMessage={
+          deletingRow.groupName
+            ? `This line is part of the "${deletingRow.groupName}" group and will be removed from that group.`
+            : 'This cannot be undone.'
+        }
+        confirmLabel="Delete line"
+        confirmText="delete"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => {
+          setDeletingRow(null);
+          setDeleteError(null);
+        }}
+        loading={deleteLoading}
+        error={deleteError ?? undefined}
+      />
+    )}
+    </>
   );
 }
 

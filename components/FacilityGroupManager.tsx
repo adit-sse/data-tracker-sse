@@ -1,19 +1,19 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import type { FacilityGroup, Supplier, Category } from '@/types';
+import { useState, useEffect } from 'react';
+import type { FacilityGroup, Supplier, Category, InputType } from '@/types';
 
 interface FacilityStub {
   id: string;
   name: string;
 }
 
-interface FacilityCategoryOption {
-  id: string;
-  name: string;
-  scope: number;
-  supplierId: string | null;
-  supplierName: string | null;
+interface MemberEntry {
+  key: string;
+  non_metered_line_id: string | null;
+  facility_id: string;
+  input_type_id: string;
+  supplier_id: string;
 }
 
 interface FacilityGroupManagerProps {
@@ -21,6 +21,11 @@ interface FacilityGroupManagerProps {
   facilities: FacilityStub[];
   onClose: () => void;
   onGroupSaved?: () => void;
+}
+
+let memberKeyCounter = 0;
+function newMemberKey() {
+  return `member-${++memberKeyCounter}`;
 }
 
 export default function FacilityGroupManager({
@@ -32,8 +37,7 @@ export default function FacilityGroupManager({
   const [groups, setGroups] = useState<FacilityGroup[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [reportingCategories, setReportingCategories] = useState<Category[]>([]);
-  // facilityId → scope-1 (category + supplier) combos that already have records for that facility
-  const [facilityCategoryMap, setFacilityCategoryMap] = useState<Record<string, FacilityCategoryOption[]>>({});
+  const [inputTypes, setInputTypes] = useState<InputType[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewForm, setShowNewForm] = useState(false);
   const [editingGroup, setEditingGroup] = useState<FacilityGroup | null>(null);
@@ -41,7 +45,7 @@ export default function FacilityGroupManager({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([fetchGroups(), fetchSuppliers(), fetchReportingCategories(), fetchFacilityCategoryMap()]);
+    Promise.all([fetchGroups(), fetchSuppliers(), fetchReportingCategories(), fetchInputTypes()]);
   }, []);
 
   const fetchGroups = async () => {
@@ -51,7 +55,7 @@ export default function FacilityGroupManager({
       if (!res.ok) throw new Error('Failed to load groups');
       const data = await res.json();
       setGroups(data);
-    } catch (e) {
+    } catch {
       setError('Failed to load groups');
     } finally {
       setLoading(false);
@@ -69,19 +73,19 @@ export default function FacilityGroupManager({
 
   const fetchReportingCategories = async () => {
     try {
-      const res = await fetch('/api/categories');
+      const res = await fetch('/api/categories?scope=1');
       if (!res.ok) return;
       const data = await res.json();
       setReportingCategories(data);
     } catch {}
   };
 
-  const fetchFacilityCategoryMap = async () => {
+  const fetchInputTypes = async () => {
     try {
-      const res = await fetch(`/api/clients/${clientId}/facility-utility-categories?scope=1`);
+      const res = await fetch('/api/input-types?scope=1');
       if (!res.ok) return;
       const data = await res.json();
-      setFacilityCategoryMap(data);
+      setInputTypes(data);
     } catch {}
   };
 
@@ -99,14 +103,20 @@ export default function FacilityGroupManager({
   const handleGroupSaved = async () => {
     setShowNewForm(false);
     setEditingGroup(null);
-    await fetchGroups();
+    await Promise.all([fetchGroups(), fetchSuppliers()]);
     onGroupSaved?.();
+  };
+
+  const handleSupplierCreated = (supplier: Supplier) => {
+    setSuppliers((prev) => {
+      if (prev.some((s) => s.id === supplier.id)) return prev;
+      return [...prev, supplier].sort((a, b) => a.name.localeCompare(b.name));
+    });
   };
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        {/* Header */}
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
           <div>
             <h2 className="text-xl font-semibold text-gray-900">Facility Groups</h2>
@@ -130,7 +140,6 @@ export default function FacilityGroupManager({
             <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{error}</div>
           )}
 
-          {/* Existing groups */}
           {loading ? (
             <div className="text-center py-8 text-gray-500 text-sm">Loading groups...</div>
           ) : groups.length === 0 && !showNewForm ? (
@@ -147,10 +156,11 @@ export default function FacilityGroupManager({
                       facilities={facilities}
                       suppliers={suppliers}
                       reportingCategories={reportingCategories}
-                      facilityCategoryMap={facilityCategoryMap}
+                      inputTypes={inputTypes}
                       initial={group}
                       onSaved={handleGroupSaved}
                       onCancel={() => setEditingGroup(null)}
+                      onSupplierCreated={handleSupplierCreated}
                     />
                   ) : (
                     <div className="p-4">
@@ -179,6 +189,11 @@ export default function FacilityGroupManager({
                                   {m.line?.facility?.name || m.line?.facility_id || m.non_metered_line_id}
                                   {m.line?.input_type && (
                                     <span className="text-emerald-500">· {m.line.input_type.name}</span>
+                                  )}
+                                  {(m.line?.supplier?.name || group.supplier?.name) && (
+                                    <span className="text-emerald-500">
+                                      · {m.line?.supplier?.name || group.supplier?.name}
+                                    </span>
                                   )}
                                   {!m.line?.input_type && (
                                     <span className="text-amber-500">· no type</span>
@@ -228,7 +243,6 @@ export default function FacilityGroupManager({
             </div>
           )}
 
-          {/* New group form */}
           {showNewForm ? (
             <div className="border border-emerald-200 rounded-lg bg-emerald-50/30">
               <GroupForm
@@ -236,9 +250,10 @@ export default function FacilityGroupManager({
                 facilities={facilities}
                 suppliers={suppliers}
                 reportingCategories={reportingCategories}
-                facilityCategoryMap={facilityCategoryMap}
+                inputTypes={inputTypes}
                 onSaved={handleGroupSaved}
                 onCancel={() => setShowNewForm(false)}
+                onSupplierCreated={handleSupplierCreated}
               />
             </div>
           ) : (
@@ -255,31 +270,38 @@ export default function FacilityGroupManager({
   );
 }
 
-// -------------------------------------------------------
-// GroupForm — used for both create and edit
-// -------------------------------------------------------
 interface GroupFormProps {
   clientId: string;
   facilities: FacilityStub[];
   suppliers: Supplier[];
   reportingCategories: Category[];
-  facilityCategoryMap: Record<string, FacilityCategoryOption[]>;
+  inputTypes: InputType[];
   initial?: FacilityGroup;
   onSaved: () => void;
   onCancel: () => void;
+  onSupplierCreated: (supplier: Supplier) => void;
 }
 
-/** Unique per (input type, supplier) so Diesel from two suppliers toggles independently. */
-function optionKeyFor(inputTypeId: string, supplierId: string | null | undefined) {
-  const sid = supplierId ? String(supplierId) : '';
-  return `${inputTypeId}::${sid}`;
-}
-
-function parseOptionKey(key: string): { input_type_id: string; supplier_id: string } {
-  const sep = '::';
-  const i = key.indexOf(sep);
-  if (i === -1) return { input_type_id: key, supplier_id: '' };
-  return { input_type_id: key.slice(0, i), supplier_id: key.slice(i + sep.length) };
+function membersFromGroup(group: FacilityGroup | undefined, defaultSupplierId: string): MemberEntry[] {
+  if (!group?.members?.length) return [];
+  const groupSupplier = group.supplier_id ? String(group.supplier_id) : defaultSupplierId;
+  return group.members
+    .map((m) => {
+      const facility_id = m.line?.facility_id ? String(m.line.facility_id) : '';
+      const input_type_id = m.line?.input_type_id ? String(m.line.input_type_id) : '';
+      const supplier_id = m.line?.supplier_id
+        ? String(m.line.supplier_id)
+        : groupSupplier;
+      if (!facility_id || !input_type_id) return null;
+      return {
+        key: newMemberKey(),
+        non_metered_line_id: m.non_metered_line_id ? String(m.non_metered_line_id) : (m.line?.id ? String(m.line.id) : null),
+        facility_id,
+        input_type_id,
+        supplier_id,
+      };
+    })
+    .filter((m): m is MemberEntry => m !== null);
 }
 
 function GroupForm({
@@ -287,113 +309,106 @@ function GroupForm({
   facilities,
   suppliers,
   reportingCategories,
-  facilityCategoryMap,
+  inputTypes,
   initial,
   onSaved,
   onCancel,
+  onSupplierCreated,
 }: GroupFormProps) {
   const [name, setName] = useState(initial?.name || '');
   const [supplierId, setSupplierId] = useState(initial?.supplier_id ? String(initial.supplier_id) : '');
   const [categoryId, setCategoryId] = useState(initial?.category_id ? String(initial.category_id) : '');
-
-  // Map of facilityId → Set<optionKey> where optionKey encodes input_type + supplier
-  const [memberCategories, setMemberCategories] = useState<Map<string, Set<string>>>(() => {
-    const map = new Map<string, Set<string>>();
-    const groupSupplier = initial?.supplier_id;
-    for (const m of initial?.members || []) {
-      const fid = String(m.line?.facility_id ?? '');
-      if (!fid) continue;
-      if (!map.has(fid)) map.set(fid, new Set());
-      const itid = m.line?.input_type_id;
-      if (!itid) continue;
-      const sid = m.line?.supplier_id ?? groupSupplier;
-      map.get(fid)!.add(optionKeyFor(String(itid), sid));
-    }
-    return map;
-  });
-
+  const [members, setMembers] = useState<MemberEntry[]>(() =>
+    membersFromGroup(initial, initial?.supplier_id ? String(initial.supplier_id) : '')
+  );
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const prevSupplierId = useRef(supplierId);
 
-  // New group: changing supplier drops utility picks that belong to another supplier
-  useEffect(() => {
-    if (initial) return;
-    if (prevSupplierId.current === supplierId) return;
-    prevSupplierId.current = supplierId;
-    if (!supplierId.trim()) return;
-    setMemberCategories((prev) => {
-      const next = new Map<string, Set<string>>();
-      let changed = false;
-      for (const [fid, keys] of Array.from(prev.entries())) {
-        const kept = new Set(
-          Array.from(keys).filter((k) => {
-            const { supplier_id: ks } = parseOptionKey(k);
-            return !ks || ks === supplierId;
-          }),
-        );
-        if (kept.size !== keys.size) changed = true;
-        if (kept.size > 0) next.set(fid, kept);
-        else if (keys.size > 0) changed = true;
-      }
-      return changed ? next : prev;
-    });
-  }, [supplierId, initial]);
-
-  const toggleFacility = (id: string) => {
-    setMemberCategories((prev) => {
-      const next = new Map(prev);
-      if (next.has(id)) next.delete(id);
-      else next.set(id, new Set());
-      return next;
-    });
+  const addMember = () => {
+    setMembers((prev) => [
+      ...prev,
+      {
+        key: newMemberKey(),
+        non_metered_line_id: null,
+        facility_id: facilities[0]?.id ?? '',
+        input_type_id: inputTypes[0]?.id ?? '',
+        supplier_id: supplierId,
+      },
+    ]);
   };
 
-  const toggleMemberCategory = (facilityId: string, key: string) => {
-    setMemberCategories((prev) => {
-      const next = new Map(prev);
-      const cats = new Set(next.get(facilityId) ?? []);
-      if (cats.has(key)) cats.delete(key);
-      else cats.add(key);
-      next.set(facilityId, cats);
-      return next;
-    });
+  const updateMember = (key: string, patch: Partial<Omit<MemberEntry, 'key'>>) => {
+    setMembers((prev) => prev.map((m) => (m.key === key ? { ...m, ...patch } : m)));
+  };
+
+  const removeMember = (key: string) => {
+    setMembers((prev) => prev.filter((m) => m.key !== key));
+  };
+
+  const applyGroupSupplierToAll = () => {
+    if (!supplierId) return;
+    setMembers((prev) => prev.map((m) => ({ ...m, supplier_id: supplierId })));
   };
 
   const handleSave = async () => {
     setFormError(null);
-    if (!name.trim()) { setFormError('Group name is required'); return; }
-    if (!supplierId) { setFormError('Please select a supplier'); return; }
-    const missingCategory = Array.from(memberCategories.values()).some((cats) => cats.size === 0);
-    if (missingCategory) { setFormError('All facilities must have at least one utility type selected'); return; }
+    if (!name.trim()) {
+      setFormError('Group name is required');
+      return;
+    }
+    if (!supplierId) {
+      setFormError('Please select a supplier');
+      return;
+    }
+    if (members.length === 0) {
+      setFormError('Add at least one group member');
+      return;
+    }
+    const incomplete = members.some((m) => !m.facility_id || !m.input_type_id || !m.supplier_id);
+    if (incomplete) {
+      setFormError('Each member must have a facility, input type, and supplier');
+      return;
+    }
+
+    const payloadMembers = members.map(({ non_metered_line_id, facility_id, input_type_id, supplier_id }) => ({
+      non_metered_line_id,
+      facility_id,
+      input_type_id,
+      supplier_id,
+    }));
 
     setSaving(true);
     try {
-      const effectiveSupplier = initial?.supplier_id ?? supplierId;
-      // Flatten: one entry per (facility, input type) for lines that match this group's supplier
-      const facilityIds: { facility_id: string; input_type_id: string }[] = [];
-      for (const [facility_id, keys] of Array.from(memberCategories.entries())) {
-        for (const optKey of Array.from(keys)) {
-          const { input_type_id, supplier_id: keySupplier } = parseOptionKey(optKey);
-          if (effectiveSupplier && keySupplier && keySupplier !== effectiveSupplier) continue;
-          facilityIds.push({ facility_id, input_type_id });
-        }
-      }
-
       if (initial) {
         const res = await fetch(`/api/facility-groups/${initial.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), category_id: categoryId || null, facility_ids: facilityIds }),
+          body: JSON.stringify({
+            name: name.trim(),
+            supplier_id: supplierId,
+            category_id: categoryId || null,
+            members: payloadMembers,
+          }),
         });
-        if (!res.ok) throw new Error('Failed to update group');
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Failed to update group');
+        }
       } else {
         const res = await fetch(`/api/clients/${clientId}/facility-groups`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), supplier_id: supplierId, category_id: categoryId || null, facility_ids: facilityIds }),
+          body: JSON.stringify({
+            name: name.trim(),
+            supplier_id: supplierId,
+            category_id: categoryId || null,
+            members: payloadMembers,
+          }),
         });
-        if (!res.ok) throw new Error('Failed to create group');
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Failed to create group');
+        }
       }
 
       onSaved();
@@ -412,38 +427,24 @@ function GroupForm({
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Fleet Vehicles — AcmeFuel"
+          placeholder="e.g. Statewide Stationary Fuels"
           className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
         />
       </div>
 
-      {!initial && (
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Supplier</label>
-          <select
-            value={supplierId}
-            onChange={(e) => setSupplierId(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
-          >
-            <option value="">Select supplier...</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-          <p className="text-xs text-gray-400 mt-1">Supplier cannot be changed after creation.</p>
-        </div>
-      )}
-
-      {initial && (
-        <div className="text-sm text-gray-600">
-          <span className="font-medium">Supplier:</span> {initial.supplier?.name}
-        </div>
-      )}
+      <SupplierField
+        suppliers={suppliers}
+        value={supplierId}
+        onChange={setSupplierId}
+        onSupplierCreated={onSupplierCreated}
+      />
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
           Category
-          <span className="ml-1.5 text-xs font-normal text-gray-400">NGERS reporting group — used to match this group in the ingestion workflow</span>
+          <span className="ml-1.5 text-xs font-normal text-gray-400">
+            NGERS reporting group — used to match this group in the ingestion workflow
+          </span>
         </label>
         <select
           value={categoryId}
@@ -458,92 +459,95 @@ function GroupForm({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Member Facilities
-          <span className="ml-1.5 text-xs font-normal text-gray-400">
-            ({memberCategories.size} selected) — tick a facility then tick the utility types to track
-          </span>
-        </label>
-        <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-          {facilities.map((f) => {
-            const checked = memberCategories.has(f.id);
-            const selectedCats = memberCategories.get(f.id) ?? new Set<string>();
-            const rawOptions = facilityCategoryMap[f.id] ?? [];
-            const facilityOptions =
-              supplierId.trim() === ''
-                ? rawOptions
-                : rawOptions.filter((c) => !c.supplierId || c.supplierId === supplierId);
-            return (
-              <div
-                key={f.id}
-                className={`rounded-lg border transition-colors ${
-                  checked ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-gray-200'
-                }`}
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-medium text-gray-700">
+            Group Members
+            <span className="ml-1.5 text-xs font-normal text-gray-400">({members.length})</span>
+          </label>
+          <div className="flex items-center gap-2">
+            {members.length > 0 && supplierId && (
+              <button
+                type="button"
+                onClick={applyGroupSupplierToAll}
+                className="text-xs text-gray-500 hover:text-emerald-600 underline"
               >
-                {/* Facility row */}
-                <label className="flex items-center gap-2 p-2.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleFacility(f.id)}
-                    className="accent-emerald-600 w-4 h-4 flex-shrink-0"
-                  />
-                  <span className={`text-sm font-medium flex-1 ${checked ? 'text-emerald-900' : 'text-gray-700'}`}>
-                    {f.name}
-                  </span>
-                  {checked && selectedCats.size > 0 && (
-                    <span className="text-xs text-emerald-600 font-medium">
-                      {selectedCats.size} type{selectedCats.size > 1 ? 's' : ''}
-                    </span>
-                  )}
-                  {checked && selectedCats.size === 0 && (
-                    <span className="text-xs text-amber-500">none selected</span>
-                  )}
-                </label>
-
-                {/* Per-facility utility type checkboxes */}
-                {checked && (
-                  <div className="px-3 pb-2.5 pt-0">
-                    {facilityOptions.length === 0 ? (
-                      <p className="text-xs text-amber-600 italic">No scope 1 records yet for this facility</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {facilityOptions.map((c) => {
-                          const label = c.supplierName ? `${c.name} (${c.supplierName})` : c.name;
-                          const optKey = optionKeyFor(c.id, c.supplierId);
-                          const isCatChecked = selectedCats.has(optKey);
-                          return (
-                            <label
-                              key={optKey}
-                              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs cursor-pointer transition-colors ${
-                                isCatChecked
-                                  ? 'bg-emerald-600 border-emerald-600 text-white'
-                                  : 'bg-white border-gray-300 text-gray-600 hover:border-emerald-400'
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isCatChecked}
-                                onChange={() => toggleMemberCategory(f.id, optKey)}
-                                className="sr-only"
-                              />
-                              {label}
-                            </label>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                Set all suppliers to group supplier
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={addMember}
+              className="text-xs px-2.5 py-1 text-emerald-700 border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors"
+            >
+              + Add member
+            </button>
+          </div>
         </div>
+
+        {members.length === 0 ? (
+          <p className="text-sm text-gray-400 italic py-4 text-center border border-dashed border-gray-200 rounded-lg">
+            No members yet — click &ldquo;Add member&rdquo; to start
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <div className="hidden sm:grid sm:grid-cols-[1fr_1fr_1fr_auto] gap-2 px-1 text-xs font-medium text-gray-500">
+              <span>Facility</span>
+              <span>Input Type</span>
+              <span>Supplier</span>
+              <span className="w-8" />
+            </div>
+            {members.map((member) => (
+              <div
+                key={member.key}
+                className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center bg-gray-50 border border-gray-200 rounded-lg p-2"
+              >
+                <select
+                  value={member.facility_id}
+                  onChange={(e) => updateMember(member.key, { facility_id: e.target.value })}
+                  className="px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">Select facility...</option>
+                  {facilities.map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={member.input_type_id}
+                  onChange={(e) => updateMember(member.key, { input_type_id: e.target.value })}
+                  className="px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">Select input type...</option>
+                  {inputTypes.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={member.supplier_id}
+                  onChange={(e) => updateMember(member.key, { supplier_id: e.target.value })}
+                  className="px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">Select supplier...</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => removeMember(member.key)}
+                  className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors justify-self-end"
+                  title="Remove member"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {formError && (
-        <p className="text-sm text-red-600">{formError}</p>
-      )}
+      {formError && <p className="text-sm text-red-600">{formError}</p>}
 
       <div className="flex gap-2">
         <button
@@ -565,3 +569,92 @@ function GroupForm({
   );
 }
 
+interface SupplierFieldProps {
+  suppliers: Supplier[];
+  value: string;
+  onChange: (id: string) => void;
+  onSupplierCreated: (supplier: Supplier) => void;
+}
+
+function SupplierField({ suppliers, value, onChange, onSupplierCreated }: SupplierFieldProps) {
+  const [showNew, setShowNew] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const handleCreate = async () => {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const res = await fetch('/api/suppliers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to create supplier');
+      }
+      const supplier = await res.json();
+      onSupplierCreated(supplier);
+      onChange(String(supplier.id));
+      setNewName('');
+      setShowNew(false);
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : 'Failed to create supplier');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">Group Supplier</label>
+      <div className="flex gap-2">
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+        >
+          <option value="">Select supplier...</option>
+          {suppliers.map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => setShowNew((v) => !v)}
+          className="px-3 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
+        >
+          {showNew ? 'Cancel' : '+ New'}
+        </button>
+      </div>
+      {showNew && (
+        <div className="mt-2 flex gap-2">
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="e.g. Statewide Oil"
+            className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+          />
+          <button
+            type="button"
+            onClick={handleCreate}
+            disabled={creating || !newName.trim()}
+            className="px-3 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+          >
+            {creating ? 'Adding...' : 'Add'}
+          </button>
+        </div>
+      )}
+      {createError && <p className="text-xs text-red-600 mt-1">{createError}</p>}
+      <p className="text-xs text-gray-400 mt-1">
+        Default supplier for the group. Each member can override with a different supplier if needed.
+      </p>
+    </div>
+  );
+}
