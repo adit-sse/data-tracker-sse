@@ -3,6 +3,7 @@ export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { deleteNonMeteredLine } from '@/lib/delete-non-metered-line';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -74,5 +75,22 @@ export async function PATCH(
       { error: 'Failed to update non-metered line' },
       { status: 500 }
     );
+  }
+}
+
+// DELETE /api/non-metered-lines/[id] - Delete a line, its records, and group memberships
+export async function DELETE(
+  _request: Request,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const supabase = createSupabaseServerClient();
+    const result = await deleteNonMeteredLine(supabase, params.id);
+    return NextResponse.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error deleting non-metered line:', error);
+    const message = error instanceof Error ? error.message : 'Failed to delete non-metered line';
+    const status = message === 'Line not found' ? 404 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

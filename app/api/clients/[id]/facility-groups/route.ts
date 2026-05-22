@@ -2,9 +2,12 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { runGroupBackfill } from '@/lib/facility-group-backfill';
+import {
+  normalizeGroupMembers,
+  resolveMemberLineIds,
+} from '@/lib/facility-group-members';
 
 const MEMBERS_SELECT = `
   id,
@@ -15,7 +18,8 @@ const MEMBERS_SELECT = `
     supplier_id,
     input_type_id,
     facility:facilities(id, name),
-    input_type:input_types(id, name)
+    input_type:input_types(id, name),
+    supplier:suppliers(id, name)
   )
 `;
 
@@ -25,32 +29,6 @@ const GROUP_SELECT = `
   category:categories(id, name),
   members:facility_group_members(${MEMBERS_SELECT})
 `;
-
-/**
- * Look up non_metered_line IDs for an array of { facility_id, input_type_id } pairs
- * that all belong to the same supplier.
- */
-async function resolveLineIds(
-  supabase: SupabaseClient,
-  supplierId: string,
-  members: { facility_id: string; input_type_id: string }[]
-): Promise<string[]> {
-  if (members.length === 0) return [];
-  const { data: lines } = await supabase
-    .from('non_metered_lines')
-    .select('id, facility_id, input_type_id')
-    .eq('supplier_id', supplierId)
-    .in('facility_id', members.map((m) => m.facility_id));
-
-  return members
-    .map((m) =>
-      (lines ?? []).find(
-        (l) => String(l.facility_id) === String(m.facility_id) && String(l.input_type_id) === String(m.input_type_id)
-      )?.id
-    )
-    .filter((id): id is string => id != null)
-    .map(String);
-}
 
 // GET /api/clients/[id]/facility-groups — list all groups with members
 export async function GET(
@@ -101,11 +79,10 @@ export async function POST(
 
     if (groupError) throw groupError;
 
-    const members: { facility_id: string; input_type_id: string }[] =
-      Array.isArray(facility_ids) ? facility_ids : [];
+    const members = normalizeGroupMembers({ facility_ids, members: body.members }, supplier_id);
 
     if (members.length > 0) {
-      const lineIds = await resolveLineIds(supabase, supplier_id, members);
+      const lineIds = await resolveMemberLineIds(supabase, members, category_id || null);
       if (lineIds.length > 0) {
         const { error: membersError } = await supabase
           .from('facility_group_members')

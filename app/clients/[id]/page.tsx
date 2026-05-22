@@ -571,6 +571,14 @@ export default function ClientDetailPage() {
                     });
                     fetchNonMeteredCoverage();
                   }}
+                  onDeleteLine={async (lineId) => {
+                    const res = await fetch(`/api/non-metered-lines/${lineId}`, { method: 'DELETE' });
+                    if (!res.ok) {
+                      const data = await res.json().catch(() => ({}));
+                      throw new Error(data.error || 'Failed to delete line');
+                    }
+                    fetchNonMeteredCoverage();
+                  }}
                 />
               )}
 

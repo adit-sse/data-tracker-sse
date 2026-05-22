@@ -4,6 +4,10 @@ export const revalidate = 0;
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { runGroupBackfill } from '@/lib/facility-group-backfill';
+import {
+  normalizeGroupMembers,
+  resolveMemberLineIds,
+} from '@/lib/facility-group-members';
 
 const GROUP_SELECT = `
   *,
@@ -18,14 +22,16 @@ const GROUP_SELECT = `
       supplier_id,
       input_type_id,
       facility:facilities(id, name),
-      input_type:input_types(id, name)
+      input_type:input_types(id, name),
+      supplier:suppliers(id, name)
     )
   )
 `;
 
-// PUT /api/facility-groups/[id] — update group name and/or members + run backfill
-// Body: { name?: string, category_id?: string,
-//         facility_ids?: { facility_id: string, input_type_id: string }[] }
+// PUT /api/facility-groups/[id] — update group name, supplier, category, members + run backfill
+// Body: { name?: string, supplier_id?: string, category_id?: string,
+//         members?: { facility_id, input_type_id, supplier_id? }[],
+//         facility_ids?: { facility_id, input_type_id }[] (legacy) }
 export async function PUT(
   request: Request,
   { params }: { params: { id: string } }
@@ -34,9 +40,8 @@ export async function PUT(
     const supabase = createSupabaseServerClient();
     const groupId = params.id;
     const body = await request.json();
-    const { name, category_id, facility_ids } = body;
+    const { name, supplier_id, category_id, facility_ids } = body;
 
-    // Fetch group for supplier_id (needed for backfill + line lookup)
     const { data: group, error: groupFetchError } = await supabase
       .from('facility_groups')
       .select('supplier_id')
@@ -45,12 +50,20 @@ export async function PUT(
 
     if (groupFetchError) throw groupFetchError;
 
+    const effectiveSupplierId = supplier_id ?? group.supplier_id;
+
     const groupUpdates: Record<string, unknown> = {};
     if (name !== undefined) {
       if (!name?.trim()) {
         return NextResponse.json({ error: 'Group name cannot be empty' }, { status: 400 });
       }
       groupUpdates.name = name.trim();
+    }
+    if (supplier_id !== undefined) {
+      if (!supplier_id) {
+        return NextResponse.json({ error: 'supplier_id cannot be empty' }, { status: 400 });
+      }
+      groupUpdates.supplier_id = supplier_id;
     }
     if (category_id !== undefined) {
       groupUpdates.category_id = category_id || null;
@@ -64,12 +77,15 @@ export async function PUT(
     }
 
     let memberFacilityIds: string[] | null = null;
+    const hasMemberPayload = Array.isArray(body.members) || Array.isArray(facility_ids);
 
-    if (Array.isArray(facility_ids)) {
-      const members: { facility_id: string; input_type_id: string }[] = facility_ids;
+    if (hasMemberPayload) {
+      const members = normalizeGroupMembers(
+        { facility_ids, members: body.members },
+        String(effectiveSupplierId)
+      );
       memberFacilityIds = [...new Set(members.map((m) => m.facility_id))];
 
-      // Replace all members
       const { error: deleteError } = await supabase
         .from('facility_group_members')
         .delete()
@@ -77,21 +93,13 @@ export async function PUT(
       if (deleteError) throw deleteError;
 
       if (members.length > 0) {
-        // Look up the non_metered_line_id for each (facility_id, input_type_id) pair
-        const { data: lines } = await supabase
-          .from('non_metered_lines')
-          .select('id, facility_id, input_type_id')
-          .eq('supplier_id', group.supplier_id)
-          .in('facility_id', memberFacilityIds);
-
-        const lineIds = members
-          .map((m) =>
-            (lines ?? []).find(
-              (l) => String(l.facility_id) === String(m.facility_id) && String(l.input_type_id) === String(m.input_type_id)
-            )?.id
-          )
-          .filter((id): id is string => id != null)
-          .map(String);
+        const resolvedCategoryId =
+          category_id !== undefined ? category_id || null : undefined;
+        const lineIds = await resolveMemberLineIds(
+          supabase,
+          members,
+          resolvedCategoryId
+        );
 
         if (lineIds.length > 0) {
           const { error: insertError } = await supabase
@@ -102,9 +110,8 @@ export async function PUT(
       }
     }
 
-    // Run backfill for the updated member set
-    if (memberFacilityIds && memberFacilityIds.length > 0 && group.supplier_id) {
-      await runGroupBackfill(supabase, group.supplier_id, memberFacilityIds);
+    if (memberFacilityIds && memberFacilityIds.length > 0 && effectiveSupplierId) {
+      await runGroupBackfill(supabase, effectiveSupplierId, memberFacilityIds);
     }
 
     const { data, error } = await supabase
