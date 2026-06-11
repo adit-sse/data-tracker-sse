@@ -57,6 +57,7 @@ export default function HomePage() {
   const [showViewBySuppliers, setShowViewBySuppliers] = useState(false);
   const [showViewByUtilities, setShowViewByUtilities] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   
   const fetchClients = async ({ bypassCache = false }: { bypassCache?: boolean } = {}) => {
     try {
@@ -121,6 +122,12 @@ export default function HomePage() {
     }
   };
   
+  const filteredClients = searchQuery.trim()
+    ? clients.filter((c) =>
+        c.client.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
+      )
+    : clients;
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
       {/* Header */}
@@ -321,21 +328,75 @@ export default function HomePage() {
           </div>
         ) : (
           <>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Your Clients</h3>
-              <span className="text-sm text-gray-500 dark:text-gray-400">{clients.length} total</span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {clients.map((data) => (
-                <ClientCard 
-                  key={data.client.id} 
-                  client={data.client}
-                  facilitiesCount={data.facilitiesCount}
-                  onDeleted={() => fetchClients({ bypassCache: true })}
-                  onUpdated={() => fetchClients({ bypassCache: true })}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
+              <div className="flex items-center gap-3 flex-1">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 shrink-0">Your Clients</h3>
+                <span className="text-sm text-gray-500 dark:text-gray-400 shrink-0">
+                  {searchQuery.trim()
+                    ? `${filteredClients.length} of ${clients.length}`
+                    : `${clients.length} total`}
+                </span>
+              </div>
+              <div className="relative w-full sm:w-72">
+                <svg
+                  className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search clients..."
+                  className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                 />
-              ))}
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                    aria-label="Clear search"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
             </div>
+            {filteredClients.length === 0 ? (
+              <div className="text-center py-16">
+                <div className="w-16 h-16 mx-auto rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-4">
+                  <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
+                  </svg>
+                </div>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">No clients found</h3>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  No clients match &ldquo;{searchQuery}&rdquo;
+                </p>
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="mt-4 text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  Clear search
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {filteredClients.map((data) => (
+                  <ClientCard
+                    key={data.client.id}
+                    client={data.client}
+                    facilitiesCount={data.facilitiesCount}
+                    onDeleted={() => fetchClients({ bypassCache: true })}
+                    onUpdated={() => fetchClients({ bypassCache: true })}
+                  />
+                ))}
+              </div>
+            )}
           </>
         )}
       </main>
