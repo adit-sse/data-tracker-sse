@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import ProgressBarCell from './ProgressBarCell';
+import InputTypePickerModal, { type InputType } from './InputTypePickerModal';
 import type { MeterWithCoverage, ActualInvoice } from '@/types';
 
 import { format, endOfMonth, startOfMonth, isAfter, parseISO, isValid } from 'date-fns';
@@ -44,6 +45,33 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
   const [sortColumn, setSortColumn] = useState<SortColumn>('default');
   const [sortAscending, setSortAscending] = useState(true);
   const [togglingIsActive, setTogglingIsActive] = useState<string | null>(null);
+
+  const [inputTypes, setInputTypes] = useState<InputType[]>([]);
+  const [pickerMeterId, setPickerMeterId] = useState<string | null>(null);
+  const [updatingInputType, setUpdatingInputType] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/input-types')
+      .then((r) => r.ok ? r.json() : [])
+      .then(setInputTypes)
+      .catch(() => {});
+  }, []);
+
+  const handleInputTypeChange = async (meterId: string, inputTypeId: string) => {
+    setUpdatingInputType(meterId);
+    try {
+      const res = await fetch(`/api/meters/${meterId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input_type_id: inputTypeId }),
+      });
+      if (res.ok) onMeterUpdated?.();
+    } catch (err) {
+      console.error('Error updating input type:', err);
+    } finally {
+      setUpdatingInputType(null);
+    }
+  };
 
   const toggleIsActive = async (meterId: string, currentIsActive: boolean) => {
     setTogglingIsActive(meterId);
@@ -336,9 +364,22 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
                 </div>
               )}
               <div className="w-[110px] min-w-[110px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
-                <div className="text-sm text-gray-600 text-center">
-                  {meter.input_type?.name || 'N/A'}
-                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setPickerMeterId(String(meter.id)); }}
+                  disabled={updatingInputType === String(meter.id)}
+                  title="Click to change input type"
+                  className="text-sm text-gray-600 text-center px-2 py-1 rounded hover:bg-blue-50 hover:text-blue-700 transition-colors disabled:opacity-50 w-full"
+                >
+                  {updatingInputType === String(meter.id) ? '…' : (meter.input_type?.name || 'N/A')}
+                </button>
+                {pickerMeterId === String(meter.id) && (
+                  <InputTypePickerModal
+                    inputTypes={inputTypes}
+                    value={meter.input_type?.id ?? ''}
+                    onSelect={(id) => handleInputTypeChange(String(meter.id), id)}
+                    onClose={() => setPickerMeterId(null)}
+                  />
+                )}
               </div>
               <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 text-center">
                 <div className="text-xs text-gray-400 mb-0.5">

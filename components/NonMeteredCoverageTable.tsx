@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { format, endOfMonth, startOfMonth, isAfter, parseISO, isValid, differenceInDays } from 'date-fns';
 import ConfirmModal from './ConfirmModal';
+import InputTypePickerModal from './InputTypePickerModal';
 import type {
   NonMeteredRowWithCoverage,
   NonMeteredMonthlyCoverage,
@@ -142,6 +143,17 @@ export default function NonMeteredCoverageTable({
   };
 
   const cancelEdit = () => setEditingCell(null);
+
+  const handleInputTypeSelect = async (id: string) => {
+    if (!editingCell || !onUpdateLine) return;
+    setSavingCell(true);
+    try {
+      await onUpdateLine(editingCell.lineId, 'input_type_id', id);
+      setEditingCell(null);
+    } finally {
+      setSavingCell(false);
+    }
+  };
 
   const handleToggleActive = async (lineId: string, currentIsActive: boolean) => {
     if (!onLineStatusToggle) return;
@@ -455,39 +467,23 @@ export default function NonMeteredCoverageTable({
                       )}
                     </div>
 
-                    {/* Input Type (utility_category) — inline editable */}
+                    {/* Input Type (utility_category) — opens picker modal */}
                     <div
                       className={`w-[120px] min-w-[120px] px-3 py-3 border-r border-gray-200 flex items-center justify-center ${onUpdateLine ? 'group/type' : ''}`}
                     >
-                      {editingCell?.lineId === row.lineId && editingCell.field === 'input_type_id' ? (
-                        loadingInputTypes ? (
-                          <span className="text-xs text-gray-400">Loading…</span>
-                        ) : (
-                          <select
-                            ref={editInputRef as React.RefObject<HTMLSelectElement>}
-                            value={editingCell.value}
-                            onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Escape') cancelEdit();
-                            }}
-                            onBlur={commitEdit}
-                            disabled={savingCell}
-                            className="w-full text-sm border border-emerald-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white"
-                          >
-                            {inputTypes.map((it) => (
-                              <option key={it.id} value={it.id}>{it.name}</option>
-                            ))}
-                          </select>
-                        )
+                      {editingCell?.lineId === row.lineId && editingCell.field === 'input_type_id' && loadingInputTypes ? (
+                        <span className="text-xs text-gray-400">Loading…</span>
                       ) : (
                         <button
                           type="button"
                           onClick={() => startEdit(row.lineId, 'input_type_id', row.inputTypeId)}
-                          disabled={!onUpdateLine}
+                          disabled={!onUpdateLine || (savingCell && editingCell?.lineId === row.lineId)}
                           title={onUpdateLine ? 'Click to edit input type' : undefined}
                           className={`text-sm text-gray-600 text-center w-full truncate ${onUpdateLine ? 'cursor-pointer rounded px-1 py-0.5 hover:bg-emerald-50 hover:text-emerald-700 transition-colors' : 'cursor-default'}`}
                         >
-                          {row.inputTypeName}
+                          {savingCell && editingCell?.lineId === row.lineId && editingCell.field === 'input_type_id'
+                            ? '…'
+                            : row.inputTypeName}
                         </button>
                       )}
                     </div>
@@ -617,6 +613,15 @@ export default function NonMeteredCoverageTable({
         </div>
       </div>
     </div>
+
+    {editingCell?.field === 'input_type_id' && !loadingInputTypes && inputTypes.length > 0 && (
+      <InputTypePickerModal
+        inputTypes={inputTypes}
+        value={editingCell.value}
+        onSelect={handleInputTypeSelect}
+        onClose={cancelEdit}
+      />
+    )}
 
     {deletingRow && onDeleteLine && (
       <ConfirmModal
