@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import ClientCard from '@/components/ClientCard';
 import SupplierManager from '@/components/SupplierManager';
@@ -155,6 +156,15 @@ export default function HomePage() {
                 </svg>
                 <span className="hidden sm:inline">Reference Data</span>
               </button>
+              <Link
+                href="/activity"
+                className="px-3 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium flex items-center gap-1.5"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span className="hidden sm:inline">Activity</span>
+              </Link>
               <div className="w-px h-6 bg-gray-200 dark:bg-gray-700 mx-1" />
               <DarkModeToggle />
               <div className="w-px h-6 bg-gray-200 dark:bg-gray-700 mx-1" />

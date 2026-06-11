@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { findInputTypeForIngestion } from '@/lib/ingestion-utility-category';
+import { logIngestionFromResponse } from '@/lib/ingestion-events';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -161,22 +162,21 @@ async function processLineConfirm(
 //
 // All lookup failures (client, supplier, category, input type, facility, date range) return
 // a hard 4xx — nothing is silently skipped.
-export async function POST(request: Request) {
-  if (!checkApiKey(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+async function handleConfirm(supabase: SupabaseClient, raw: unknown): Promise<NextResponse> {
   try {
-    const supabase = createSupabaseServiceRoleClient();
     const confirmedAt = new Date().toISOString();
-    const raw = await request.json();
     let rows: NGERSRow[];
     let lineMode = false;
 
     if (Array.isArray(raw)) {
-      rows = raw;
-    } else if (raw && typeof raw === 'object' && raw.mode === 'line' && Array.isArray(raw.rows)) {
-      rows = raw.rows;
+      rows = raw as NGERSRow[];
+    } else if (
+      raw &&
+      typeof raw === 'object' &&
+      (raw as { mode?: unknown }).mode === 'line' &&
+      Array.isArray((raw as { rows?: unknown }).rows)
+    ) {
+      rows = (raw as { rows: NGERSRow[] }).rows;
       lineMode = true;
     } else {
       return NextResponse.json(
@@ -371,4 +371,38 @@ export async function POST(request: Request) {
     const detail = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: 'Internal server error', detail }, { status: 500 });
   }
+}
+
+export async function POST(request: Request) {
+  const startedAt = Date.now();
+  if (!checkApiKey(request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const supabase = createSupabaseServiceRoleClient();
+
+  let raw: unknown;
+  try {
+    raw = await request.json();
+  } catch {
+    const res = NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    await logIngestionFromResponse(supabase, {
+      endpoint: 'confirm',
+      scopeKind: 'non_metered',
+      request: null,
+      response: res,
+      startedAt,
+    });
+    return res;
+  }
+
+  const res = await handleConfirm(supabase, raw);
+  await logIngestionFromResponse(supabase, {
+    endpoint: 'confirm',
+    scopeKind: 'non_metered',
+    request: raw,
+    response: res,
+    startedAt,
+  });
+  return res;
 }

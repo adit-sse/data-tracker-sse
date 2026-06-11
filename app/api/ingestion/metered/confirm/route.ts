@@ -1,5 +1,7 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
+import { logIngestionFromResponse } from '@/lib/ingestion-events';
 import { parseNgersDateRange, monthStartIso } from '@/lib/ingestion-dates';
 import {
   parseMeterIdentifierFromNgersRow,
@@ -53,19 +55,13 @@ function metaFromRow(row: NgersMeterRow) {
 //
 // All lookup failures (client, facility, supplier, input type, meter, date range) return
 // a hard 4xx — nothing is silently skipped.
-export async function POST(request: Request) {
-  if (!checkApiKey(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+async function handleMeteredConfirm(supabase: SupabaseClient, body: unknown): Promise<NextResponse> {
   try {
-    const supabase = createSupabaseServiceRoleClient();
-    const body = await request.json();
-    if (!body || typeof body !== 'object' || !Array.isArray(body.rows)) {
+    if (!body || typeof body !== 'object' || !Array.isArray((body as { rows?: unknown }).rows)) {
       return NextResponse.json({ error: 'Body must be { "rows": [ ... NGERS rows ] }' }, { status: 400 });
     }
 
-    const rows = body.rows as NgersMeterRow[];
+    const rows = (body as { rows: NgersMeterRow[] }).rows;
     if (rows.length === 0) {
       return NextResponse.json({ error: 'rows must be non-empty' }, { status: 400 });
     }
@@ -271,4 +267,38 @@ export async function POST(request: Request) {
     const detail = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: 'Internal server error', detail }, { status: 500 });
   }
+}
+
+export async function POST(request: Request) {
+  const startedAt = Date.now();
+  if (!checkApiKey(request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const supabase = createSupabaseServiceRoleClient();
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    const res = NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    await logIngestionFromResponse(supabase, {
+      endpoint: 'metered/confirm',
+      scopeKind: 'metered',
+      request: null,
+      response: res,
+      startedAt,
+    });
+    return res;
+  }
+
+  const res = await handleMeteredConfirm(supabase, body);
+  await logIngestionFromResponse(supabase, {
+    endpoint: 'metered/confirm',
+    scopeKind: 'metered',
+    request: body,
+    response: res,
+    startedAt,
+  });
+  return res;
 }

@@ -12,6 +12,7 @@ import {
 } from '@/lib/ingestion-metered';
 import { eachMonthStartIsoOverlapping, syncMeteredGapPendingForMonths } from '@/lib/metered-gap-pending';
 import { getCurrentFiscalYearMonthsThroughNow } from '@/lib/non-metered-pending-seed';
+import { logIngestionFromResponse } from '@/lib/ingestion-events';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -605,15 +606,8 @@ async function processMeteredRows(
 //     "non_metered": { "confirmed": n },
 //     "metered":     { "confirmed": n, "deleted_pending": n, "skipped_duplicates": n, "gap_pending_inserted": n }
 //   }
-export async function POST(request: Request) {
-  if (!checkApiKey(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+async function handleUnifiedConfirm(supabase: SupabaseClient, raw: unknown): Promise<NextResponse> {
   try {
-    const supabase = createSupabaseServiceRoleClient();
-    const raw = await request.json();
-
     let rows: UnifiedRow[];
     let pruneOrphanPending = false;
 
@@ -700,4 +694,38 @@ export async function POST(request: Request) {
     const detail = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: 'Internal server error', detail }, { status: 500 });
   }
+}
+
+export async function POST(request: Request) {
+  const startedAt = Date.now();
+  if (!checkApiKey(request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const supabase = createSupabaseServiceRoleClient();
+
+  let raw: unknown;
+  try {
+    raw = await request.json();
+  } catch {
+    const res = NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    await logIngestionFromResponse(supabase, {
+      endpoint: 'unified-confirm',
+      scopeKind: 'mixed',
+      request: null,
+      response: res,
+      startedAt,
+    });
+    return res;
+  }
+
+  const res = await handleUnifiedConfirm(supabase, raw);
+  await logIngestionFromResponse(supabase, {
+    endpoint: 'unified-confirm',
+    scopeKind: 'mixed',
+    request: raw,
+    response: res,
+    startedAt,
+  });
+  return res;
 }

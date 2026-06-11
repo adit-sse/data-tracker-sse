@@ -312,3 +312,30 @@ export interface NonMeteredRowWithCoverage {
   isActive: boolean;
   coverage: NonMeteredMonthlyCoverage[];
 }
+
+// -------------------------------------------------------
+// Ingestion events (audit log of confirm/error attempts)
+// -------------------------------------------------------
+
+export type IngestionEventOutcome = 'SUCCESS' | 'FAILURE';
+
+export interface IngestionEvent {
+  id: number;
+  created_at: string;
+  endpoint: string;
+  outcome: IngestionEventOutcome;
+  scope_kind: string | null;
+  client_id: number | null;
+  client_name: string | null;
+  supplier_name: string | null;
+  facility_name: string | null;
+  utility_name: string | null;
+  period_start: string | null;
+  reason: string | null;
+  http_status: number | null;
+  affected_count: number | null;
+  payload_excerpt?: unknown;
+  duration_ms: number | null;
+  // Joined
+  client?: { id: number; name: string } | null;
+}

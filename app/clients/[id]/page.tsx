@@ -25,7 +25,7 @@ import type {
   NonMeteredRecord,
 } from '@/types';
 
-type ScopeTab = 'scope2' | 'scope1-metered' | 'scope1-non-metered' | 'scope3';
+type ScopeTab = 'scope1-non-metered' | 'scope1-metered' |  'scope2' | 'scope3';
 
 interface Facility {
   id: string;

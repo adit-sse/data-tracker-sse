@@ -1,6 +1,8 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
+import { logIngestionErrorReport } from '@/lib/ingestion-events';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -38,15 +40,16 @@ function monthStart(isoDate: string): string {
 // Line body: { mode: "line", client_name, supplier_name, utility_name, date_range [, facility_name] }
 //   Same facility_name rules as /ingestion/pending line mode.
 // date_range: "DD/MM/YYYY - DD/MM/YYYY" (month is taken from the start date)
-export async function POST(request: Request) {
-  if (!checkApiKey(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+async function handleError(supabase: SupabaseClient, body: Record<string, unknown>): Promise<NextResponse> {
   try {
-    const supabase = createSupabaseServiceRoleClient();
-    const body = await request.json();
-    const { client_name, supplier_name, utility_name, date_range, mode, facility_name } = body;
+    const { client_name, supplier_name, utility_name, date_range, mode, facility_name } = body as {
+      client_name?: string;
+      supplier_name?: string;
+      utility_name?: string;
+      date_range?: string;
+      mode?: string;
+      facility_name?: string;
+    };
 
     if (!client_name || !supplier_name || !utility_name || !date_range) {
       return NextResponse.json(
@@ -200,4 +203,40 @@ export async function POST(request: Request) {
     console.error('Error in ingestion/error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
+}
+
+// POST body may include an optional `reason` describing why the upstream ingestion failed;
+// it is recorded on the ingestion_events log (the record itself is only flipped to ERROR).
+export async function POST(request: Request) {
+  const startedAt = Date.now();
+  if (!checkApiKey(request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const supabase = createSupabaseServiceRoleClient();
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    const res = NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    await logIngestionErrorReport(supabase, {
+      endpoint: 'error',
+      scopeKind: 'non_metered',
+      request: null,
+      response: res,
+      startedAt,
+    });
+    return res;
+  }
+
+  const res = await handleError(supabase, body);
+  await logIngestionErrorReport(supabase, {
+    endpoint: 'error',
+    scopeKind: typeof body?.mode === 'string' && body.mode === 'line' ? 'line' : 'group',
+    request: body,
+    response: res,
+    startedAt,
+  });
+  return res;
 }
