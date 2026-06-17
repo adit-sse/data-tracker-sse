@@ -295,28 +295,6 @@ export default function HomePage() {
               <h3 className="text-lg font-semibold text-gray-900">Your Clients</h3>
               <span className="text-sm text-gray-500">{clients.length} total</span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {clients.map((data) => (
-                <ClientCard 
-                  key={data.client.id} 
-                  client={data.client}
-                  facilitiesCount={data.facilitiesCount}
-                  onDeleted={() => fetchClients({ bypassCache: true })}
-                  onUpdated={() => fetchClients({ bypassCache: true })}
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-                    aria-label="Clear search"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            </div>
             {filteredClients.length === 0 ? (
               <div className="text-center py-16">
                 <div className="w-16 h-16 mx-auto rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-4">
