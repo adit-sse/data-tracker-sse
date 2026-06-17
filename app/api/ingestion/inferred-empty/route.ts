@@ -1,15 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
+import { checkApiKey } from '@/lib/ingestion-auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
-
-function checkApiKey(request: Request): boolean {
-  const authHeader = request.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) return false;
-  return authHeader.slice(7) === process.env.INGESTION_API_KEY;
-}
 
 function periodKey(d: string | null | undefined): string {
   if (!d) return '';

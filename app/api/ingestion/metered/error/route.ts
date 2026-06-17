@@ -5,6 +5,7 @@ import { logIngestionErrorReport } from '@/lib/ingestion-events';
 import { parseNgersDateRange, monthStartIso } from '@/lib/ingestion-dates';
 import type { IdentifierType } from '@/types';
 import { resolveMeterForIngestion } from '@/lib/ingestion-metered';
+import { checkApiKey } from '@/lib/ingestion-auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -19,12 +20,6 @@ const IDENTIFIER_TYPES: readonly IdentifierType[] = [
   'FACILITY_LEVEL',
   'DESCRIPTION',
 ] as const;
-
-function checkApiKey(request: Request): boolean {
-  const authHeader = request.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) return false;
-  return authHeader.slice(7) === process.env.INGESTION_API_KEY;
-}
 
 // POST /api/ingestion/metered/error
 // Marks PENDING actual_invoices as ERROR for the calendar month of date_range start.

@@ -4,6 +4,9 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { findInputTypeForIngestion } from '@/lib/ingestion-utility-category';
 import { logIngestionFromResponse } from '@/lib/ingestion-events';
+import { checkApiKey } from '@/lib/ingestion-auth';
+import { parseNgersDateRange } from '@/lib/ingestion-dates';
+import { confirmOrUpsertNonMeteredRecord } from '@/lib/ingestion-confirm';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -29,27 +32,6 @@ interface GroupMember {
 
 type ConfirmError = { ok: false; error: string; status: number };
 type LineConfirmResult = { ok: true; confirmed: number } | ConfirmError;
-
-function checkApiKey(request: Request): boolean {
-  const authHeader = request.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) return false;
-  return authHeader.slice(7) === process.env.INGESTION_API_KEY;
-}
-
-// Parses "DD/MM/YYYY - DD/MM/YYYY" into { start: "YYYY-MM-DD", end: "YYYY-MM-DD" }
-function parseDateRange(dateRange: string): { start: string; end: string } | null {
-  const parts = dateRange.split(' - ');
-  if (parts.length !== 2) return null;
-  const parseDate = (d: string): string | null => {
-    const match = d.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (!match) return null;
-    return `${match[3]}-${match[2]}-${match[1]}`;
-  };
-  const start = parseDate(parts[0]);
-  const end = parseDate(parts[1]);
-  if (!start || !end) return null;
-  return { start, end };
-}
 
 /**
  * Standalone line: each row's Input Type = record utility (e.g. kL), Facility = site name.
@@ -97,7 +79,7 @@ async function processLineConfirm(
       if (!row['Date Range']) {
         return { ok: false, error: 'Row is missing Date Range', status: 422 };
       }
-      const parsed = parseDateRange(row['Date Range']);
+      const parsed = parseNgersDateRange(row['Date Range']);
       if (!parsed) {
         return {
           ok: false,
@@ -106,40 +88,14 @@ async function processLineConfirm(
         };
       }
 
-      const { data: existing } = await supabase
-        .from('non_metered_records')
-        .select('id')
-        .eq('facility_id', facilityId)
-        .eq('supplier_id', supplierId)
-        .eq('input_type_id', categoryId)
-        .eq('period_start_date', parsed.start)
-        .eq('status', 'PENDING')
-        .maybeSingle();
-
-      if (existing) {
-        const { error: updErr } = await supabase
-          .from('non_metered_records')
-          .update({ status: 'CONFIRMED', confirmed_at: confirmedAt })
-          .eq('id', existing.id);
-        if (updErr) throw new Error(updErr.message);
-      } else {
-        const { error: upErr } = await supabase.from('non_metered_records').upsert(
-          {
-            facility_id: facilityId,
-            supplier_id: supplierId,
-            input_type_id: categoryId,
-            period_start_date: parsed.start,
-            period_end_date: parsed.end,
-            status: 'CONFIRMED',
-            confirmed_at: confirmedAt,
-          },
-          {
-            onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
-            ignoreDuplicates: false,
-          }
-        );
-        if (upErr) throw new Error(upErr.message);
-      }
+      await confirmOrUpsertNonMeteredRecord(supabase, {
+        facilityId: String(facilityId),
+        supplierId: String(supplierId),
+        inputTypeId: String(categoryId),
+        periodStart: parsed.start,
+        periodEnd: parsed.end,
+        confirmedAt,
+      });
       totalConfirmed++;
     }
   }
@@ -309,7 +265,7 @@ async function handleConfirm(supabase: SupabaseClient, raw: unknown): Promise<Ne
           );
         }
 
-        const parsed = parseDateRange(row['Date Range']);
+        const parsed = parseNgersDateRange(row['Date Range']);
         if (!parsed) {
           return NextResponse.json(
             {
@@ -329,38 +285,14 @@ async function handleConfirm(supabase: SupabaseClient, raw: unknown): Promise<Ne
           );
         }
 
-        const { data: existing } = await supabase
-          .from('non_metered_records')
-          .select('id')
-          .eq('facility_id', facilityId)
-          .eq('supplier_id', supplier.id)
-          .eq('input_type_id', targetInputTypeId)
-          .eq('period_start_date', parsed.start)
-          .eq('status', 'PENDING')
-          .maybeSingle();
-
-        if (existing) {
-          await supabase
-            .from('non_metered_records')
-            .update({ status: 'CONFIRMED', confirmed_at: confirmedAt })
-            .eq('id', existing.id);
-        } else {
-          await supabase.from('non_metered_records').upsert(
-            {
-              facility_id: facilityId,
-              supplier_id: supplier.id,
-              input_type_id: targetInputTypeId,
-              period_start_date: parsed.start,
-              period_end_date: parsed.end,
-              status: 'CONFIRMED',
-              confirmed_at: confirmedAt,
-            },
-            {
-              onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
-              ignoreDuplicates: false,
-            }
-          );
-        }
+        await confirmOrUpsertNonMeteredRecord(supabase, {
+          facilityId,
+          supplierId: supplier.id,
+          inputTypeId: targetInputTypeId,
+          periodStart: parsed.start,
+          periodEnd: parsed.end,
+          confirmedAt,
+        });
         totalConfirmed++;
       }
     }

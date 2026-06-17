@@ -3,30 +3,11 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { logIngestionErrorReport } from '@/lib/ingestion-events';
+import { checkApiKey } from '@/lib/ingestion-auth';
+import { parseNgersDateRange } from '@/lib/ingestion-dates';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
-
-function checkApiKey(request: Request): boolean {
-  const authHeader = request.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) return false;
-  return authHeader.slice(7) === process.env.INGESTION_API_KEY;
-}
-
-/** Same as confirm route: "DD/MM/YYYY - DD/MM/YYYY" → { start, end } ISO */
-function parseDateRange(dateRange: string): { start: string; end: string } | null {
-  const parts = dateRange.split(' - ');
-  if (parts.length !== 2) return null;
-  const parseDate = (d: string): string | null => {
-    const match = d.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (!match) return null;
-    return `${match[3]}-${match[2]}-${match[1]}`;
-  };
-  const start = parseDate(parts[0]);
-  const end = parseDate(parts[1]);
-  if (!start || !end) return null;
-  return { start, end };
-}
 
 /** First day of the calendar month containing `isoDate` (YYYY-MM-DD) */
 function monthStart(isoDate: string): string {
@@ -58,7 +39,7 @@ async function handleError(supabase: SupabaseClient, body: Record<string, unknow
       );
     }
 
-    const parsed = parseDateRange(String(date_range));
+    const parsed = parseNgersDateRange(String(date_range));
     if (!parsed) {
       return NextResponse.json(
         { error: 'date_range must be "DD/MM/YYYY - DD/MM/YYYY"' },
