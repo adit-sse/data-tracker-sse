@@ -3,6 +3,7 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import type { IdentifierType } from '@/types';
 import { getCurrentFiscalYearMonthsThroughNow } from '@/lib/non-metered-pending-seed';
 import { meterMonthBlocksNewPending, resolveMeterForIngestion } from '@/lib/ingestion-metered';
+import { checkApiKey } from '@/lib/ingestion-auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -17,12 +18,6 @@ const IDENTIFIER_TYPES: readonly IdentifierType[] = [
   'FACILITY_LEVEL',
   'DESCRIPTION',
 ] as const;
-
-function checkApiKey(request: Request): boolean {
-  const authHeader = request.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) return false;
-  return authHeader.slice(7) === process.env.INGESTION_API_KEY;
-}
 
 // POST /api/ingestion/metered/pending
 // Seeds actual_invoices with status PENDING (full calendar month) for FY Jul → current month.

@@ -263,3 +263,33 @@ export async function meteredExactDuplicateExists(
 
   return (rows?.length ?? 0) > 0;
 }
+
+/** Extracts invoice metadata fields from a NGERS metered row for use in actual_invoices upserts. */
+export function metaFromRow(row: NgersMeterRow) {
+  return {
+    invoice_number:
+      typeof row['Invoice Number'] === 'string' && row['Invoice Number'].trim()
+        ? String(row['Invoice Number']).trim()
+        : null,
+    invoice_date:
+      typeof row['Invoice Date'] === 'string' && row['Invoice Date'].trim()
+        ? String(row['Invoice Date']).trim()
+        : null,
+    framework:
+      typeof row.Framework === 'string' && row.Framework.trim()
+        ? String(row.Framework).trim()
+        : null,
+    version:
+      typeof row.Version === 'string' && row.Version.trim()
+        ? String(row.Version).trim()
+        : null,
+    input_type:
+      typeof row['Input Type'] === 'string' && row['Input Type'].trim()
+        ? String(row['Input Type']).trim()
+        : null,
+    customer:
+      typeof row.Customer === 'string' && row.Customer.trim()
+        ? String(row.Customer).trim()
+        : null,
+  };
+}

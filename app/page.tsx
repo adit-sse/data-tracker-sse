@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import ClientCard from '@/components/ClientCard';
 import SupplierManager from '@/components/SupplierManager';
@@ -31,6 +32,7 @@ export default function HomePage() {
   const [showViewBySuppliers, setShowViewBySuppliers] = useState(false);
   const [showViewByUtilities, setShowViewByUtilities] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   
   const fetchClients = async ({ bypassCache = false }: { bypassCache?: boolean } = {}) => {
     try {
@@ -95,6 +97,12 @@ export default function HomePage() {
     }
   };
   
+  const filteredClients = searchQuery.trim()
+    ? clients.filter((c) =>
+        c.client.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
+      )
+    : clients;
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
       {/* Header */}
@@ -296,8 +304,50 @@ export default function HomePage() {
                   onDeleted={() => fetchClients({ bypassCache: true })}
                   onUpdated={() => fetchClients({ bypassCache: true })}
                 />
-              ))}
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                    aria-label="Clear search"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
             </div>
+            {filteredClients.length === 0 ? (
+              <div className="text-center py-16">
+                <div className="w-16 h-16 mx-auto rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-4">
+                  <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
+                  </svg>
+                </div>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">No clients found</h3>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  No clients match &ldquo;{searchQuery}&rdquo;
+                </p>
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="mt-4 text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  Clear search
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {filteredClients.map((data) => (
+                  <ClientCard
+                    key={data.client.id}
+                    client={data.client}
+                    facilitiesCount={data.facilitiesCount}
+                    onDeleted={() => fetchClients({ bypassCache: true })}
+                    onUpdated={() => fetchClients({ bypassCache: true })}
+                  />
+                ))}
+              </div>
+            )}
           </>
         )}
       </main>

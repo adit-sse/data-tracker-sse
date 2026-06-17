@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { format, endOfMonth, startOfMonth, isAfter, parseISO, isValid, differenceInDays } from 'date-fns';
 import ConfirmModal from './ConfirmModal';
+import InputTypePickerModal from './InputTypePickerModal';
 import type {
   NonMeteredRowWithCoverage,
   NonMeteredMonthlyCoverage,
@@ -15,6 +16,14 @@ function coerceMonthDate(monthDate: Date | string): Date {
   if (monthDate instanceof Date) return monthDate;
   const d = parseISO(String(monthDate));
   return isValid(d) ? d : new Date(String(monthDate));
+}
+
+/** Stable key for facility-group collapse (Scope 1 non-metered). */
+function nonMeteredGroupKey(row: NonMeteredRowWithCoverage): string | null {
+  if (!row.groupName) return null;
+  if (row.groupId) return row.groupId;
+  const sup = row.supplierId ?? '';
+  return `${sup}::${row.groupName}`;
 }
 
 /** Months strictly after the current calendar month when the line is inactive — show as off, no edits. */
@@ -55,6 +64,8 @@ export default function NonMeteredCoverageTable({
   const [deletingRow, setDeletingRow] = useState<NonMeteredRowWithCoverage | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  /** Scope 1 only: collapsed facility group keys (see `nonMeteredGroupKey`). */
+  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(() => new Set());
 
   // Inline editing state
   const [editingCell, setEditingCell] = useState<{
@@ -132,6 +143,17 @@ export default function NonMeteredCoverageTable({
   };
 
   const cancelEdit = () => setEditingCell(null);
+
+  const handleInputTypeSelect = async (id: string) => {
+    if (!editingCell || !onUpdateLine) return;
+    setSavingCell(true);
+    try {
+      await onUpdateLine(editingCell.lineId, 'input_type_id', id);
+      setEditingCell(null);
+    } finally {
+      setSavingCell(false);
+    }
+  };
 
   const handleToggleActive = async (lineId: string, currentIsActive: boolean) => {
     if (!onLineStatusToggle) return;
@@ -319,13 +341,61 @@ export default function NonMeteredCoverageTable({
           ) : (
             filteredRows.map((row, rowIdx) => {
               const prevRow = filteredRows[rowIdx - 1];
-              const showGroupHeader = row.groupName && row.groupName !== prevRow?.groupName;
+              const prevKey = prevRow ? nonMeteredGroupKey(prevRow) : null;
+              const currKey = nonMeteredGroupKey(row);
+              const collapsibleGroups = categoryScope === 1;
+              const showGroupHeader =
+                Boolean(row.groupName) && currKey !== null && currKey !== prevKey;
               const showUngroupedHeader = !row.groupName && prevRow?.groupName;
+              const groupCollapsed =
+                collapsibleGroups && currKey !== null && collapsedGroupKeys.has(currKey);
+              const skipRowBecauseCollapsed =
+                collapsibleGroups &&
+                currKey !== null &&
+                collapsedGroupKeys.has(currKey) &&
+                currKey === prevKey;
+
+              if (skipRowBecauseCollapsed) {
+                return null;
+              }
+
+              const toggleGroupCollapsed = () => {
+                if (!currKey || !collapsibleGroups) return;
+                setCollapsedGroupKeys((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(currKey)) next.delete(currKey);
+                  else next.add(currKey);
+                  return next;
+                });
+              };
 
               return (
                 <div key={`${row.facilityId}-${row.supplierId}-${row.inputTypeId}`}>
                   {/* Group separator / header */}
-                  {showGroupHeader && (
+                  {showGroupHeader && collapsibleGroups && currKey && (
+                    <button
+                      type="button"
+                      onClick={toggleGroupCollapsed}
+                      aria-expanded={!groupCollapsed}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 bg-slate-100 border-b border-slate-200 sticky top-[49px] z-10 text-left hover:bg-slate-200/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-inset"
+                    >
+                      <span className="text-slate-500 shrink-0" aria-hidden>
+                        <svg
+                          className={`w-4 h-4 transition-transform ${groupCollapsed ? '' : 'rotate-90'}`}
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </span>
+                      <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">
+                        {row.groupName}
+                      </span>
+                      <span className="text-xs text-slate-400">· {row.supplierName}</span>
+                    </button>
+                  )}
+                  {showGroupHeader && (!collapsibleGroups || !currKey) && (
                     <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 border-b border-slate-200 sticky top-[49px] z-10">
                       <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">
                         {row.groupName}
@@ -341,6 +411,7 @@ export default function NonMeteredCoverageTable({
                     </div>
                   )}
 
+                  {!(groupCollapsed && showGroupHeader) && (
                   <div className="flex border-b border-gray-200 last:border-b-0 hover:bg-gray-50/50">
                     <div className="w-[150px] min-w-[150px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
                       <div className="font-semibold text-gray-900 text-sm text-center" title={row.facilityName}>
@@ -396,39 +467,23 @@ export default function NonMeteredCoverageTable({
                       )}
                     </div>
 
-                    {/* Input Type (utility_category) — inline editable */}
+                    {/* Input Type (utility_category) — opens picker modal */}
                     <div
                       className={`w-[120px] min-w-[120px] px-3 py-3 border-r border-gray-200 flex items-center justify-center ${onUpdateLine ? 'group/type' : ''}`}
                     >
-                      {editingCell?.lineId === row.lineId && editingCell.field === 'input_type_id' ? (
-                        loadingInputTypes ? (
-                          <span className="text-xs text-gray-400">Loading…</span>
-                        ) : (
-                          <select
-                            ref={editInputRef as React.RefObject<HTMLSelectElement>}
-                            value={editingCell.value}
-                            onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Escape') cancelEdit();
-                            }}
-                            onBlur={commitEdit}
-                            disabled={savingCell}
-                            className="w-full text-sm border border-emerald-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white"
-                          >
-                            {inputTypes.map((it) => (
-                              <option key={it.id} value={it.id}>{it.name}</option>
-                            ))}
-                          </select>
-                        )
+                      {editingCell?.lineId === row.lineId && editingCell.field === 'input_type_id' && loadingInputTypes ? (
+                        <span className="text-xs text-gray-400">Loading…</span>
                       ) : (
                         <button
                           type="button"
                           onClick={() => startEdit(row.lineId, 'input_type_id', row.inputTypeId)}
-                          disabled={!onUpdateLine}
+                          disabled={!onUpdateLine || (savingCell && editingCell?.lineId === row.lineId)}
                           title={onUpdateLine ? 'Click to edit input type' : undefined}
                           className={`text-sm text-gray-600 text-center w-full truncate ${onUpdateLine ? 'cursor-pointer rounded px-1 py-0.5 hover:bg-emerald-50 hover:text-emerald-700 transition-colors' : 'cursor-default'}`}
                         >
-                          {row.inputTypeName}
+                          {savingCell && editingCell?.lineId === row.lineId && editingCell.field === 'input_type_id'
+                            ? '…'
+                            : row.inputTypeName}
                         </button>
                       )}
                     </div>
@@ -509,6 +564,7 @@ export default function NonMeteredCoverageTable({
                       })}
                     </div>
                   </div>
+                  )}
                 </div>
               );
             })
@@ -557,6 +613,15 @@ export default function NonMeteredCoverageTable({
         </div>
       </div>
     </div>
+
+    {editingCell?.field === 'input_type_id' && !loadingInputTypes && inputTypes.length > 0 && (
+      <InputTypePickerModal
+        inputTypes={inputTypes}
+        value={editingCell.value}
+        onSelect={handleInputTypeSelect}
+        onClose={cancelEdit}
+      />
+    )}
 
     {deletingRow && onDeleteLine && (
       <ConfirmModal

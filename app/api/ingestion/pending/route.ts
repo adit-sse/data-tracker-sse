@@ -9,16 +9,11 @@ import {
 import { seedNonMeteredFacilityGroupPending, type GroupPendingMember } from '@/lib/ingestion-group-pending';
 import { seedAllScope1NonMeteredPending } from '@/lib/ingestion-pending-scope1';
 import { meterMonthBlocksNewPending } from '@/lib/ingestion-metered';
+import { checkApiKey } from '@/lib/ingestion-auth';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
-
-function checkApiKey(request: Request): boolean {
-  const authHeader = request.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) return false;
-  return authHeader.slice(7) === process.env.INGESTION_API_KEY;
-}
 
 type MeteredPendingOk = { ok: true; meters: number; created: number; skipped: number };
 type MeteredPendingError = { ok: false; error: string; status: number };
