@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import ThemeProvider from '@/components/ThemeProvider';
 
 export const metadata: Metadata = {
   title: 'SSE Data Tracker',
@@ -25,16 +24,14 @@ export default function RootLayout({
   const preconnect = supabaseOrigin();
 
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en">
       <head>
         {preconnect ? (
           <link rel="preconnect" href={preconnect} crossOrigin="anonymous" />
         ) : null}
       </head>
-      <body className="bg-gray-50 dark:bg-gray-950 min-h-screen">
-        <ThemeProvider>
-          {children}
-        </ThemeProvider>
+      <body className="bg-gray-50 min-h-screen">
+        {children}
       </body>
     </html>
   );

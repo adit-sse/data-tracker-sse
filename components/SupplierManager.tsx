@@ -102,15 +102,15 @@ export default function SupplierManager({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 max-w-2xl w-full">
+      <div className="bg-white rounded-lg shadow p-6 max-w-2xl w-full">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Manage Suppliers</h2>
-          <button onClick={onClose} className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Close</button>
+          <h2 className="text-lg font-semibold text-gray-900">Manage Suppliers</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">Close</button>
         </div>
         <div className="mb-4">
           <div className="flex gap-2">
             <input
-              className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 px-3 py-2 border border-gray-300 rounded bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="New supplier name"
@@ -126,7 +126,7 @@ export default function SupplierManager({ onClose }: { onClose: () => void }) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
             <input
-              className="w-full pl-9 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded text-sm bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search suppliers..."
@@ -136,24 +136,24 @@ export default function SupplierManager({ onClose }: { onClose: () => void }) {
 
         <div className="space-y-2 max-h-72 overflow-auto">
           {loading ? (
-            <div className="text-gray-500 dark:text-gray-400">Loading...</div>
+            <div className="text-gray-500">Loading...</div>
           ) : suppliers.length === 0 ? (
-            <div className="text-gray-500 dark:text-gray-400">No suppliers found</div>
+            <div className="text-gray-500">No suppliers found</div>
           ) : (() => {
             const filtered = suppliers.filter((s) => s.name.toLowerCase().includes(searchTerm.toLowerCase()));
             if (filtered.length === 0) {
-              return <div className="text-gray-500 dark:text-gray-400 text-sm py-2">No suppliers match &quot;{searchTerm}&quot;</div>;
+              return <div className="text-gray-500 text-sm py-2">No suppliers match &quot;{searchTerm}&quot;</div>;
             }
             return filtered.map((s) => (
-              <div key={s.id} className="flex items-center gap-2 border border-gray-100 dark:border-gray-700 rounded p-2">
+              <div key={s.id} className="flex items-center gap-2 border border-gray-100 rounded p-2">
                 <input
-                  className="flex-1 px-2 py-1 border border-transparent focus:border-gray-300 dark:focus:border-gray-500 rounded bg-transparent text-gray-900 dark:text-gray-100"
+                  className="flex-1 px-2 py-1 border border-transparent focus:border-gray-300 rounded bg-transparent text-gray-900"
                   value={s.name}
                   onChange={(e) => setSuppliers((prev) => prev.map((p) => p.id === s.id ? { ...p, name: e.target.value } : p))}
                   onBlur={() => handleSave(s.id)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
                 />
-                {savingId === s.id ? <div className="text-sm text-gray-500 dark:text-gray-400">Saving...</div> : null}
+                {savingId === s.id ? <div className="text-sm text-gray-500">Saving...</div> : null}
                 <button onClick={() => promptDelete(s.id)} className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">Delete</button>
               </div>
             ));
