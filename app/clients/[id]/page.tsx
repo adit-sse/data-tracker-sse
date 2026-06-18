@@ -500,12 +500,6 @@ export default function ClientDetailPage() {
 
           {/* Scope tabs */}
           <div className="flex gap-1 mb-4 bg-gray-100 rounded-lg p-1 w-fit">
-            <TabButton active={activeTab === 'scope2'} onClick={() => handleTabChange('scope2')}>
-              Scope 2 — Electricity
-              {scope2Meters.length > 0 && (
-                <span className="ml-1.5 text-xs bg-white/60 rounded px-1.5 py-0.5">{scope2Meters.length}</span>
-              )}
-            </TabButton>
             <TabButton active={activeTab === 'scope1-metered'} onClick={() => handleTabChange('scope1-metered')}>
               Scope 1 — Gas
               {scope1MeteredMeters.length > 0 && (
@@ -516,6 +510,12 @@ export default function ClientDetailPage() {
               Scope 1 — Non-Metered
               {nonMeteredRows.length > 0 && (
                 <span className="ml-1.5 text-xs bg-white/60 rounded px-1.5 py-0.5">{nonMeteredRows.length}</span>
+              )}
+            </TabButton>
+            <TabButton active={activeTab === 'scope2'} onClick={() => handleTabChange('scope2')}>
+              Scope 2 — Electricity
+              {scope2Meters.length > 0 && (
+                <span className="ml-1.5 text-xs bg-white/60 rounded px-1.5 py-0.5">{scope2Meters.length}</span>
               )}
             </TabButton>
             <TabButton active={activeTab === 'scope3'} onClick={() => handleTabChange('scope3')}>
