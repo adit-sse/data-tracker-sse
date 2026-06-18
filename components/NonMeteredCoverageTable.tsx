@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { format, endOfMonth, startOfMonth, isAfter, parseISO, isValid, differenceInDays } from 'date-fns';
 import ConfirmModal from './ConfirmModal';
-import InputTypePickerModal from './InputTypePickerModal';
+import PickerModal from './PickerModal';
 import type {
   NonMeteredRowWithCoverage,
   NonMeteredMonthlyCoverage,
@@ -78,7 +78,6 @@ export default function NonMeteredCoverageTable({
   const [loadingInputTypes, setLoadingInputTypes] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(false);
-  const editInputRef = useRef<HTMLInputElement | HTMLSelectElement>(null);
 
   const loadCategories = useCallback(async () => {
     if (categories.length > 0 || loadingCategories) return;
@@ -112,34 +111,11 @@ export default function NonMeteredCoverageTable({
     setCategories([]);
   }, [categoryScope]);
 
-  useEffect(() => {
-    if (editingCell) {
-      // Focus the input after it renders
-      const timer = setTimeout(() => editInputRef.current?.focus(), 0);
-      return () => clearTimeout(timer);
-    }
-  }, [editingCell?.lineId, editingCell?.field]);
-
   const startEdit = async (lineId: string, field: 'category_id' | 'input_type_id', currentValue: string) => {
     if (!onUpdateLine) return;
     if (field === 'category_id') await loadCategories();
     if (field === 'input_type_id') await loadInputTypes();
     setEditingCell({ lineId, field, value: currentValue });
-  };
-
-  const commitEdit = async () => {
-    if (!editingCell || !onUpdateLine) return;
-    setSavingCell(true);
-    try {
-      await onUpdateLine(
-        editingCell.lineId,
-        editingCell.field,
-        editingCell.value.trim() || null,
-      );
-      setEditingCell(null);
-    } finally {
-      setSavingCell(false);
-    }
   };
 
   const cancelEdit = () => setEditingCell(null);
@@ -149,6 +125,17 @@ export default function NonMeteredCoverageTable({
     setSavingCell(true);
     try {
       await onUpdateLine(editingCell.lineId, 'input_type_id', id);
+      setEditingCell(null);
+    } finally {
+      setSavingCell(false);
+    }
+  };
+
+  const handleCategorySelect = async (id: string) => {
+    if (!editingCell || !onUpdateLine) return;
+    setSavingCell(true);
+    try {
+      await onUpdateLine(editingCell.lineId, 'category_id', id);
       setEditingCell(null);
     } finally {
       setSavingCell(false);
@@ -423,46 +410,23 @@ export default function NonMeteredCoverageTable({
                         {row.supplierName}
                       </div>
                     </div>
-                    {/* Category (sub_category) — inline editable */}
+                    {/* Category — opens picker modal */}
                     <div
                       className={`w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 flex items-center justify-center ${onUpdateLine ? 'group/cat' : ''}`}
                     >
-                      {editingCell?.lineId === row.lineId && editingCell.field === 'category_id' ? (
-                        loadingCategories ? (
-                          <span className="text-xs text-gray-400">Loading…</span>
-                        ) : (
-                          <select
-                            ref={editInputRef as React.RefObject<HTMLSelectElement>}
-                            value={editingCell.value}
-                            onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Escape') cancelEdit();
-                            }}
-                            onBlur={commitEdit}
-                            disabled={savingCell}
-                            className="w-full text-sm border border-emerald-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white"
-                          >
-                            <option value="">— None —</option>
-                            {editingCell.value &&
-                              !categories.some((c) => c.id === editingCell.value) && (
-                                <option value={editingCell.value}>
-                                  {row.categoryName || editingCell.value}
-                                </option>
-                              )}
-                            {categories.map((cat) => (
-                              <option key={cat.id} value={cat.id}>{cat.name}</option>
-                            ))}
-                          </select>
-                        )
+                      {editingCell?.lineId === row.lineId && editingCell.field === 'category_id' && loadingCategories ? (
+                        <span className="text-xs text-gray-400">Loading…</span>
                       ) : (
                         <button
                           type="button"
                           onClick={() => startEdit(row.lineId, 'category_id', row.categoryId || '')}
-                          disabled={!onUpdateLine}
+                          disabled={!onUpdateLine || (savingCell && editingCell?.lineId === row.lineId)}
                           title={onUpdateLine ? 'Click to edit category' : undefined}
                           className={`text-sm text-gray-600 text-center w-full truncate ${onUpdateLine ? 'cursor-pointer rounded px-1 py-0.5 hover:bg-emerald-50 hover:text-emerald-700 transition-colors' : 'cursor-default'}`}
                         >
-                          {row.categoryName || <span className="text-gray-400">{onUpdateLine ? 'Select category…' : '—'}</span>}
+                          {savingCell && editingCell?.lineId === row.lineId && editingCell.field === 'category_id'
+                            ? '…'
+                            : row.categoryName || <span className="text-gray-400">{onUpdateLine ? 'Select category…' : '—'}</span>}
                         </button>
                       )}
                     </div>
@@ -614,12 +578,29 @@ export default function NonMeteredCoverageTable({
       </div>
     </div>
 
+    {editingCell?.field === 'category_id' && !loadingCategories && categories.length > 0 && (
+      <PickerModal
+        title="Select Category"
+        items={categories.map((cat) => ({ id: cat.id, name: cat.name }))}
+        value={editingCell.value}
+        onSelect={handleCategorySelect}
+        onClose={cancelEdit}
+        searchPlaceholder="Search categories…"
+      />
+    )}
+
     {editingCell?.field === 'input_type_id' && !loadingInputTypes && inputTypes.length > 0 && (
-      <InputTypePickerModal
-        inputTypes={inputTypes}
+      <PickerModal
+        title="Select Input Type"
+        items={inputTypes.map((it) => ({
+          id: it.id,
+          name: it.name,
+          group: it.scope ? `Scope ${it.scope}` : undefined,
+        }))}
         value={editingCell.value}
         onSelect={handleInputTypeSelect}
         onClose={cancelEdit}
+        searchPlaceholder="Search input types…"
       />
     )}
 

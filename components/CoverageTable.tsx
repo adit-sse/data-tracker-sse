@@ -2,7 +2,8 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import ProgressBarCell from './ProgressBarCell';
-import InputTypePickerModal, { type InputType } from './InputTypePickerModal';
+import PickerModal from './PickerModal';
+import type { InputType } from '@/types';
 import type { MeterWithCoverage, ActualInvoice } from '@/types';
 
 import { format, endOfMonth, startOfMonth, isAfter, parseISO, isValid } from 'date-fns';
@@ -373,11 +374,17 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
                   {updatingInputType === String(meter.id) ? '…' : (meter.input_type?.name || 'N/A')}
                 </button>
                 {pickerMeterId === String(meter.id) && (
-                  <InputTypePickerModal
-                    inputTypes={inputTypes}
+                  <PickerModal
+                    title="Select Input Type"
+                    items={inputTypes.map((it) => ({
+                      id: it.id,
+                      name: it.name,
+                      group: it.scope ? `Scope ${it.scope}` : undefined,
+                    }))}
                     value={meter.input_type?.id ?? ''}
                     onSelect={(id) => handleInputTypeChange(String(meter.id), id)}
                     onClose={() => setPickerMeterId(null)}
+                    searchPlaceholder="Search input types…"
                   />
                 )}
               </div>

@@ -182,6 +182,37 @@ export default function ClientDetailPage() {
     }
   };
 
+  /**
+   * Applies a single-row patch to local state using the PATCH response,
+   * avoiding a full coverage refetch for simple metadata updates.
+   */
+  const applyNonMeteredLineUpdate = (
+    lineId: string,
+    updated: {
+      category?: { id: string; name: string } | null;
+      input_type?: { id: string; name: string } | null;
+      is_active?: boolean;
+    },
+  ) => {
+    const patchRow = (row: NonMeteredRowWithCoverage): NonMeteredRowWithCoverage => {
+      if (row.lineId !== lineId) return row;
+      return {
+        ...row,
+        ...(updated.category !== undefined && {
+          categoryId: updated.category?.id ?? null,
+          categoryName: updated.category?.name ?? null,
+        }),
+        ...(updated.input_type !== undefined && {
+          inputTypeId: updated.input_type?.id ?? row.inputTypeId,
+          inputTypeName: updated.input_type?.name ?? row.inputTypeName,
+        }),
+        ...(updated.is_active !== undefined && { isActive: updated.is_active }),
+      };
+    };
+    setNonMeteredRows((prev) => prev.map(patchRow));
+    setScope3Rows((prev) => prev.map(patchRow));
+  };
+
   // Filter metered coverage by scope
   const scope2Meters = metersWithCoverage.filter(
     (m) => (m.meter.input_type as any)?.scope === 2
@@ -556,20 +587,26 @@ export default function ClientDetailPage() {
                   onCellClick={(record) => setNmRecordModal(record)}
                   onEmptyCellClick={(row, cell) => setNmMarkEmptyModal({ row, cell })}
                   onLineStatusToggle={async (lineId, currentIsActive) => {
-                    await fetch(`/api/non-metered-lines/${lineId}`, {
+                    const res = await fetch(`/api/non-metered-lines/${lineId}`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ is_active: !currentIsActive }),
                     });
-                    fetchNonMeteredCoverage();
+                    if (res.ok) {
+                      const updated = await res.json();
+                      applyNonMeteredLineUpdate(lineId, updated);
+                    }
                   }}
                   onUpdateLine={async (lineId, field, value) => {
-                    await fetch(`/api/non-metered-lines/${lineId}`, {
+                    const res = await fetch(`/api/non-metered-lines/${lineId}`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ [field]: value }),
                     });
-                    fetchNonMeteredCoverage();
+                    if (res.ok) {
+                      const updated = await res.json();
+                      applyNonMeteredLineUpdate(lineId, updated);
+                    }
                   }}
                   onDeleteLine={async (lineId) => {
                     const res = await fetch(`/api/non-metered-lines/${lineId}`, { method: 'DELETE' });
@@ -590,20 +627,26 @@ export default function ClientDetailPage() {
                   onCellClick={(record) => setNmRecordModal(record)}
                   onEmptyCellClick={(row, cell) => setNmMarkEmptyModal({ row, cell })}
                   onLineStatusToggle={async (lineId, currentIsActive) => {
-                    await fetch(`/api/non-metered-lines/${lineId}`, {
+                    const res = await fetch(`/api/non-metered-lines/${lineId}`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ is_active: !currentIsActive }),
                     });
-                    fetchNonMeteredCoverage();
+                    if (res.ok) {
+                      const updated = await res.json();
+                      applyNonMeteredLineUpdate(lineId, updated);
+                    }
                   }}
                   onUpdateLine={async (lineId, field, value) => {
-                    await fetch(`/api/non-metered-lines/${lineId}`, {
+                    const res = await fetch(`/api/non-metered-lines/${lineId}`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ [field]: value }),
                     });
-                    fetchNonMeteredCoverage();
+                    if (res.ok) {
+                      const updated = await res.json();
+                      applyNonMeteredLineUpdate(lineId, updated);
+                    }
                   }}
                 />
               )}
