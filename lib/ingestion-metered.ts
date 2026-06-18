@@ -264,6 +264,103 @@ export async function meteredExactDuplicateExists(
   return (rows?.length ?? 0) > 0;
 }
 
+/**
+ * In-memory equivalent of meterMonthBlocksNewPending.
+ * Operates against rows already fetched for a single meter (no DB call).
+ */
+export function meterMonthBlocksNewPendingFromCache(
+  rows: Array<{ period_start_date: string; period_end_date: string; status: string | null }>,
+  monthStart: string,
+  monthEnd: string
+): boolean {
+  const overlapping = rows.filter(
+    (r) => r.period_start_date <= monthEnd && r.period_end_date >= monthStart
+  );
+
+  // Hard block: PENDING or DEACTIVATED already overlaps this month
+  if (overlapping.some((r) => r.status === 'PENDING' || r.status === 'DEACTIVATED')) return true;
+
+  // Soft block: green records fully cover every day of the month
+  const greenRows = overlapping.filter((r) =>
+    (METERED_GREEN_INVOICE_STATUSES as readonly string[]).includes(r.status ?? '')
+  );
+  if (greenRows.length === 0) return false;
+
+  const mStart = new Date(monthStart);
+  const mEnd = new Date(monthEnd);
+  const totalDays = Math.round((mEnd.getTime() - mStart.getTime()) / 86_400_000) + 1;
+  const coveredDays = new Set<string>();
+
+  for (const row of greenRows) {
+    const start = new Date(
+      Math.max(new Date(row.period_start_date).getTime(), mStart.getTime())
+    );
+    const end = new Date(
+      Math.min(new Date(row.period_end_date).getTime(), mEnd.getTime())
+    );
+    const cur = new Date(start);
+    while (cur <= end) {
+      coveredDays.add(cur.toISOString().slice(0, 10));
+      cur.setDate(cur.getDate() + 1);
+    }
+  }
+
+  return coveredDays.size >= totalDays;
+}
+
+/**
+ * Pre-fetch all actual_invoices for a set of meters covering [rangeStart, rangeEnd] in a
+ * single pass (chunked by 200 meter IDs to stay within PostgREST's IN limit).
+ *
+ * Returns a Map<meterId, invoiceRows> for use with meterMonthBlocksNewPendingFromCache,
+ * replacing the per-meter × per-month DB calls in seedMeteredPending.
+ */
+export async function bulkFetchMeterInvoicesForMonths(
+  supabase: SupabaseClient,
+  meterIds: string[],
+  rangeStart: string,
+  rangeEnd: string
+): Promise<Map<string, Array<{ period_start_date: string; period_end_date: string; status: string | null }>>> {
+  const cache = new Map<
+    string,
+    Array<{ period_start_date: string; period_end_date: string; status: string | null }>
+  >();
+  if (meterIds.length === 0) return cache;
+
+  const CHUNK = 200;
+  const chunks: string[][] = [];
+  for (let i = 0; i < meterIds.length; i += CHUNK) {
+    chunks.push(meterIds.slice(i, i + CHUNK));
+  }
+
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      supabase
+        .from('actual_invoices')
+        .select('meter_id, period_start_date, period_end_date, status')
+        .in('meter_id', chunk)
+        .lte('period_start_date', rangeEnd)
+        .gte('period_end_date', rangeStart)
+        .limit(50000)
+    )
+  );
+
+  for (const { data, error } of results) {
+    if (error) throw new Error(error.message);
+    for (const row of data ?? []) {
+      const mid = String(row.meter_id);
+      if (!cache.has(mid)) cache.set(mid, []);
+      cache.get(mid)!.push({
+        period_start_date: row.period_start_date as string,
+        period_end_date: row.period_end_date as string,
+        status: row.status as string | null,
+      });
+    }
+  }
+
+  return cache;
+}
+
 /** Extracts invoice metadata fields from a NGERS metered row for use in actual_invoices upserts. */
 export function metaFromRow(row: NgersMeterRow) {
   return {

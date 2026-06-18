@@ -60,32 +60,26 @@ export async function GET(
     let invoices: any[] = [];
     
     if (meterIds.length > 0) {
-      // Fetch in chunks to handle large meter counts, with explicit limit
-      // to avoid PostgREST's default 1000-row truncation
-      for (let i = 0; i < meterIds.length; i += 200) {
-        const chunk = meterIds.slice(i, i + 200);
-        
-        console.log(`Chunk ${i/200 + 1}: fetching ${chunk.length} meters, contains 3096: ${chunk.includes(3096)}`);
-        
-        const { data: invoicesData, error: invoicesError } = await supabase
-          .from('actual_invoices')
-          .select('*')
-          .in('meter_id', chunk)
-          .limit(10000);
-        
+      // Fetch all chunks in parallel to avoid sequential round-trips for large meter counts.
+      const chunkSize = 200;
+      const chunks: (typeof meterIds)[] = [];
+      for (let i = 0; i < meterIds.length; i += chunkSize) {
+        chunks.push(meterIds.slice(i, i + chunkSize));
+      }
+      const chunkResults = await Promise.all(
+        chunks.map((chunk) =>
+          supabase
+            .from('actual_invoices')
+            .select('*')
+            .in('meter_id', chunk)
+            .limit(10000)
+        )
+      );
+      for (const { data: invoicesData, error: invoicesError } of chunkResults) {
         if (invoicesError) throw invoicesError;
-        console.log(`Chunk ${i/200 + 1}: returned ${invoicesData?.length ?? 0} invoices`);
-        
         invoices.push(...(invoicesData || []));
       }
     }
-
-    console.log('Total invoices fetched:', invoices.length);
-    console.log(
-      'Unique meter IDs in fetched invoices:',
-      Array.from(new Set(invoices.map((i) => i.meter_id))),
-    );
-    console.log('Meter 3096 invoices:', invoices.filter(i => i.meter_id === 3096 || i.meter_id === '3096'));
 
     
     // Group invoices by meter

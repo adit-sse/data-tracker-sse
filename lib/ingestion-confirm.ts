@@ -17,8 +17,8 @@ import { parseNgersDateRange, monthStartIso } from '@/lib/ingestion-dates';
 import {
   parseMeterIdentifierFromNgersRow,
   resolveMeterForIngestion,
-  meteredExactDuplicateExists,
   metaFromRow,
+  METERED_GREEN_INVOICE_STATUSES,
   type NgersMeterRow,
 } from '@/lib/ingestion-metered';
 import { eachMonthStartIsoOverlapping, syncMeteredGapPendingForMonths } from '@/lib/metered-gap-pending';
@@ -419,19 +419,56 @@ export async function processMeteredRows(
 
     const meta = metaFromRow(first);
 
+    // Pre-fetch all PENDING and GREEN invoices for this meter covering the full range
+    // of confirmed periods in one parallel query pair — replaces per-period selects.
+    const periodList = Array.from(confirmedPeriods.values());
+    const minStart = periodList.reduce((a, b) => (a.start < b.start ? a : b)).start;
+    const maxEnd = periodList.reduce((a, b) => (a.end > b.end ? a : b)).end;
+
+    const [{ data: allPending, error: pendFetchErr }, { data: allGreen, error: greenFetchErr }] =
+      await Promise.all([
+        supabase
+          .from('actual_invoices')
+          .select('id, period_start_date, period_end_date')
+          .eq('meter_id', meterId)
+          .eq('status', 'PENDING')
+          .lte('period_start_date', maxEnd)
+          .gte('period_end_date', minStart)
+          .order('period_start_date', { ascending: true }),
+        supabase
+          .from('actual_invoices')
+          .select('id, period_start_date, period_end_date')
+          .eq('meter_id', meterId)
+          .in('status', [...METERED_GREEN_INVOICE_STATUSES])
+          .lte('period_start_date', maxEnd)
+          .gte('period_end_date', minStart),
+      ]);
+
+    if (pendFetchErr) throw new Error(pendFetchErr.message);
+    if (greenFetchErr) throw new Error(greenFetchErr.message);
+
+    // Assign fetched PENDING rows to each confirmed period (overlap check).
+    // allPending is already ordered by period_start_date asc so keepId = first match.
+    const pendingByPeriod = new Map<string, Array<{ id: string }>>();
+    for (const p of allPending ?? []) {
+      const ps = String(p.period_start_date);
+      const pe = String(p.period_end_date);
+      for (const [psk, period] of confirmedPeriods.entries()) {
+        if (ps <= period.end && pe >= period.start) {
+          if (!pendingByPeriod.has(psk)) pendingByPeriod.set(psk, []);
+          pendingByPeriod.get(psk)!.push({ id: p.id as string });
+        }
+      }
+    }
+
+    // Collect all duplicate pending IDs for a single batch delete after the loop.
+    const allDupIds: string[] = [];
+    // Collect new CONFIRMED rows (no prior pending) for a single batch insert.
+    const newConfirmedRows: Array<Record<string, unknown>> = [];
+
     for (const [periodStartKey, period] of Array.from(confirmedPeriods.entries())) {
       const totals = periodTotals.get(periodStartKey) ?? { consumption: 0, amount: 0 };
-
-      const { data: pendingList } = await supabase
-        .from('actual_invoices')
-        .select('id')
-        .eq('meter_id', meterId)
-        .eq('status', 'PENDING')
-        .lte('period_start_date', period.end)
-        .gte('period_end_date', period.start)
-        .order('period_start_date', { ascending: true });
-
-      const pendings = pendingList ?? [];
+      const pendings = pendingByPeriod.get(periodStartKey) ?? [];
 
       if (pendings.length > 0) {
         const keepId = pendings[0].id;
@@ -456,22 +493,22 @@ export async function processMeteredRows(
           .eq('id', keepId);
 
         if (updErr) throw new Error(updErr.message);
-
-        if (dupIds.length > 0) {
-          const { error: delDupErr } = await supabase.from('actual_invoices').delete().in('id', dupIds);
-          if (delDupErr) throw new Error(delDupErr.message);
-          totalDeletedPending += dupIds.length;
-        }
+        allDupIds.push(...dupIds);
         totalConfirmed++;
       } else {
-        const isDuplicate = await meteredExactDuplicateExists(supabase, meterId, period.start, period.end);
+        // Exact duplicate check in memory (was: a separate DB select per period)
+        const isDuplicate = (allGreen ?? []).some(
+          (g) =>
+            String(g.period_start_date) === period.start &&
+            String(g.period_end_date) === period.end
+        );
         if (isDuplicate) {
           // Idempotent: already confirmed — safe to skip
           totalSkippedDuplicates++;
           continue;
         }
 
-        const { error: insErr } = await supabase.from('actual_invoices').insert({
+        newConfirmedRows.push({
           meter_id: meterId,
           period_start_date: period.start,
           period_end_date: period.end,
@@ -486,10 +523,21 @@ export async function processMeteredRows(
           input_type: meta.input_type,
           customer: meta.customer,
         });
-
-        if (insErr) throw new Error(insErr.message);
         totalConfirmed++;
       }
+    }
+
+    // Batch delete all duplicate pending rows in a single call
+    if (allDupIds.length > 0) {
+      const { error: delDupErr } = await supabase.from('actual_invoices').delete().in('id', allDupIds);
+      if (delDupErr) throw new Error(delDupErr.message);
+      totalDeletedPending += allDupIds.length;
+    }
+
+    // Batch insert all new CONFIRMED rows (those with no prior pending)
+    if (newConfirmedRows.length > 0) {
+      const { error: insErr } = await supabase.from('actual_invoices').insert(newConfirmedRows);
+      if (insErr) throw new Error(insErr.message);
     }
 
     const gapSync = await syncMeteredGapPendingForMonths(

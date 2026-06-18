@@ -60,32 +60,41 @@ export async function runGroupBackfill(
 
   const memberIdSet = new Set(memberFacilityIds.map(String));
 
+  // Collect all absent-facility rows across all slices into a single array,
+  // then issue one bulk upsert — replaces one upsert per absent facility per slice.
+  const rowsToUpsert: Array<{
+    facility_id: string;
+    supplier_id: string;
+    input_type_id: string;
+    period_start_date: string;
+    period_end_date: string;
+    status: string;
+    inferred_from_id: string;
+  }> = [];
+
   for (const slice of Array.from(slices.values())) {
     const absentIds = Array.from(memberIdSet).filter(
       (fid) => !slice.presentFacilityIds.has(fid)
     );
-
-    if (absentIds.length === 0) continue;
-
     for (const facilityId of absentIds) {
-      await supabase
-        .from('non_metered_records')
-        .upsert(
-          {
-            facility_id: facilityId,
-            supplier_id: supplierId,
-            input_type_id: slice.input_type_id,
-            period_start_date: slice.period_start_date,
-            period_end_date: slice.period_end_date,
-            status: 'INFERRED_EMPTY',
-            inferred_from_id: slice.referenceId,
-          },
-          {
-            onConflict:
-              'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
-            ignoreDuplicates: true, // never overwrite IMPORTED or MANUAL
-          }
-        );
+      rowsToUpsert.push({
+        facility_id: facilityId,
+        supplier_id: supplierId,
+        input_type_id: slice.input_type_id,
+        period_start_date: slice.period_start_date,
+        period_end_date: slice.period_end_date,
+        status: 'INFERRED_EMPTY',
+        inferred_from_id: slice.referenceId,
+      });
     }
+  }
+
+  if (rowsToUpsert.length > 0) {
+    await supabase
+      .from('non_metered_records')
+      .upsert(rowsToUpsert, {
+        onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
+        ignoreDuplicates: true, // never overwrite IMPORTED or MANUAL
+      });
   }
 }

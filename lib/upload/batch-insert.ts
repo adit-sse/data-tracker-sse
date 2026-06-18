@@ -35,24 +35,38 @@ export async function batchInsertInvoices(
 
   const meterIds = Array.from(new Set(invoices.map((i) => i.meter_id)));
   const existingKeys = new Set<string>();
+  // Track DEACTIVATED row IDs keyed by meter+period so we can batch-delete them later
+  // without a second round-trip (we get the IDs from the deduplication fetch below).
+  const deactivatedIdByPeriodKey = new Map<string, string>();
 
+  const chunks: string[][] = [];
   for (let i = 0; i < meterIds.length; i += BATCH_CHUNK_SIZE) {
-    const meterChunk = meterIds.slice(i, i + BATCH_CHUNK_SIZE);
-    const { data: existing } = await supabase
-      .from('actual_invoices')
-      .select('meter_id, invoice_number, period_start_date, period_end_date, status')
-      .in('meter_id', meterChunk)
-      .limit(10000);
+    chunks.push(meterIds.slice(i, i + BATCH_CHUNK_SIZE));
+  }
+  const fetchResults = await Promise.all(
+    chunks.map((meterChunk) =>
+      supabase
+        .from('actual_invoices')
+        .select('id, meter_id, invoice_number, period_start_date, period_end_date, status')
+        .in('meter_id', meterChunk)
+        .limit(10000)
+    )
+  );
 
+  for (const { data: existing } of fetchResults) {
     for (const e of existing || []) {
+      const st = (e.status || '').toUpperCase();
       if (e.invoice_number) {
         existingKeys.add(`${e.meter_id}__inv__${e.invoice_number}`);
         existingKeys.add(`${e.meter_id}__${e.period_start_date}__${e.period_end_date}`);
+      } else if (st === 'DEACTIVATED') {
+        // Record ID so we can delete it if a real invoice arrives for the same slot.
+        deactivatedIdByPeriodKey.set(
+          `${e.meter_id}__${e.period_start_date}__${e.period_end_date}`,
+          e.id as string,
+        );
       } else {
-        const st = (e.status || '').toUpperCase();
-        if (st !== 'DEACTIVATED') {
-          existingKeys.add(`${e.meter_id}__${e.period_start_date}__${e.period_end_date}`);
-        }
+        existingKeys.add(`${e.meter_id}__${e.period_start_date}__${e.period_end_date}`);
       }
     }
   }
@@ -79,23 +93,33 @@ export async function batchInsertInvoices(
   if (newInvoices.length === 0) return 0;
 
   // Remove DEACTIVATED placeholders for the same meter+period as incoming real rows.
+  // IDs were collected during the deduplication fetch above — no extra round-trip needed.
   const nonDeactivated = newInvoices.filter(
     (inv) => (inv.status || 'IMPORTED').toUpperCase() !== 'DEACTIVATED',
   );
-  for (const inv of nonDeactivated) {
-    await supabase
-      .from('actual_invoices')
-      .delete()
-      .eq('meter_id', inv.meter_id)
-      .eq('period_start_date', inv.period_start_date)
-      .eq('period_end_date', inv.period_end_date)
-      .eq('status', 'DEACTIVATED');
+  const deactivatedIdsToDelete = nonDeactivated
+    .map((inv) =>
+      deactivatedIdByPeriodKey.get(
+        `${inv.meter_id}__${inv.period_start_date}__${inv.period_end_date}`,
+      )
+    )
+    .filter((id): id is string => id !== undefined);
+
+  if (deactivatedIdsToDelete.length > 0) {
+    await supabase.from('actual_invoices').delete().in('id', deactivatedIdsToDelete);
   }
 
-  let count = 0;
+  const insertChunks: PendingInvoice[][] = [];
   for (let i = 0; i < newInvoices.length; i += BATCH_CHUNK_SIZE) {
-    const chunk = newInvoices.slice(i, i + BATCH_CHUNK_SIZE);
-    const { data, error } = await supabase.from('actual_invoices').insert(chunk).select('id');
+    insertChunks.push(newInvoices.slice(i, i + BATCH_CHUNK_SIZE));
+  }
+  const insertResults = await Promise.all(
+    insertChunks.map((chunk) =>
+      supabase.from('actual_invoices').insert(chunk).select('id')
+    )
+  );
+  let count = 0;
+  for (const { data, error } of insertResults) {
     if (error) {
       console.error('Batch invoice insert failed:', error);
       errors.push(`Batch invoice insert failed: ${error.message}`);
