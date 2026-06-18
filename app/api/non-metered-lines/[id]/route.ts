@@ -63,7 +63,14 @@ export async function PATCH(
       .from('non_metered_lines')
       .update(updateData)
       .eq('id', params.id)
-      .select()
+      .select(`
+        id,
+        category_id,
+        input_type_id,
+        is_active,
+        category:categories(id, name),
+        input_type:input_types(id, name)
+      `)
       .single();
 
     if (error) throw error;
