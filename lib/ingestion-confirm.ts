@@ -11,7 +11,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { resolveIngestionLine, resolveNonMeteredCoverageWithoutFacilityGroup } from '@/lib/ingestion-line';
+import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { findInputTypeForIngestion } from '@/lib/ingestion-utility-category';
 import { parseNgersDateRange, monthStartIso } from '@/lib/ingestion-dates';
 import {
@@ -222,17 +222,7 @@ export async function processNonMeteredGroupRows(
         }
         facilityId = fid;
       } else {
-        const lineResolved = await resolveNonMeteredCoverageWithoutFacilityGroup(supabase, {
-          clientId: client.id,
-          clientName: Company,
-          facilityName: facility,
-          supplierId: supplier.id,
-          supplierName: Provider,
-          categoryId: groupCategory.id,
-          categoryName: Category,
-          inputTypeId: targetInputTypeId,
-          inputTypeName: InputType,
-        });
+        const lineResolved = await resolveIngestionLine(supabase, Company, facility, Provider, InputType);
         if (!lineResolved.ok) {
           return { ok: false, error: lineResolved.error, status: lineResolved.status };
         }
