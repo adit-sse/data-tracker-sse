@@ -42,7 +42,6 @@ type NonMeteredRow = {
 type MeteredRow = {
   id: number;
   period_start_date: string | null;
-  created_at: string | null;
   meter: Joined<{
     facility: Joined<{
       id: number;
@@ -83,7 +82,7 @@ function mapMeteredRow(row: MeteredRow): StuckPendingRecord | null {
   const client = joinedOne(facility?.client);
   if (!meter || !facility || !client) return null;
 
-  const createdAt = row.created_at ?? row.period_start_date;
+  const createdAt = row.period_start_date;
   if (!createdAt) return null;
 
   return {
@@ -140,7 +139,6 @@ export async function GET(request: Request) {
           `
           id,
           period_start_date,
-          created_at,
           meter:meters(
             facility:facilities(id, name, client_id, client:clients(id, name)),
             supplier:suppliers(name),
@@ -149,7 +147,7 @@ export async function GET(request: Request) {
         `
         )
         .eq('status', 'PENDING')
-        .order('created_at', { ascending: true }),
+        .order('period_start_date', { ascending: true }),
     ]);
 
     if (nonMeteredRes.error) throw nonMeteredRes.error;

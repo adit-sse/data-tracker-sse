@@ -67,15 +67,15 @@ function formatAbsolute(iso: string): string {
 }
 
 function ageRowClass(hours: number): string {
-  if (hours >= 168) return 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900/50';
-  if (hours >= 24)  return 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/50';
-  return 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700';
+  if (hours >= 168) return 'bg-red-50 border-red-200';
+  if (hours >= 24)  return 'bg-amber-50 border-amber-200';
+  return 'bg-white border-gray-100';
 }
 
 function ageBadgeClass(hours: number): string {
-  if (hours >= 168) return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300';
-  if (hours >= 24)  return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300';
-  return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300';
+  if (hours >= 168) return 'bg-red-100 text-red-700';
+  if (hours >= 24)  return 'bg-amber-100 text-amber-700';
+  return 'bg-gray-100 text-gray-600';
 }
 
 // ---------------------------------------------------------------------------
@@ -170,16 +170,16 @@ function StuckPendingTable({ refreshKey }: { refreshKey: number }) {
   }
 
   function SortIcon({ col }: { col: typeof sortCol }) {
-    if (sortCol !== col) return <span className="text-gray-300 dark:text-gray-600 ml-1">↕</span>;
+    if (sortCol !== col) return <span className="text-gray-300 ml-1">↕</span>;
     return <span className="text-blue-500 ml-1">{sortAsc ? '↑' : '↓'}</span>;
   }
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-        <div className="h-12 bg-gray-50 dark:bg-gray-800/80 animate-pulse" />
+      <div className="rounded-xl border border-gray-200 overflow-hidden">
+        <div className="h-12 bg-gray-50 animate-pulse" />
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="h-14 border-t border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 animate-pulse" />
+          <div key={i} className="h-14 border-t border-gray-100 bg-white animate-pulse" />
         ))}
       </div>
     );
@@ -188,13 +188,13 @@ function StuckPendingTable({ refreshKey }: { refreshKey: number }) {
   if (error) {
     return (
       <div className="text-center py-16">
-        <div className="w-16 h-16 mx-auto rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mb-4">
+        <div className="w-16 h-16 mx-auto rounded-full bg-red-100 flex items-center justify-center mb-4">
           <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4m0 4h.01M21 12A9 9 0 113 12a9 9 0 0118 0z" />
           </svg>
         </div>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Unable to load stuck pending</h3>
-        <p className="mt-1 text-gray-500 dark:text-gray-400 max-w-sm mx-auto">{error}</p>
+        <h3 className="text-lg font-semibold text-gray-900">Unable to load stuck pending</h3>
+        <p className="mt-1 text-gray-500 max-w-sm mx-auto">{error}</p>
         <button
           onClick={fetchStuck}
           className="mt-6 bg-blue-600 text-white px-5 py-2.5 rounded-lg hover:bg-blue-700 font-medium transition-colors"
@@ -209,129 +209,129 @@ function StuckPendingTable({ refreshKey }: { refreshKey: number }) {
     <div>
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        <div className="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-0.5">
+        <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5">
           {AGE_FILTER_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               onClick={() => setAgeFilter(opt.value)}
               className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                 ageFilter === opt.value
-                  ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                  ? 'bg-blue-50 text-blue-700'
+                  : 'text-gray-500 hover:text-gray-700'
               }`}
             >
               {opt.label}
             </button>
           ))}
         </div>
-        <div className="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-0.5">
+        <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5">
           {(['all', 'metered', 'non-metered'] as const).map((k) => (
             <button
               key={k}
               onClick={() => setKindFilter(k)}
               className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors capitalize ${
                 kindFilter === k
-                  ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                  ? 'bg-blue-50 text-blue-700'
+                  : 'text-gray-500 hover:text-gray-700'
               }`}
             >
               {k === 'all' ? 'All types' : k}
             </button>
           ))}
         </div>
-        <span className="text-sm text-gray-500 dark:text-gray-400 ml-auto">
+        <span className="text-sm text-gray-500 ml-auto">
           {filtered.length} record{filtered.length === 1 ? '' : 's'} across {grouped.length} location{grouped.length === 1 ? '' : 's'}
         </span>
       </div>
 
       {/* Legend */}
-      <div className="flex items-center gap-4 mb-3 text-xs text-gray-500 dark:text-gray-400">
+      <div className="flex items-center gap-4 mb-3 text-xs text-gray-500">
         <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-sm bg-amber-200 dark:bg-amber-900/60 inline-block" />
+          <span className="w-3 h-3 rounded-sm bg-amber-200 inline-block" />
           Oldest pending &gt; 24h
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-sm bg-red-200 dark:bg-red-900/60 inline-block" />
+          <span className="w-3 h-3 rounded-sm bg-red-200 inline-block" />
           Oldest pending &gt; 7 days
         </span>
-        <span className="text-gray-400 dark:text-gray-600 hidden sm:inline">Click a row to open the client</span>
+        <span className="text-gray-400 hidden sm:inline">Click a row to open the client</span>
       </div>
 
       {grouped.length === 0 ? (
-        <div className="text-center py-16 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700">
-          <div className="w-14 h-14 mx-auto rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mb-3">
+        <div className="text-center py-16 bg-white rounded-xl border border-gray-100">
+          <div className="w-14 h-14 mx-auto rounded-full bg-emerald-100 flex items-center justify-center mb-3">
             <svg className="w-7 h-7 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 13l4 4L19 7" />
             </svg>
           </div>
-          <p className="text-gray-600 dark:text-gray-300 font-medium">No stuck pending records</p>
-          <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
+          <p className="text-gray-600 font-medium">No stuck pending records</p>
+          <p className="text-sm text-gray-400 mt-1">
             Everything is confirmed, errored, or recently seeded.
           </p>
         </div>
       ) : (
-        <div className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
+        <div className="rounded-xl border border-gray-200 overflow-hidden shadow-sm">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-gray-50 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700">
+              <tr className="bg-gray-50 border-b border-gray-200">
                 <th
-                  className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:text-gray-900 dark:hover:text-gray-100 select-none whitespace-nowrap"
+                  className="text-left px-4 py-3 font-semibold text-gray-600 cursor-pointer hover:text-gray-900 select-none whitespace-nowrap"
                   onClick={() => toggleSort('client')}
                 >
                   Client <SortIcon col="client" />
                 </th>
-                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap">
                   Facility
                 </th>
-                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-gray-300 whitespace-nowrap hidden md:table-cell">
+                <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap hidden md:table-cell">
                   Supplier
                 </th>
-                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-gray-300 whitespace-nowrap hidden sm:table-cell">
+                <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap hidden sm:table-cell">
                   Kind
                 </th>
                 <th
-                  className="text-center px-4 py-3 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:text-gray-900 dark:hover:text-gray-100 select-none whitespace-nowrap hidden sm:table-cell"
+                  className="text-center px-4 py-3 font-semibold text-gray-600 cursor-pointer hover:text-gray-900 select-none whitespace-nowrap hidden sm:table-cell"
                   onClick={() => toggleSort('count')}
                 >
                   Pending <SortIcon col="count" />
                 </th>
                 <th
-                  className="text-right px-4 py-3 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:text-gray-900 dark:hover:text-gray-100 select-none whitespace-nowrap"
+                  className="text-right px-4 py-3 font-semibold text-gray-600 cursor-pointer hover:text-gray-900 select-none whitespace-nowrap"
                   onClick={() => toggleSort('age')}
                 >
                   Oldest <SortIcon col="age" />
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-700/60">
+            <tbody className="divide-y divide-gray-100">
               {grouped.map((g) => (
                 <tr
                   key={g.key}
                   onClick={() => router.push(`/clients/${g.client_id}`)}
                   className={`border-l-4 cursor-pointer transition-all hover:shadow-md hover:-translate-y-px ${ageRowClass(g.oldest_hours)}`}
                 >
-                  <td className="px-4 py-3 font-medium text-blue-600 dark:text-blue-400">
+                  <td className="px-4 py-3 font-medium text-blue-600">
                     {g.client_name}
                   </td>
-                  <td className="px-4 py-3 text-gray-700 dark:text-gray-300">
+                  <td className="px-4 py-3 text-gray-700">
                     {g.facility_name ?? <span className="text-gray-400">—</span>}
                   </td>
-                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400 hidden md:table-cell">
+                  <td className="px-4 py-3 text-gray-600 hidden md:table-cell">
                     {g.supplier_name ?? <span className="text-gray-400">—</span>}
                   </td>
                   <td className="px-4 py-3 hidden sm:table-cell">
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                       g.kind === 'metered'
-                        ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+                        ? 'bg-indigo-100 text-indigo-700'
                         : g.kind === 'non-metered'
-                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300'
-                        : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+                        ? 'bg-purple-100 text-purple-700'
+                        : 'bg-gray-100 text-gray-600'
                     }`}>
                       {g.kind}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-center hidden sm:table-cell">
-                    <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs font-bold">
+                    <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-gray-200 text-gray-700 text-xs font-bold">
                       {g.count}
                     </span>
                   </td>
@@ -460,7 +460,7 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
-            className="h-20 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 animate-pulse"
+            className="h-20 bg-white rounded-xl border border-gray-100 animate-pulse"
           />
         ))}
       </div>
@@ -470,13 +470,13 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
   if (error) {
     return (
       <div className="text-center py-16">
-        <div className="w-16 h-16 mx-auto rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mb-4">
+        <div className="w-16 h-16 mx-auto rounded-full bg-red-100 flex items-center justify-center mb-4">
           <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4m0 4h.01M21 12A9 9 0 113 12a9 9 0 0118 0z" />
           </svg>
         </div>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Unable to load activity</h3>
-        <p className="mt-1 text-gray-500 dark:text-gray-400 max-w-sm mx-auto">{error}</p>
+        <h3 className="text-lg font-semibold text-gray-900">Unable to load activity</h3>
+        <p className="mt-1 text-gray-500 max-w-sm mx-auto">{error}</p>
         <button
           onClick={fetchEvents}
           className="mt-6 bg-blue-600 text-white px-5 py-2.5 rounded-lg hover:bg-blue-700 font-medium transition-colors"
@@ -503,12 +503,12 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
               placeholder="Search client, supplier…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             {search && (
               <button
                 onClick={() => setSearch('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
               >
                 ×
               </button>
@@ -516,7 +516,7 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
           </div>
 
           {/* Outcome filter */}
-          <div className="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-0.5">
+          <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5">
             {(['ALL', 'SUCCESS', 'FAILURE'] as const).map((v) => (
               <button
                 key={v}
@@ -524,11 +524,11 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
                 className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                   outcomeFilter === v
                     ? v === 'FAILURE'
-                      ? 'bg-red-50 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                      ? 'bg-red-50 text-red-700'
                       : v === 'SUCCESS'
-                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                      : 'bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : 'bg-blue-50 text-blue-700'
+                    : 'text-gray-500 hover:text-gray-700'
                 }`}
               >
                 {v === 'ALL' ? 'All outcomes' : v === 'SUCCESS' ? 'Success' : 'Failed'}
@@ -536,7 +536,7 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
             ))}
           </div>
 
-          <span className="text-sm text-gray-500 dark:text-gray-400 ml-auto">
+          <span className="text-sm text-gray-500 ml-auto">
             {filtered.length} event{filtered.length === 1 ? '' : 's'}
           </span>
         </div>
@@ -549,8 +549,8 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
               onClick={() => setCategoryFilter(opt.value)}
               className={`px-3 py-1 text-xs font-medium rounded-full border transition-colors ${
                 categoryFilter === opt.value
-                  ? 'bg-gray-800 text-white border-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:border-gray-100'
-                  : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500 bg-white dark:bg-gray-800'
+                  ? 'bg-gray-800 text-white border-gray-800'
+                  : 'border-gray-200 text-gray-600 hover:border-gray-400 bg-white'
               }`}
             >
               {opt.label}
@@ -560,11 +560,11 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="text-center py-16 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700">
-          <p className="text-gray-500 dark:text-gray-400 font-medium">No events match your filters</p>
+        <div className="text-center py-16 bg-white rounded-xl border border-gray-100">
+          <p className="text-gray-500 font-medium">No events match your filters</p>
           <button
             onClick={() => { setSearch(''); setOutcomeFilter('ALL'); setCategoryFilter('all'); }}
-            className="mt-3 text-sm text-blue-600 dark:text-blue-400 hover:underline"
+            className="mt-3 text-sm text-blue-600 hover:underline"
           >
             Clear filters
           </button>
@@ -577,10 +577,10 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
             return (
               <div
                 key={ev.id}
-                className={`rounded-xl border bg-white dark:bg-gray-800 p-4 shadow-sm ${
+                className={`rounded-xl border bg-white p-4 shadow-sm ${
                   isFailure
-                    ? 'border-red-200 dark:border-red-900/50'
-                    : 'border-gray-100 dark:border-gray-700'
+                    ? 'border-red-200'
+                    : 'border-gray-100'
                 }`}
               >
                 <div className="flex items-start justify-between gap-4">
@@ -589,37 +589,37 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
                       {/* Outcome badge */}
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
                         isFailure
-                          ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                          ? 'bg-red-100 text-red-700'
                           : isSuccess
-                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                          : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-gray-100 text-gray-600'
                       }`}>
                         {isFailure ? 'Failed' : 'Success'}
                       </span>
                       {/* Endpoint badge */}
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 font-mono">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 font-mono">
                         {endpointLabel(ev.endpoint)}
                       </span>
                       {/* Client link */}
                       {ev.client_id ? (
-                        <Link href={`/clients/${ev.client_id}`} className="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline">
+                        <Link href={`/clients/${ev.client_id}`} className="text-sm font-semibold text-blue-600 hover:underline">
                           {eventClientName(ev)}
                         </Link>
                       ) : (
-                        <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">{eventClientName(ev)}</span>
+                        <span className="text-sm font-semibold text-gray-900">{eventClientName(ev)}</span>
                       )}
                     </div>
 
                     {/* Detail line */}
-                    <div className="mt-1 text-sm text-gray-600 dark:text-gray-300 truncate">
+                    <div className="mt-1 text-sm text-gray-600 truncate">
                       {[ev.facility_name, ev.supplier_name, ev.utility_name].filter(Boolean).join(' · ') || (
                         <span className="text-gray-400 italic">No facility / supplier context</span>
                       )}
                       {ev.period_start && (
-                        <span className="text-gray-400 dark:text-gray-500"> · {formatPeriod(ev.period_start)}</span>
+                        <span className="text-gray-400"> · {formatPeriod(ev.period_start)}</span>
                       )}
                       {typeof ev.affected_count === 'number' && (
-                        <span className="text-gray-400 dark:text-gray-500">
+                        <span className="text-gray-400">
                           {' · '}{ev.affected_count} record{ev.affected_count === 1 ? '' : 's'} {isFailure ? 'affected' : 'confirmed'}
                         </span>
                       )}
@@ -627,10 +627,10 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
 
                     {/* Failure reason */}
                     {isFailure && ev.reason && (
-                      <div className="mt-2 text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/20 rounded-md px-3 py-1.5 break-words">
+                      <div className="mt-2 text-sm text-red-700 bg-red-50 rounded-md px-3 py-1.5 break-words">
                         {ev.reason}
                         {ev.http_status && (
-                          <span className="text-red-400 dark:text-red-500 ml-1">(HTTP {ev.http_status})</span>
+                          <span className="text-red-400 ml-1">(HTTP {ev.http_status})</span>
                         )}
                       </div>
                     )}
@@ -638,7 +638,7 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
 
                   <div className="text-right flex-shrink-0">
                     <div
-                      className="text-xs text-gray-500 dark:text-gray-400"
+                      className="text-xs text-gray-500"
                       title={formatAbsolute(ev.created_at)}
                     >
                       {formatRelative(ev.created_at)}
@@ -656,7 +656,7 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
           <button
             onClick={loadMore}
             disabled={loadingMore}
-            className="px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+            className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
           >
             {loadingMore ? 'Loading…' : 'Load more'}
           </button>
@@ -678,33 +678,33 @@ export default function IngestionOverviewPage() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
-      <header className="bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-gray-100 dark:border-gray-800 sticky top-0 z-30">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
+      <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-30">
         <div className="mx-auto px-4 sm:px-6 lg:px-10 max-w-[1600px]">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-3">
               <Link
                 href="/"
-                className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
                 title="Back to clients"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 19l-7-7 7-7" />
                 </svg>
               </Link>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Ingestion Overview</h1>
+              <h1 className="text-xl font-bold text-gray-900">Ingestion Overview</h1>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setRefreshKey((k) => k + 1)}
-                className="px-3 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium flex items-center gap-1.5"
+                className="px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors text-sm font-medium flex items-center gap-1.5"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
                 <span className="hidden sm:inline">Refresh</span>
               </button>
-              <div className="w-px h-6 bg-gray-200 dark:bg-gray-700 mx-1" />
+              <div className="w-px h-6 bg-gray-200 mx-1" />
               <button
                 type="button"
                 onClick={async () => {
@@ -713,7 +713,7 @@ export default function IngestionOverviewPage() {
                   router.push('/login');
                   router.refresh();
                 }}
-                className="px-3 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium"
+                className="px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors text-sm font-medium"
               >
                 Sign out
               </button>
@@ -726,20 +726,20 @@ export default function IngestionOverviewPage() {
 
       <main className="mx-auto px-4 sm:px-6 lg:px-10 max-w-[1600px] py-8">
         <div className="mb-6">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Ingestion Overview</h2>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">
+          <h2 className="text-2xl font-bold text-gray-900">Ingestion Overview</h2>
+          <p className="text-gray-500 mt-1">
             Monitor pending records and confirm/error events across all clients.
           </p>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 mb-6 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex gap-1 mb-6 border-b border-gray-200">
           <button
             onClick={() => setActiveTab('log')}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg border border-b-0 transition-colors -mb-px ${
               activeTab === 'log'
-                ? 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'
-                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                ? 'bg-white border-gray-200 text-gray-900'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
             Event Log
@@ -748,8 +748,8 @@ export default function IngestionOverviewPage() {
             onClick={() => setActiveTab('stuck')}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg border border-b-0 transition-colors -mb-px ${
               activeTab === 'stuck'
-                ? 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'
-                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                ? 'bg-white border-gray-200 text-gray-900'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
             Stuck Pending

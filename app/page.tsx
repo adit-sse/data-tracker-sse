@@ -306,18 +306,18 @@ export default function HomePage() {
             </div>
             {filteredClients.length === 0 ? (
               <div className="text-center py-16">
-                <div className="w-16 h-16 mx-auto rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-4">
+                <div className="w-16 h-16 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-4">
                   <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
                   </svg>
                 </div>
-                <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">No clients found</h3>
-                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                <h3 className="text-base font-semibold text-gray-900">No clients found</h3>
+                <p className="mt-1 text-sm text-gray-500">
                   No clients match &ldquo;{searchQuery}&rdquo;
                 </p>
                 <button
                   onClick={() => setSearchQuery('')}
-                  className="mt-4 text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                  className="mt-4 text-sm text-blue-600 hover:underline"
                 >
                   Clear search
                 </button>
