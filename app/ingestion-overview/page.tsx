@@ -1,41 +1,16 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import type { IngestionEvent, StuckPendingRecord } from '@/types';
 
 // ---------------------------------------------------------------------------
-// Types
+// Types (Stuck tab still uses local shape until Step 4)
 // ---------------------------------------------------------------------------
 
-type StuckRecord = {
-  id: number;
-  kind: 'non-metered' | 'metered';
-  client_id: number;
-  client_name: string;
-  facility_name: string | null;
-  supplier_name: string | null;
-  utility_name: string | null;
-  period_start: string | null;
-  created_at: string;
-  age_hours: number;
-};
-
-type IngestionEvent = {
-  id: number;
-  outcome: 'SUCCESS' | 'FAILURE';
-  endpoint: string;
-  client_name: string;
-  client_id: number | null;
-  facility_name: string | null;
-  supplier_name: string | null;
-  utility_name: string | null;
-  period_start: string | null;
-  reason: string | null;
-  http_status: number | null;
-  affected_count: number | null;
-  created_at: string;
-};
+type StuckRecord = StuckPendingRecord;
 
 // ---------------------------------------------------------------------------
 // Dummy data
@@ -67,24 +42,15 @@ const DUMMY_STUCK: StuckRecord[] = [
   { id: 12, kind: 'non-metered', client_id: 4, client_name: 'Umbrella Group', facility_name: 'Gold Coast Hub',  supplier_name: 'Ergon Energy',  utility_name: 'Diesel',       period_start: '2025-03-01', created_at: hoursAgo(140), age_hours: 140 },
 ];
 
-const DUMMY_EVENTS: IngestionEvent[] = [
-  { id: 100, outcome: 'FAILURE', endpoint: 'confirm',          client_id: 1, client_name: 'Acme Corp',      facility_name: 'Sydney HQ',       supplier_name: 'Origin Energy', utility_name: 'Natural Gas',  period_start: '2024-07-01', reason: 'No PENDING records found for the given criteria', http_status: 404, affected_count: null, created_at: hoursAgo(0.5)  },
-  { id: 101, outcome: 'SUCCESS', endpoint: 'metered/confirm',  client_id: 2, client_name: 'Globex Ltd',     facility_name: 'Brisbane Office', supplier_name: 'AGL',           utility_name: 'Electricity',  period_start: '2024-08-01', reason: null,                                                    http_status: 200, affected_count: 3,    created_at: hoursAgo(1)    },
-  { id: 102, outcome: 'FAILURE', endpoint: 'error',            client_id: 3, client_name: 'Initech Pty',    facility_name: 'Adelaide DC',     supplier_name: 'Santos',        utility_name: 'Natural Gas',  period_start: '2024-09-01', reason: 'Client not found: "Initech"',                           http_status: 404, affected_count: null, created_at: hoursAgo(2)    },
-  { id: 103, outcome: 'SUCCESS', endpoint: 'confirm',          client_id: 1, client_name: 'Acme Corp',      facility_name: 'Melbourne Depot', supplier_name: 'AGL',           utility_name: 'Electricity',  period_start: '2024-10-01', reason: null,                                                    http_status: 200, affected_count: 1,    created_at: hoursAgo(3)    },
-  { id: 104, outcome: 'FAILURE', endpoint: 'unified-confirm',  client_id: 4, client_name: 'Umbrella Group', facility_name: 'Gold Coast Hub',  supplier_name: 'Ergon Energy',  utility_name: 'Diesel',       period_start: '2025-01-01', reason: 'Supabase connection timeout after 30s',                 http_status: 500, affected_count: null, created_at: hoursAgo(5)    },
-  { id: 105, outcome: 'SUCCESS', endpoint: 'pending',          client_id: 2, client_name: 'Globex Ltd',     facility_name: null,              supplier_name: null,            utility_name: null,           period_start: null,         reason: null,                                                    http_status: 200, affected_count: 12,   created_at: hoursAgo(6)    },
-  { id: 106, outcome: 'SUCCESS', endpoint: 'metered/pending',  client_id: 1, client_name: 'Acme Corp',      facility_name: null,              supplier_name: null,            utility_name: null,           period_start: null,         reason: null,                                                    http_status: 200, affected_count: 8,    created_at: hoursAgo(8)    },
-  { id: 107, outcome: 'FAILURE', endpoint: 'confirm',          client_id: 2, client_name: 'Globex Ltd',     facility_name: 'Perth Plant',     supplier_name: 'Synergy',       utility_name: 'Electricity',  period_start: '2024-10-01', reason: 'Supplier "Synergy" not found for client',               http_status: 404, affected_count: null, created_at: hoursAgo(10)   },
-  { id: 108, outcome: 'SUCCESS', endpoint: 'inferred-empty',   client_id: 3, client_name: 'Initech Pty',    facility_name: null,              supplier_name: null,            utility_name: null,           period_start: null,         reason: null,                                                    http_status: 200, affected_count: 5,    created_at: hoursAgo(12)   },
-  { id: 109, outcome: 'FAILURE', endpoint: 'metered/error',    client_id: 4, client_name: 'Umbrella Group', facility_name: 'Canberra Office', supplier_name: 'ActewAGL',      utility_name: 'Electricity',  period_start: '2025-02-01', reason: 'Meter identifier NMI-8812 not found',                   http_status: 422, affected_count: null, created_at: hoursAgo(14)   },
-  { id: 110, outcome: 'SUCCESS', endpoint: 'confirm',          client_id: 3, client_name: 'Initech Pty',    facility_name: 'Darwin Site',     supplier_name: 'Jacana Energy', utility_name: 'Electricity',  period_start: '2024-12-01', reason: null,                                                    http_status: 200, affected_count: 2,    created_at: hoursAgo(20)   },
-  { id: 111, outcome: 'FAILURE', endpoint: 'pending',          client_id: 1, client_name: 'Acme Corp',      facility_name: null,              supplier_name: 'Origin Energy', utility_name: null,           period_start: null,         reason: 'Facility group "NSW Sites" not found',                  http_status: 404, affected_count: null, created_at: hoursAgo(24)   },
-];
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function eventClientName(ev: IngestionEvent): string {
+  const joined = ev.client as { name?: string } | { name?: string }[] | null | undefined;
+  const joinedName = Array.isArray(joined) ? joined[0]?.name : joined?.name;
+  return joinedName ?? ev.client_name ?? 'Unknown client';
+}
 
 type AgeFilter = 'all' | '1h' | '6h' | '24h';
 
@@ -394,24 +360,114 @@ function endpointLabel(endpoint: string): string {
   return map[endpoint] ?? endpoint;
 }
 
-function EventLogPanel() {
+function EventLogPanel({ refreshKey }: { refreshKey: number }) {
+  const [events, setEvents] = useState<IngestionEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>('FAILURE');
   const [categoryFilter, setCategoryFilter] = useState<EventCategory>('all');
 
+  const buildUrl = useCallback((before?: string | null) => {
+    const params = new URLSearchParams();
+    params.set('limit', '500');
+    if (before) params.set('before', before);
+    return `/api/activity?${params.toString()}`;
+  }, []);
+
+  const fetchEvents = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(buildUrl(), { cache: 'no-store' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Failed to load activity');
+      setEvents(json.data ?? []);
+      setNextCursor(json.nextCursor ?? null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load activity');
+      setEvents([]);
+      setNextCursor(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [buildUrl]);
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    try {
+      const res = await fetch(buildUrl(nextCursor), { cache: 'no-store' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Failed to load more');
+      setEvents((prev) => [...prev, ...(json.data ?? [])]);
+      setNextCursor(json.nextCursor ?? null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load more');
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [buildUrl, nextCursor]);
+
+  useEffect(() => {
+    fetchEvents();
+  }, [fetchEvents, refreshKey]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return DUMMY_EVENTS.filter((e) => {
+    return events.filter((e) => {
       if (outcomeFilter !== 'ALL' && e.outcome !== outcomeFilter) return false;
       if (categoryFilter !== 'all' && endpointCategory(e.endpoint) !== categoryFilter) return false;
       if (q) {
-        const haystack = [e.client_name, e.supplier_name, e.facility_name, e.utility_name]
-          .filter(Boolean).join(' ').toLowerCase();
+        const haystack = [
+          eventClientName(e),
+          e.supplier_name,
+          e.facility_name,
+          e.utility_name,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
     });
-  }, [search, outcomeFilter, categoryFilter]);
+  }, [events, search, outcomeFilter, categoryFilter]);
+
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div
+            key={i}
+            className="h-20 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 animate-pulse"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-16">
+        <div className="w-16 h-16 mx-auto rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mb-4">
+          <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4m0 4h.01M21 12A9 9 0 113 12a9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Unable to load activity</h3>
+        <p className="mt-1 text-gray-500 dark:text-gray-400 max-w-sm mx-auto">{error}</p>
+        <button
+          onClick={fetchEvents}
+          className="mt-6 bg-blue-600 text-white px-5 py-2.5 rounded-lg hover:bg-blue-700 font-medium transition-colors"
+        >
+          Try Again
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -529,10 +585,10 @@ function EventLogPanel() {
                       {/* Client link */}
                       {ev.client_id ? (
                         <Link href={`/clients/${ev.client_id}`} className="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline">
-                          {ev.client_name}
+                          {eventClientName(ev)}
                         </Link>
                       ) : (
-                        <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">{ev.client_name}</span>
+                        <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">{eventClientName(ev)}</span>
                       )}
                     </div>
 
@@ -576,6 +632,18 @@ function EventLogPanel() {
           })}
         </div>
       )}
+
+      {nextCursor && (
+        <div className="flex justify-center mt-6">
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -587,7 +655,9 @@ function EventLogPanel() {
 type Tab = 'stuck' | 'log';
 
 export default function IngestionOverviewPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>('log');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
@@ -607,14 +677,26 @@ export default function IngestionOverviewPage() {
               <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Ingestion Overview</h1>
             </div>
             <div className="flex items-center gap-2">
-              <button className="px-3 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium flex items-center gap-1.5">
+              <button
+                onClick={() => setRefreshKey((k) => k + 1)}
+                className="px-3 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium flex items-center gap-1.5"
+              >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
                 <span className="hidden sm:inline">Refresh</span>
               </button>
               <div className="w-px h-6 bg-gray-200 dark:bg-gray-700 mx-1" />
-              <button className="px-3 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium">
+              <button
+                type="button"
+                onClick={async () => {
+                  const supabase = createSupabaseBrowserClient();
+                  await supabase.auth.signOut();
+                  router.push('/login');
+                  router.refresh();
+                }}
+                className="px-3 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium"
+              >
                 Sign out
               </button>
             </div>
@@ -659,7 +741,7 @@ export default function IngestionOverviewPage() {
         {activeTab === 'stuck' ? (
           <StuckPendingTable records={DUMMY_STUCK} />
         ) : (
-          <EventLogPanel />
+          <EventLogPanel refreshKey={refreshKey} />
         )}
       </main>
     </div>
