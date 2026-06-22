@@ -339,3 +339,20 @@ export interface IngestionEvent {
   // Joined
   client?: { id: number; name: string } | null;
 }
+
+// -------------------------------------------------------
+// Stuck pending records (cross-client ingestion overview)
+// -------------------------------------------------------
+
+export interface StuckPendingRecord {
+  id: number;
+  kind: 'non-metered' | 'metered';
+  client_id: number;
+  client_name: string;
+  facility_name: string | null;
+  supplier_name: string | null;
+  utility_name: string | null;
+  period_start: string | null;
+  created_at: string;
+  age_hours: number;
+}
