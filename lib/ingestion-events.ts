@@ -144,11 +144,20 @@ function deriveAffected(body: unknown): number | null {
   const b = body as Record<string, unknown>;
   if (typeof b.confirmed === 'number') return b.confirmed;
   if (typeof b.updated === 'number') return b.updated;
+  if (typeof b.created === 'number') return b.created;
+  if (typeof b.inferred_empty === 'number') return b.inferred_empty;
   // unified-confirm shape: { non_metered: { confirmed }, metered: { confirmed } }
   const nm = (b.non_metered as { confirmed?: unknown } | undefined)?.confirmed;
   const m = (b.metered as { confirmed?: unknown } | undefined)?.confirmed;
   if (typeof nm === 'number' || typeof m === 'number') {
     return (typeof nm === 'number' ? nm : 0) + (typeof m === 'number' ? m : 0);
+  }
+  // pending bulk shape: { non_metered: { summary: { created } }, metered: { created } }
+  const nmCreated = (b.non_metered as { summary?: { created?: unknown } } | undefined)?.summary
+    ?.created;
+  const mCreated = (b.metered as { created?: unknown } | undefined)?.created;
+  if (typeof nmCreated === 'number' || typeof mCreated === 'number') {
+    return (typeof nmCreated === 'number' ? nmCreated : 0) + (typeof mCreated === 'number' ? mCreated : 0);
   }
   return null;
 }
