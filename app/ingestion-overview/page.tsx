@@ -7,42 +7,6 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { IngestionEvent, StuckPendingRecord } from '@/types';
 
 // ---------------------------------------------------------------------------
-// Types (Stuck tab still uses local shape until Step 4)
-// ---------------------------------------------------------------------------
-
-type StuckRecord = StuckPendingRecord;
-
-// ---------------------------------------------------------------------------
-// Dummy data
-// ---------------------------------------------------------------------------
-
-const now = new Date();
-function hoursAgo(h: number) {
-  return new Date(now.getTime() - h * 60 * 60 * 1000).toISOString();
-}
-
-const DUMMY_STUCK: StuckRecord[] = [
-  // Acme Corp / Sydney HQ / Origin Energy — 4 months stuck > 7 days
-  { id: 1,  kind: 'non-metered', client_id: 1, client_name: 'Acme Corp',      facility_name: 'Sydney HQ',       supplier_name: 'Origin Energy', utility_name: 'Natural Gas',  period_start: '2024-07-01', created_at: hoursAgo(240), age_hours: 240 },
-  { id: 2,  kind: 'non-metered', client_id: 1, client_name: 'Acme Corp',      facility_name: 'Sydney HQ',       supplier_name: 'Origin Energy', utility_name: 'Natural Gas',  period_start: '2024-08-01', created_at: hoursAgo(238), age_hours: 238 },
-  { id: 3,  kind: 'non-metered', client_id: 1, client_name: 'Acme Corp',      facility_name: 'Sydney HQ',       supplier_name: 'Origin Energy', utility_name: 'Natural Gas',  period_start: '2024-09-01', created_at: hoursAgo(195), age_hours: 195 },
-  { id: 4,  kind: 'non-metered', client_id: 1, client_name: 'Acme Corp',      facility_name: 'Sydney HQ',       supplier_name: 'Origin Energy', utility_name: 'Natural Gas',  period_start: '2024-10-01', created_at: hoursAgo(180), age_hours: 180 },
-  // Acme Corp / Melbourne Depot / AGL — single metered, > 7 days
-  { id: 5,  kind: 'metered',     client_id: 1, client_name: 'Acme Corp',      facility_name: 'Melbourne Depot', supplier_name: 'AGL',           utility_name: 'Electricity',  period_start: '2024-08-01', created_at: hoursAgo(195), age_hours: 195 },
-  // Globex / Brisbane / Elgas — 2 months, amber
-  { id: 6,  kind: 'non-metered', client_id: 2, client_name: 'Globex Ltd',     facility_name: 'Brisbane Office', supplier_name: 'Elgas',         utility_name: 'LPG',          period_start: '2024-09-01', created_at: hoursAgo(36),  age_hours: 36  },
-  { id: 7,  kind: 'non-metered', client_id: 2, client_name: 'Globex Ltd',     facility_name: 'Brisbane Office', supplier_name: 'Elgas',         utility_name: 'LPG',          period_start: '2024-10-01', created_at: hoursAgo(28),  age_hours: 28  },
-  // Globex / Perth — single, recent
-  { id: 8,  kind: 'metered',     client_id: 2, client_name: 'Globex Ltd',     facility_name: 'Perth Plant',     supplier_name: 'Synergy',       utility_name: 'Electricity',  period_start: '2024-10-01', created_at: hoursAgo(4),   age_hours: 4   },
-  // Initech — single, recent
-  { id: 9,  kind: 'non-metered', client_id: 3, client_name: 'Initech Pty',    facility_name: 'Adelaide DC',     supplier_name: 'Santos',        utility_name: 'Natural Gas',  period_start: '2024-11-01', created_at: hoursAgo(1.5), age_hours: 1.5 },
-  // Umbrella — 3 months, red
-  { id: 10, kind: 'non-metered', client_id: 4, client_name: 'Umbrella Group', facility_name: 'Gold Coast Hub',  supplier_name: 'Ergon Energy',  utility_name: 'Diesel',       period_start: '2025-01-01', created_at: hoursAgo(190), age_hours: 190 },
-  { id: 11, kind: 'non-metered', client_id: 4, client_name: 'Umbrella Group', facility_name: 'Gold Coast Hub',  supplier_name: 'Ergon Energy',  utility_name: 'Diesel',       period_start: '2025-02-01', created_at: hoursAgo(165), age_hours: 165 },
-  { id: 12, kind: 'non-metered', client_id: 4, client_name: 'Umbrella Group', facility_name: 'Gold Coast Hub',  supplier_name: 'Ergon Energy',  utility_name: 'Diesel',       period_start: '2025-03-01', created_at: hoursAgo(140), age_hours: 140 },
-];
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -129,7 +93,7 @@ type GroupedRow = {
   oldest_hours: number;
 };
 
-function groupRecords(records: StuckRecord[]): GroupedRow[] {
+function groupRecords(records: StuckPendingRecord[]): GroupedRow[] {
   const map = new Map<string, GroupedRow>();
   for (const r of records) {
     const key = `${r.client_id}||${r.facility_name ?? ''}||${r.supplier_name ?? ''}`;
@@ -153,12 +117,35 @@ function groupRecords(records: StuckRecord[]): GroupedRow[] {
 // Stuck Pending table
 // ---------------------------------------------------------------------------
 
-function StuckPendingTable({ records }: { records: StuckRecord[] }) {
+function StuckPendingTable({ refreshKey }: { refreshKey: number }) {
   const router = useRouter();
+  const [records, setRecords] = useState<StuckPendingRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [ageFilter, setAgeFilter] = useState<AgeFilter>('1h');
   const [kindFilter, setKindFilter] = useState<'all' | 'metered' | 'non-metered'>('all');
   const [sortCol, setSortCol] = useState<'age' | 'client' | 'count'>('age');
   const [sortAsc, setSortAsc] = useState(false);
+
+  const fetchStuck = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/activity/stuck', { cache: 'no-store' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Failed to load stuck pending records');
+      setRecords(json.data ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load stuck pending records');
+      setRecords([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStuck();
+  }, [fetchStuck, refreshKey]);
 
   const minHours = AGE_FILTER_OPTIONS.find((o) => o.value === ageFilter)?.minHours ?? 0;
 
@@ -185,6 +172,37 @@ function StuckPendingTable({ records }: { records: StuckRecord[] }) {
   function SortIcon({ col }: { col: typeof sortCol }) {
     if (sortCol !== col) return <span className="text-gray-300 dark:text-gray-600 ml-1">↕</span>;
     return <span className="text-blue-500 ml-1">{sortAsc ? '↑' : '↓'}</span>;
+  }
+
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="h-12 bg-gray-50 dark:bg-gray-800/80 animate-pulse" />
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="h-14 border-t border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 animate-pulse" />
+        ))}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-16">
+        <div className="w-16 h-16 mx-auto rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mb-4">
+          <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4m0 4h.01M21 12A9 9 0 113 12a9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Unable to load stuck pending</h3>
+        <p className="mt-1 text-gray-500 dark:text-gray-400 max-w-sm mx-auto">{error}</p>
+        <button
+          onClick={fetchStuck}
+          className="mt-6 bg-blue-600 text-white px-5 py-2.5 rounded-lg hover:bg-blue-700 font-medium transition-colors"
+        >
+          Try Again
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -739,7 +757,7 @@ export default function IngestionOverviewPage() {
         </div>
 
         {activeTab === 'stuck' ? (
-          <StuckPendingTable records={DUMMY_STUCK} />
+          <StuckPendingTable refreshKey={refreshKey} />
         ) : (
           <EventLogPanel refreshKey={refreshKey} />
         )}
