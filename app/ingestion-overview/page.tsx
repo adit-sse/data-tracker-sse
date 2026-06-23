@@ -1,10 +1,16 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, type KeyboardEvent, type MouseEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-import type { IngestionEvent, StuckPendingRecord } from '@/types';
+import type {
+  IngestionEvent,
+  IngestionEventTriage,
+  IngestionEventTriageEmbed,
+  IngestionEventTriageStatus,
+  StuckPendingRecord,
+} from '@/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -393,6 +399,204 @@ function endpointLabel(endpoint: string): string {
   return map[endpoint] ?? endpoint;
 }
 
+function defaultTriage(): IngestionEventTriageEmbed {
+  return { status: 'unreviewed', note: null, custom_tags: [] };
+}
+
+function triageForEvent(ev: IngestionEvent): IngestionEventTriageEmbed {
+  return ev.triage ?? defaultTriage();
+}
+
+function triageFromPatch(data: IngestionEventTriage): IngestionEventTriageEmbed {
+  return {
+    status: data.status,
+    note: data.note,
+    custom_tags: data.custom_tags,
+    updated_at: data.updated_at,
+    updated_by: data.updated_by,
+  };
+}
+
+const TRIAGE_STATUS_OPTIONS: {
+  value: IngestionEventTriageStatus;
+  label: string;
+  activeClass: string;
+}[] = [
+  { value: 'unreviewed', label: 'Unreviewed', activeClass: 'bg-gray-100 text-gray-700 border-gray-300' },
+  { value: 'in_progress', label: 'In progress', activeClass: 'bg-blue-100 text-blue-700 border-blue-300' },
+  { value: 'addressed', label: 'Addressed', activeClass: 'bg-emerald-100 text-emerald-700 border-emerald-300' },
+];
+
+function EventTriageSection({
+  eventId,
+  triage,
+  onTriageChange,
+}: {
+  eventId: number;
+  triage: IngestionEventTriageEmbed;
+  onTriageChange: (triage: IngestionEventTriageEmbed) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState(triage.note ?? '');
+  const [tagInput, setTagInput] = useState('');
+
+  useEffect(() => {
+    setNoteDraft(triage.note ?? '');
+  }, [triage.note]);
+
+  const patchTriage = useCallback(
+    async (body: Record<string, unknown>) => {
+      setSaving(true);
+      setSaveError(null);
+      try {
+        const res = await fetch(`/api/activity/events/${eventId}/triage`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json?.error || 'Failed to save');
+        onTriageChange(triageFromPatch(json.data));
+      } catch (e) {
+        setSaveError(e instanceof Error ? e.message : 'Failed to save');
+      } finally {
+        setSaving(false);
+      }
+    },
+    [eventId, onTriageChange]
+  );
+
+  function stopBubble(e: MouseEvent | KeyboardEvent) {
+    e.stopPropagation();
+  }
+
+  async function handleStatusChange(status: IngestionEventTriageStatus) {
+    if (status === triage.status || saving) return;
+    await patchTriage({ status });
+  }
+
+  async function handleAddTag() {
+    const label = tagInput.trim();
+    if (!label || saving) return;
+    const key = label.toLowerCase();
+    if (triage.custom_tags.some((t) => t.toLowerCase() === key)) {
+      setTagInput('');
+      return;
+    }
+    const nextTags = [...triage.custom_tags, label];
+    setTagInput('');
+    await patchTriage({ custom_tags: nextTags });
+  }
+
+  async function handleRemoveTag(label: string) {
+    if (saving) return;
+    const nextTags = triage.custom_tags.filter((t) => t !== label);
+    await patchTriage({ custom_tags: nextTags });
+  }
+
+  async function handleNoteBlur() {
+    const trimmed = noteDraft.trim();
+    const nextNote = trimmed || null;
+    if (nextNote === (triage.note ?? null)) return;
+    await patchTriage({ note: nextNote });
+  }
+
+  return (
+    <div
+      className="mt-3 pt-3 border-t border-gray-100"
+      onClick={stopBubble}
+      onKeyDown={stopBubble}
+    >
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <span className="text-xs font-medium text-gray-500">Status</span>
+        <div className="inline-flex flex-wrap gap-1">
+          {TRIAGE_STATUS_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              disabled={saving}
+              onClick={() => handleStatusChange(opt.value)}
+              className={`px-2 py-0.5 text-xs font-medium rounded-full border transition-colors disabled:opacity-50 ${
+                triage.status === opt.value
+                  ? opt.activeClass
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        {saving && (
+          <span className="text-xs text-gray-400">Saving…</span>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5 mb-2">
+        <span className="text-xs font-medium text-gray-500 mr-0.5">Tags</span>
+        {triage.custom_tags.map((tag) => (
+          <span
+            key={tag}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-violet-50 text-violet-700 border border-violet-200"
+          >
+            {tag}
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => handleRemoveTag(tag)}
+              className="text-violet-400 hover:text-violet-700 disabled:opacity-50 leading-none"
+              aria-label={`Remove tag ${tag}`}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <div className="inline-flex items-center gap-1">
+          <input
+            type="text"
+            value={tagInput}
+            disabled={saving}
+            onChange={(e) => setTagInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void handleAddTag();
+              }
+            }}
+            placeholder="Add tag…"
+            className="w-28 px-2 py-0.5 text-xs border border-gray-200 rounded-md bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+          />
+          <button
+            type="button"
+            disabled={saving || !tagInput.trim()}
+            onClick={() => void handleAddTag()}
+            className="px-2 py-0.5 text-xs font-medium text-blue-600 hover:text-blue-800 disabled:opacity-40"
+          >
+            Add
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-500 mb-1">Note</label>
+        <textarea
+          value={noteDraft}
+          disabled={saving}
+          onChange={(e) => setNoteDraft(e.target.value)}
+          onBlur={() => void handleNoteBlur()}
+          rows={2}
+          placeholder="Optional note…"
+          className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y min-h-[2.5rem] disabled:opacity-50"
+        />
+      </div>
+
+      {saveError && (
+        <p className="mt-2 text-xs text-red-600">{saveError}</p>
+      )}
+    </div>
+  );
+}
+
 function EventLogPanel({ refreshKey }: { refreshKey: number }) {
   const [events, setEvents] = useState<IngestionEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -447,6 +651,12 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
   useEffect(() => {
     fetchEvents();
   }, [fetchEvents, refreshKey]);
+
+  const updateEventTriage = useCallback((eventId: number, triage: IngestionEventTriageEmbed) => {
+    setEvents((prev) =>
+      prev.map((ev) => (ev.id === eventId ? { ...ev, triage } : ev))
+    );
+  }, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -649,6 +859,12 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
                         )}
                       </div>
                     )}
+
+                    <EventTriageSection
+                      eventId={ev.id}
+                      triage={triageForEvent(ev)}
+                      onTriageChange={(triage) => updateEventTriage(ev.id, triage)}
+                    />
                   </div>
 
                   <div className="text-right flex-shrink-0">
