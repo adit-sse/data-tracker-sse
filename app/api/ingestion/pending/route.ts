@@ -14,6 +14,8 @@ import {
   meterMonthBlocksNewPendingFromCache,
 } from '@/lib/ingestion-metered';
 import { checkApiKey } from '@/lib/ingestion-auth';
+import { logIngestionFromResponse } from '@/lib/ingestion-events';
+import type { IdentifierType } from '@/types';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
@@ -183,35 +185,37 @@ async function seedMeteredPending(
 //   - facility_name provided but not found for this client → 404
 //   - utility_name provided and meters exist but none match that input type → 400
 //   - utility_name provided but not found as NGERS category AND no metered coverage → 400
-export async function POST(request: Request) {
-  if (!checkApiKey(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+function scopeKindForPending(body: Record<string, unknown>): string | null {
+  if (body.mode === 'line') return 'line';
+  if (body.identifier_type && body.lookup1) return 'metered';
+  return 'group';
+}
+
+async function handlePending(
+  supabase: SupabaseClient,
+  body: Record<string, unknown>,
+  pendingReceivedAt: string
+): Promise<NextResponse> {
+  const { client_name, supplier_name, utility_name, mode, facility_name, identifier_type, lookup1, lookup2 } =
+    body;
+
+  if (!client_name || !supplier_name) {
+    return NextResponse.json(
+      { error: 'client_name and supplier_name are required' },
+      { status: 400 }
+    );
   }
 
-  try {
-    const pendingReceivedAt = new Date().toISOString();
-    const supabase = createSupabaseServiceRoleClient();
-    const body = await request.json();
-    const { client_name, supplier_name, utility_name, mode, facility_name, identifier_type, lookup1, lookup2 } =
-      body;
+  const utilityTrimmed = typeof utility_name === 'string' ? utility_name.trim() : '';
+  const facilityTrimmed = typeof facility_name === 'string' ? facility_name.trim() : '';
 
-    if (!client_name || !supplier_name) {
-      return NextResponse.json(
-        { error: 'client_name and supplier_name are required' },
-        { status: 400 }
-      );
-    }
-
-    const utilityTrimmed = typeof utility_name === 'string' ? utility_name.trim() : '';
-    const facilityTrimmed = typeof facility_name === 'string' ? facility_name.trim() : '';
-
-    // ── Mode: standalone non-metered line (unchanged) ────────────────────────
-    if (mode === 'line') {
+  // ── Mode: standalone non-metered line (unchanged) ────────────────────────
+  if (mode === 'line') {
       const resolved = await resolveIngestionLine(
         supabase,
-        client_name,
+        String(client_name),
         facilityTrimmed,
-        supplier_name,
+        String(supplier_name),
         utilityTrimmed
       );
       if (!resolved.ok) {
@@ -257,13 +261,13 @@ export async function POST(request: Request) {
     if (identifier_type && lookup1) {
       const { resolveMeterForIngestion } = await import('@/lib/ingestion-metered');
       const resolved = await resolveMeterForIngestion(supabase, {
-        clientName: client_name,
+        clientName: String(client_name),
         facilityName: facilityTrimmed,
-        supplierName: supplier_name,
+        supplierName: String(supplier_name),
         utilityName: utilityTrimmed,
-        identifierType: identifier_type,
+        identifierType: identifier_type as import('@/types').IdentifierType,
         lookup1: String(lookup1),
-        lookup2: lookup2 ?? null,
+        lookup2: lookup2 != null ? String(lookup2) : null,
       });
 
       if (!resolved.ok) {
@@ -309,8 +313,8 @@ export async function POST(request: Request) {
     //
     // Resolve client + supplier IDs first (both paths need them).
     const [{ data: client }, { data: supplier }] = await Promise.all([
-      supabase.from('clients').select('id').ilike('name', client_name).single(),
-      supabase.from('suppliers').select('id').ilike('name', supplier_name).single(),
+      supabase.from('clients').select('id').ilike('name', String(client_name)).single(),
+      supabase.from('suppliers').select('id').ilike('name', String(supplier_name)).single(),
     ]);
 
     if (!client) return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
@@ -329,7 +333,12 @@ export async function POST(request: Request) {
 
     if (!utilityTrimmed) {
       // Bulk Scope 1
-      const nmResult = await seedAllScope1NonMeteredPending(supabase, client_name, supplier_name, pendingReceivedAt);
+      const nmResult = await seedAllScope1NonMeteredPending(
+        supabase,
+        String(client_name),
+        String(supplier_name),
+        pendingReceivedAt
+      );
       if (nmResult.ok) {
         nonMeteredResult = {
           groups: nmResult.groups,
@@ -420,8 +429,55 @@ export async function POST(request: Request) {
       non_metered: nonMeteredResult,
       metered: meteredResult,
     });
+}
+
+export async function POST(request: Request) {
+  const startedAt = Date.now();
+  if (!checkApiKey(request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const supabase = createSupabaseServiceRoleClient();
+  const pendingReceivedAt = new Date().toISOString();
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    const res = NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    await logIngestionFromResponse(supabase, {
+      endpoint: 'pending',
+      scopeKind: null,
+      request: null,
+      response: res,
+      startedAt,
+    });
+    return res;
+  }
+
+  const reqBody = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  const scopeKind = scopeKindForPending(reqBody);
+
+  try {
+    const res = await handlePending(supabase, reqBody, pendingReceivedAt);
+    await logIngestionFromResponse(supabase, {
+      endpoint: 'pending',
+      scopeKind,
+      request: body,
+      response: res,
+      startedAt,
+    });
+    return res;
   } catch (error) {
     console.error('Error in ingestion/pending:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    const res = NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    await logIngestionFromResponse(supabase, {
+      endpoint: 'pending',
+      scopeKind,
+      request: body,
+      response: res,
+      startedAt,
+    });
+    return res;
   }
 }

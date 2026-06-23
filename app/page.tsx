@@ -138,6 +138,15 @@ export default function HomePage() {
                 </svg>
                 <span className="hidden sm:inline">Reference Data</span>
               </button>
+              <Link
+                href="/ingestion-overview"
+                className="px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors text-sm font-medium flex items-center gap-1.5"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                <span className="hidden sm:inline">Ingestion Overview</span>
+              </Link>
               <button
                 type="button"
                 onClick={async () => {
@@ -297,18 +306,18 @@ export default function HomePage() {
             </div>
             {filteredClients.length === 0 ? (
               <div className="text-center py-16">
-                <div className="w-16 h-16 mx-auto rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-4">
+                <div className="w-16 h-16 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-4">
                   <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
                   </svg>
                 </div>
-                <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">No clients found</h3>
-                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                <h3 className="text-base font-semibold text-gray-900">No clients found</h3>
+                <p className="mt-1 text-sm text-gray-500">
                   No clients match &ldquo;{searchQuery}&rdquo;
                 </p>
                 <button
                   onClick={() => setSearchQuery('')}
-                  className="mt-4 text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                  className="mt-4 text-sm text-blue-600 hover:underline"
                 >
                   Clear search
                 </button>
