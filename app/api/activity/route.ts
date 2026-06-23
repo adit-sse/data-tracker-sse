@@ -3,6 +3,7 @@ export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { attachTriageToEvents } from '@/lib/ingestion-event-triage';
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
@@ -14,7 +15,7 @@ const MAX_LIMIT = 500;
 //   &before=<ISO timestamp>          (cursor: only events created before this, for "load more")
 //
 // Returns recent ingestion_events (confirm/error attempts) across all clients the caller
-// can access, newest first. RLS on ingestion_events scopes rows to the user's clients.
+// can access, newest first. Each event includes embedded triage (status, note, custom tags).
 export async function GET(request: Request) {
   try {
     const supabase = createSupabaseServerClient();
@@ -57,10 +58,11 @@ export async function GET(request: Request) {
     if (error) throw error;
 
     const events = data ?? [];
+    const dataWithTriage = await attachTriageToEvents(supabase, events);
     const nextCursor = events.length === limit ? events[events.length - 1]?.created_at ?? null : null;
 
     return NextResponse.json(
-      { data: events, nextCursor },
+      { data: dataWithTriage, nextCursor },
       {
         headers: {
           'Cache-Control': 'private, max-age=15, stale-while-revalidate=30',
