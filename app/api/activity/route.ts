@@ -3,7 +3,11 @@ export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { attachTriageToEvents } from '@/lib/ingestion-event-triage';
+import {
+  attachTriageToEvents,
+  isTriageStatus,
+  resolveActivityEventIdFilter,
+} from '@/lib/ingestion-event-triage';
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
@@ -13,8 +17,11 @@ const MAX_LIMIT = 500;
 //   &clientId=<id>                   (filter to one client)
 //   &limit=<n>                       (default 100, max 500)
 //   &before=<ISO timestamp>          (cursor: only events created before this, for "load more")
-//   &from=<ISO timestamp>             (inclusive lower bound on created_at)
-//   &to=<ISO timestamp>               (inclusive upper bound on created_at)
+//   &from=<ISO timestamp>            (inclusive lower bound on created_at)
+//   &to=<ISO timestamp>              (inclusive upper bound on created_at)
+//   &triageStatus=unreviewed|in_progress|addressed
+//   &hideAddressed=true              (exclude addressed events)
+//   &tag=<text>                      (partial match on custom tag labels)
 //
 // Returns recent ingestion_events (confirm/error attempts) across all clients the caller
 // can access, newest first. Each event includes embedded triage (status, note, custom tags).
@@ -35,6 +42,9 @@ export async function GET(request: Request) {
     const before = searchParams.get('before');
     const from = parseIsoTimestamp(searchParams.get('from'));
     const to = parseIsoTimestamp(searchParams.get('to'));
+    const triageStatusParam = searchParams.get('triageStatus');
+    const hideAddressed = searchParams.get('hideAddressed') === 'true';
+    const tag = searchParams.get('tag')?.trim() ?? '';
 
     if (searchParams.get('from') && !from) {
       return NextResponse.json({ error: 'Invalid from timestamp' }, { status: 400 });
@@ -45,12 +55,35 @@ export async function GET(request: Request) {
     if (from && to && new Date(from).getTime() > new Date(to).getTime()) {
       return NextResponse.json({ error: 'from must be before to' }, { status: 400 });
     }
+    if (triageStatusParam && !isTriageStatus(triageStatusParam)) {
+      return NextResponse.json(
+        { error: 'triageStatus must be unreviewed, in_progress, or addressed' },
+        { status: 400 }
+      );
+    }
 
     const limitParam = Number(searchParams.get('limit'));
     const limit =
       Number.isFinite(limitParam) && limitParam > 0
         ? Math.min(Math.floor(limitParam), MAX_LIMIT)
         : DEFAULT_LIMIT;
+
+    const idFilter = await resolveActivityEventIdFilter(supabase, {
+      triageStatus: triageStatusParam && isTriageStatus(triageStatusParam) ? triageStatusParam : null,
+      hideAddressed,
+      tag: tag || null,
+    });
+
+    if (idFilter === 'empty') {
+      return NextResponse.json(
+        { data: [], nextCursor: null },
+        {
+          headers: {
+            'Cache-Control': 'private, max-age=15, stale-while-revalidate=30',
+          },
+        }
+      );
+    }
 
     let query = supabase
       .from('ingestion_events')
@@ -81,6 +114,14 @@ export async function GET(request: Request) {
 
     if (before) {
       query = query.lt('created_at', before);
+    }
+
+    if (idFilter.includeIds) {
+      query = query.in('id', idFilter.includeIds);
+    }
+
+    if (idFilter.excludeIds.length > 0) {
+      query = query.not('id', 'in', `(${idFilter.excludeIds.join(',')})`);
     }
 
     const { data, error } = await query;

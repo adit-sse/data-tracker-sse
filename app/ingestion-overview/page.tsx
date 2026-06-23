@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback, type KeyboardEvent, type MouseEvent } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef, type KeyboardEvent, type MouseEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -459,10 +459,62 @@ function EventTriageSection({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState(triage.note ?? '');
   const [tagInput, setTagInput] = useState('');
+  const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
+  const [showTagSuggestions, setShowTagSuggestions] = useState(false);
+  const [expanded, setExpanded] = useState(triage.status !== 'addressed');
+  const tagInputWrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setNoteDraft(triage.note ?? '');
   }, [triage.note]);
+
+  useEffect(() => {
+    if (triage.status === 'addressed') {
+      setExpanded(false);
+    }
+  }, [triage.status]);
+
+  useEffect(() => {
+    const q = tagInput.trim();
+    if (q.length < 1) {
+      setTagSuggestions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/activity/event-tags/labels?q=${encodeURIComponent(q)}&limit=8`,
+          { signal: controller.signal, cache: 'no-store' }
+        );
+        const json = await res.json();
+        if (!res.ok) return;
+        const existing = new Set(triage.custom_tags.map((t) => t.toLowerCase()));
+        const labels = ((json.data ?? []) as string[]).filter(
+          (label) => !existing.has(label.toLowerCase())
+        );
+        setTagSuggestions(labels);
+      } catch {
+        /* aborted or network */
+      }
+    }, 200);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [tagInput, triage.custom_tags]);
+
+  useEffect(() => {
+    function onDocClick(e: globalThis.MouseEvent) {
+      if (!tagInputWrapRef.current?.contains(e.target as Node)) {
+        setShowTagSuggestions(false);
+      }
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
 
   const patchTriage = useCallback(
     async (body: Record<string, unknown>) => {
@@ -492,19 +544,23 @@ function EventTriageSection({
 
   async function handleStatusChange(status: IngestionEventTriageStatus) {
     if (status === triage.status || saving) return;
+    if (status !== 'addressed') setExpanded(true);
     await patchTriage({ status });
   }
 
-  async function handleAddTag() {
-    const label = tagInput.trim();
+  async function handleAddTag(labelOverride?: string) {
+    const label = (labelOverride ?? tagInput).trim();
     if (!label || saving) return;
     const key = label.toLowerCase();
     if (triage.custom_tags.some((t) => t.toLowerCase() === key)) {
       setTagInput('');
+      setShowTagSuggestions(false);
       return;
     }
     const nextTags = [...triage.custom_tags, label];
     setTagInput('');
+    setShowTagSuggestions(false);
+    setExpanded(true);
     await patchTriage({ custom_tags: nextTags });
   }
 
@@ -521,12 +577,63 @@ function EventTriageSection({
     await patchTriage({ note: nextNote });
   }
 
+  const statusOption = TRIAGE_STATUS_OPTIONS.find((o) => o.value === triage.status);
+
+  if (!expanded) {
+    return (
+      <div
+        className="mt-3 pt-3 border-t border-gray-100"
+        onClick={stopBubble}
+        onKeyDown={stopBubble}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${statusOption?.activeClass ?? 'bg-gray-100 text-gray-700 border-gray-300'}`}>
+            {statusOption?.label ?? 'Addressed'}
+          </span>
+          {triage.custom_tags.map((tag) => (
+            <span
+              key={tag}
+              className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-violet-50 text-violet-700 border border-violet-200"
+            >
+              {tag}
+            </span>
+          ))}
+          {triage.note && (
+            <span className="text-xs text-gray-500 truncate max-w-md" title={triage.note}>
+              {triage.note}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="ml-auto text-xs font-medium text-blue-600 hover:text-blue-800"
+          >
+            Edit review
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="mt-3 pt-3 border-t border-gray-100"
       onClick={stopBubble}
       onKeyDown={stopBubble}
     >
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <span className="text-xs font-medium text-gray-500">Review</span>
+        {triage.status === 'addressed' && (
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="text-xs font-medium text-gray-500 hover:text-gray-700"
+          >
+            Collapse
+          </button>
+        )}
+      </div>
+
       <div className="flex flex-wrap items-center gap-2 mb-2">
         <span className="text-xs font-medium text-gray-500">Status</span>
         <div className="inline-flex flex-wrap gap-1">
@@ -570,16 +677,23 @@ function EventTriageSection({
             </button>
           </span>
         ))}
-        <div className="inline-flex items-center gap-1">
+        <div ref={tagInputWrapRef} className="relative inline-flex items-center gap-1">
           <input
             type="text"
             value={tagInput}
             disabled={saving}
-            onChange={(e) => setTagInput(e.target.value)}
+            onChange={(e) => {
+              setTagInput(e.target.value);
+              setShowTagSuggestions(true);
+            }}
+            onFocus={() => setShowTagSuggestions(true)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
                 void handleAddTag();
+              }
+              if (e.key === 'Escape') {
+                setShowTagSuggestions(false);
               }
             }}
             placeholder="Add tag…"
@@ -593,6 +707,22 @@ function EventTriageSection({
           >
             Add
           </button>
+          {showTagSuggestions && tagSuggestions.length > 0 && (
+            <ul className="absolute left-0 top-full z-20 mt-1 min-w-[10rem] max-w-xs rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+              {tagSuggestions.map((label) => (
+                <li key={label}>
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => void handleAddTag(label)}
+                  >
+                    {label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
 
@@ -626,8 +756,9 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
   const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>('FAILURE');
   const [categoryFilter, setCategoryFilter] = useState<EventCategory>('all');
   const [triageStatusFilter, setTriageStatusFilter] = useState<TriageStatusFilter>('all');
-  const [hideAddressed, setHideAddressed] = useState(false);
+  const [hideAddressed, setHideAddressed] = useState(true);
   const [tagFilter, setTagFilter] = useState('');
+  const [appliedTagFilter, setAppliedTagFilter] = useState('');
   const [rangeFromInput, setRangeFromInput] = useState('');
   const [rangeToInput, setRangeToInput] = useState('');
   const [appliedFrom, setAppliedFrom] = useState<string | null>(null);
@@ -640,8 +771,16 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
     if (before) params.set('before', before);
     if (appliedFrom) params.set('from', appliedFrom);
     if (appliedTo) params.set('to', appliedTo);
+    if (triageStatusFilter !== 'all') params.set('triageStatus', triageStatusFilter);
+    if (hideAddressed) params.set('hideAddressed', 'true');
+    if (appliedTagFilter) params.set('tag', appliedTagFilter);
     return `/api/activity?${params.toString()}`;
-  }, [appliedFrom, appliedTo]);
+  }, [appliedFrom, appliedTo, triageStatusFilter, hideAddressed, appliedTagFilter]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setAppliedTagFilter(tagFilter.trim()), 400);
+    return () => clearTimeout(timer);
+  }, [tagFilter]);
 
   const applyDateRange = useCallback(() => {
     const from = rangeFromInput ? datetimeLocalToIso(rangeFromInput) : null;
@@ -679,20 +818,21 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
 
   const clearAllFilters = useCallback(() => {
     setSearch('');
-    setOutcomeFilter('ALL');
+    setOutcomeFilter('FAILURE');
     setCategoryFilter('all');
     setTriageStatusFilter('all');
-    setHideAddressed(false);
+    setHideAddressed(true);
     setTagFilter('');
+    setAppliedTagFilter('');
     clearDateRange();
   }, [clearDateRange]);
 
   const hasActiveFilters =
     search.trim() !== '' ||
-    outcomeFilter !== 'ALL' ||
+    outcomeFilter !== 'FAILURE' ||
     categoryFilter !== 'all' ||
     triageStatusFilter !== 'all' ||
-    hideAddressed ||
+    !hideAddressed ||
     tagFilter.trim() !== '' ||
     appliedFrom != null ||
     appliedTo != null;
@@ -743,17 +883,12 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const tagQ = tagFilter.trim().toLowerCase();
     return events.filter((e) => {
       if (outcomeFilter !== 'ALL' && e.outcome !== outcomeFilter) return false;
       if (categoryFilter !== 'all' && endpointCategory(e.endpoint) !== categoryFilter) return false;
 
-      const triage = triageForEvent(e);
-      if (triageStatusFilter !== 'all' && triage.status !== triageStatusFilter) return false;
-      if (hideAddressed && triage.status === 'addressed') return false;
-      if (tagQ && !triage.custom_tags.some((t) => t.toLowerCase().includes(tagQ))) return false;
-
       if (q) {
+        const triage = triageForEvent(e);
         const haystack = [
           eventClientName(e),
           e.supplier_name,
@@ -769,7 +904,7 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
       }
       return true;
     });
-  }, [events, search, outcomeFilter, categoryFilter, triageStatusFilter, hideAddressed, tagFilter]);
+  }, [events, search, outcomeFilter, categoryFilter]);
 
   if (loading) {
     return (
@@ -927,6 +1062,9 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
                 setRangeFromInput(e.target.value);
                 setRangeError(null);
               }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') applyDateRange();
+              }}
               className="px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -938,6 +1076,9 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
               onChange={(e) => {
                 setRangeToInput(e.target.value);
                 setRangeError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') applyDateRange();
               }}
               className="px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />

@@ -148,6 +148,94 @@ export async function attachTriageToEvents<T extends { id: number }>(
   }));
 }
 
+async function fetchEventIdsByTriageStatus(
+  supabase: SupabaseClient,
+  status: IngestionEventTriageStatus
+): Promise<number[]> {
+  const { data, error } = await supabase
+    .from('ingestion_event_triage')
+    .select('event_id')
+    .eq('status', status);
+  if (error) throw error;
+  return (data ?? []).map((row) => row.event_id as number);
+}
+
+async function fetchAllTriagedEventIds(supabase: SupabaseClient): Promise<number[]> {
+  const { data, error } = await supabase.from('ingestion_event_triage').select('event_id');
+  if (error) throw error;
+  return (data ?? []).map((row) => row.event_id as number);
+}
+
+async function fetchEventIdsByTag(supabase: SupabaseClient, tag: string): Promise<number[]> {
+  const { data, error } = await supabase
+    .from('ingestion_event_custom_tags')
+    .select('event_id')
+    .ilike('label', `%${tag}%`);
+  if (error) throw error;
+  return [...new Set((data ?? []).map((row) => row.event_id as number))];
+}
+
+function intersectIdSets(current: Set<number> | null, ids: number[]): Set<number> {
+  const next = new Set(ids);
+  if (!current) return next;
+  return new Set([...current].filter((id) => next.has(id)));
+}
+
+export type ActivityEventIdFilter = {
+  triageStatus?: IngestionEventTriageStatus | null;
+  hideAddressed?: boolean;
+  tag?: string | null;
+};
+
+export type ActivityEventIdFilterResult = {
+  includeIds: number[] | null;
+  excludeIds: number[];
+};
+
+/** Resolves server-side event id constraints for activity list filters. */
+export async function resolveActivityEventIdFilter(
+  supabase: SupabaseClient,
+  filter: ActivityEventIdFilter
+): Promise<ActivityEventIdFilterResult | 'empty'> {
+  let includeIds: Set<number> | null = null;
+  const excludeIds = new Set<number>();
+
+  const triageStatus = filter.triageStatus ?? null;
+  const tag = filter.tag?.trim() ?? '';
+
+  if (triageStatus === 'in_progress' || triageStatus === 'addressed') {
+    const ids = await fetchEventIdsByTriageStatus(supabase, triageStatus);
+    if (ids.length === 0) return 'empty';
+    includeIds = intersectIdSets(includeIds, ids);
+  } else if (triageStatus === 'unreviewed') {
+    for (const id of await fetchAllTriagedEventIds(supabase)) {
+      excludeIds.add(id);
+    }
+  }
+
+  if (filter.hideAddressed && triageStatus !== 'addressed') {
+    for (const id of await fetchEventIdsByTriageStatus(supabase, 'addressed')) {
+      excludeIds.add(id);
+    }
+  }
+
+  if (tag) {
+    const ids = await fetchEventIdsByTag(supabase, tag);
+    if (ids.length === 0) return 'empty';
+    includeIds = intersectIdSets(includeIds, ids);
+  }
+
+  if (includeIds && excludeIds.size > 0) {
+    for (const id of excludeIds) includeIds.delete(id);
+    if (includeIds.size === 0) return 'empty';
+  }
+
+  return {
+    includeIds: includeIds ? [...includeIds] : null,
+    excludeIds: [...excludeIds],
+  };
+}
+
 export async function verifyIngestionEventAccessible(
   supabase: SupabaseClient,
   eventId: number
