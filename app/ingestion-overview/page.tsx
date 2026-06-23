@@ -1,10 +1,16 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef, type KeyboardEvent, type MouseEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-import type { IngestionEvent, StuckPendingRecord } from '@/types';
+import type {
+  IngestionEvent,
+  IngestionEventTriage,
+  IngestionEventTriageEmbed,
+  IngestionEventTriageStatus,
+  StuckPendingRecord,
+} from '@/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -379,6 +385,25 @@ const EVENT_CATEGORY_OPTIONS: { label: string; value: EventCategory }[] = [
 
 type OutcomeFilter = 'ALL' | 'SUCCESS' | 'FAILURE';
 
+type TriageStatusFilter = 'all' | IngestionEventTriageStatus;
+
+function datetimeLocalToIso(local: string): string | null {
+  if (!local.trim()) return null;
+  const d = new Date(local);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function formatRangeLabel(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function endpointLabel(endpoint: string): string {
   const map: Record<string, string> = {
     'confirm':          'confirm',
@@ -393,6 +418,334 @@ function endpointLabel(endpoint: string): string {
   return map[endpoint] ?? endpoint;
 }
 
+function defaultTriage(): IngestionEventTriageEmbed {
+  return { status: 'unreviewed', note: null, custom_tags: [] };
+}
+
+function triageForEvent(ev: IngestionEvent): IngestionEventTriageEmbed {
+  return ev.triage ?? defaultTriage();
+}
+
+function triageFromPatch(data: IngestionEventTriage): IngestionEventTriageEmbed {
+  return {
+    status: data.status,
+    note: data.note,
+    custom_tags: data.custom_tags,
+    updated_at: data.updated_at,
+    updated_by: data.updated_by,
+  };
+}
+
+const TRIAGE_STATUS_OPTIONS: {
+  value: IngestionEventTriageStatus;
+  label: string;
+  activeClass: string;
+}[] = [
+  { value: 'unreviewed', label: 'Unreviewed', activeClass: 'bg-gray-100 text-gray-700 border-gray-300' },
+  { value: 'in_progress', label: 'In progress', activeClass: 'bg-blue-100 text-blue-700 border-blue-300' },
+  { value: 'addressed', label: 'Addressed', activeClass: 'bg-emerald-100 text-emerald-700 border-emerald-300' },
+];
+
+function EventTriageSection({
+  eventId,
+  triage,
+  onTriageChange,
+}: {
+  eventId: number;
+  triage: IngestionEventTriageEmbed;
+  onTriageChange: (triage: IngestionEventTriageEmbed) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState(triage.note ?? '');
+  const [tagInput, setTagInput] = useState('');
+  const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
+  const [showTagSuggestions, setShowTagSuggestions] = useState(false);
+  const [expanded, setExpanded] = useState(triage.status !== 'addressed');
+  const tagInputWrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setNoteDraft(triage.note ?? '');
+  }, [triage.note]);
+
+  useEffect(() => {
+    if (triage.status === 'addressed') {
+      setExpanded(false);
+    }
+  }, [triage.status]);
+
+  useEffect(() => {
+    const q = tagInput.trim();
+    if (q.length < 1) {
+      setTagSuggestions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/activity/event-tags/labels?q=${encodeURIComponent(q)}&limit=8`,
+          { signal: controller.signal, cache: 'no-store' }
+        );
+        const json = await res.json();
+        if (!res.ok) return;
+        const existing = new Set(triage.custom_tags.map((t) => t.toLowerCase()));
+        const labels = ((json.data ?? []) as string[]).filter(
+          (label) => !existing.has(label.toLowerCase())
+        );
+        setTagSuggestions(labels);
+      } catch {
+        /* aborted or network */
+      }
+    }, 200);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [tagInput, triage.custom_tags]);
+
+  useEffect(() => {
+    function onDocClick(e: globalThis.MouseEvent) {
+      if (!tagInputWrapRef.current?.contains(e.target as Node)) {
+        setShowTagSuggestions(false);
+      }
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const patchTriage = useCallback(
+    async (body: Record<string, unknown>) => {
+      setSaving(true);
+      setSaveError(null);
+      try {
+        const res = await fetch(`/api/activity/events/${eventId}/triage`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json?.error || 'Failed to save');
+        onTriageChange(triageFromPatch(json.data));
+      } catch (e) {
+        setSaveError(e instanceof Error ? e.message : 'Failed to save');
+      } finally {
+        setSaving(false);
+      }
+    },
+    [eventId, onTriageChange]
+  );
+
+  function stopBubble(e: MouseEvent | KeyboardEvent) {
+    e.stopPropagation();
+  }
+
+  async function handleStatusChange(status: IngestionEventTriageStatus) {
+    if (status === triage.status || saving) return;
+    if (status !== 'addressed') setExpanded(true);
+    await patchTriage({ status });
+  }
+
+  async function handleAddTag(labelOverride?: string) {
+    const label = (labelOverride ?? tagInput).trim();
+    if (!label || saving) return;
+    const key = label.toLowerCase();
+    if (triage.custom_tags.some((t) => t.toLowerCase() === key)) {
+      setTagInput('');
+      setShowTagSuggestions(false);
+      return;
+    }
+    const nextTags = [...triage.custom_tags, label];
+    setTagInput('');
+    setShowTagSuggestions(false);
+    setExpanded(true);
+    await patchTriage({ custom_tags: nextTags });
+  }
+
+  async function handleRemoveTag(label: string) {
+    if (saving) return;
+    const nextTags = triage.custom_tags.filter((t) => t !== label);
+    await patchTriage({ custom_tags: nextTags });
+  }
+
+  async function handleNoteBlur() {
+    const trimmed = noteDraft.trim();
+    const nextNote = trimmed || null;
+    if (nextNote === (triage.note ?? null)) return;
+    await patchTriage({ note: nextNote });
+  }
+
+  const statusOption = TRIAGE_STATUS_OPTIONS.find((o) => o.value === triage.status);
+
+  if (!expanded) {
+    return (
+      <div
+        className="mt-3 pt-3 border-t border-gray-100"
+        onClick={stopBubble}
+        onKeyDown={stopBubble}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${statusOption?.activeClass ?? 'bg-gray-100 text-gray-700 border-gray-300'}`}>
+            {statusOption?.label ?? 'Addressed'}
+          </span>
+          {triage.custom_tags.map((tag) => (
+            <span
+              key={tag}
+              className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-violet-50 text-violet-700 border border-violet-200"
+            >
+              {tag}
+            </span>
+          ))}
+          {triage.note && (
+            <span className="text-xs text-gray-500 truncate max-w-md" title={triage.note}>
+              {triage.note}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="ml-auto text-xs font-medium text-blue-600 hover:text-blue-800"
+          >
+            Edit review
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="mt-3 pt-3 border-t border-gray-100"
+      onClick={stopBubble}
+      onKeyDown={stopBubble}
+    >
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <span className="text-xs font-medium text-gray-500">Review</span>
+        {triage.status === 'addressed' && (
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="text-xs font-medium text-gray-500 hover:text-gray-700"
+          >
+            Collapse
+          </button>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <span className="text-xs font-medium text-gray-500">Status</span>
+        <div className="inline-flex flex-wrap gap-1">
+          {TRIAGE_STATUS_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              disabled={saving}
+              onClick={() => handleStatusChange(opt.value)}
+              className={`px-2 py-0.5 text-xs font-medium rounded-full border transition-colors disabled:opacity-50 ${
+                triage.status === opt.value
+                  ? opt.activeClass
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        {saving && (
+          <span className="text-xs text-gray-400">Saving…</span>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5 mb-2">
+        <span className="text-xs font-medium text-gray-500 mr-0.5">Tags</span>
+        {triage.custom_tags.map((tag) => (
+          <span
+            key={tag}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-violet-50 text-violet-700 border border-violet-200"
+          >
+            {tag}
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => handleRemoveTag(tag)}
+              className="text-violet-400 hover:text-violet-700 disabled:opacity-50 leading-none"
+              aria-label={`Remove tag ${tag}`}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <div ref={tagInputWrapRef} className="relative inline-flex items-center gap-1">
+          <input
+            type="text"
+            value={tagInput}
+            disabled={saving}
+            onChange={(e) => {
+              setTagInput(e.target.value);
+              setShowTagSuggestions(true);
+            }}
+            onFocus={() => setShowTagSuggestions(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void handleAddTag();
+              }
+              if (e.key === 'Escape') {
+                setShowTagSuggestions(false);
+              }
+            }}
+            placeholder="Add tag…"
+            className="w-28 px-2 py-0.5 text-xs border border-gray-200 rounded-md bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+          />
+          <button
+            type="button"
+            disabled={saving || !tagInput.trim()}
+            onClick={() => void handleAddTag()}
+            className="px-2 py-0.5 text-xs font-medium text-blue-600 hover:text-blue-800 disabled:opacity-40"
+          >
+            Add
+          </button>
+          {showTagSuggestions && tagSuggestions.length > 0 && (
+            <ul className="absolute left-0 top-full z-20 mt-1 min-w-[10rem] max-w-xs rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+              {tagSuggestions.map((label) => (
+                <li key={label}>
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => void handleAddTag(label)}
+                  >
+                    {label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-500 mb-1">Note</label>
+        <textarea
+          value={noteDraft}
+          disabled={saving}
+          onChange={(e) => setNoteDraft(e.target.value)}
+          onBlur={() => void handleNoteBlur()}
+          rows={2}
+          placeholder="Optional note…"
+          className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y min-h-[2.5rem] disabled:opacity-50"
+        />
+      </div>
+
+      {saveError && (
+        <p className="mt-2 text-xs text-red-600">{saveError}</p>
+      )}
+    </div>
+  );
+}
+
 function EventLogPanel({ refreshKey }: { refreshKey: number }) {
   const [events, setEvents] = useState<IngestionEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -402,13 +755,87 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
   const [search, setSearch] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>('FAILURE');
   const [categoryFilter, setCategoryFilter] = useState<EventCategory>('all');
+  const [triageStatusFilter, setTriageStatusFilter] = useState<TriageStatusFilter>('all');
+  const [hideAddressed, setHideAddressed] = useState(true);
+  const [tagFilter, setTagFilter] = useState('');
+  const [appliedTagFilter, setAppliedTagFilter] = useState('');
+  const [rangeFromInput, setRangeFromInput] = useState('');
+  const [rangeToInput, setRangeToInput] = useState('');
+  const [appliedFrom, setAppliedFrom] = useState<string | null>(null);
+  const [appliedTo, setAppliedTo] = useState<string | null>(null);
+  const [rangeError, setRangeError] = useState<string | null>(null);
 
   const buildUrl = useCallback((before?: string | null) => {
     const params = new URLSearchParams();
     params.set('limit', '500');
     if (before) params.set('before', before);
+    if (appliedFrom) params.set('from', appliedFrom);
+    if (appliedTo) params.set('to', appliedTo);
+    if (triageStatusFilter !== 'all') params.set('triageStatus', triageStatusFilter);
+    if (hideAddressed) params.set('hideAddressed', 'true');
+    if (appliedTagFilter) params.set('tag', appliedTagFilter);
     return `/api/activity?${params.toString()}`;
+  }, [appliedFrom, appliedTo, triageStatusFilter, hideAddressed, appliedTagFilter]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setAppliedTagFilter(tagFilter.trim()), 400);
+    return () => clearTimeout(timer);
+  }, [tagFilter]);
+
+  const applyDateRange = useCallback(() => {
+    const from = rangeFromInput ? datetimeLocalToIso(rangeFromInput) : null;
+    const to = rangeToInput ? datetimeLocalToIso(rangeToInput) : null;
+
+    if (rangeFromInput && !from) {
+      setRangeError('Invalid start date/time');
+      return;
+    }
+    if (rangeToInput && !to) {
+      setRangeError('Invalid end date/time');
+      return;
+    }
+    if (from && to && new Date(from).getTime() > new Date(to).getTime()) {
+      setRangeError('Start must be before end');
+      return;
+    }
+    if (!from && !to) {
+      setRangeError('Set at least a start or end date/time');
+      return;
+    }
+
+    setRangeError(null);
+    setAppliedFrom(from);
+    setAppliedTo(to);
+  }, [rangeFromInput, rangeToInput]);
+
+  const clearDateRange = useCallback(() => {
+    setRangeFromInput('');
+    setRangeToInput('');
+    setAppliedFrom(null);
+    setAppliedTo(null);
+    setRangeError(null);
   }, []);
+
+  const clearAllFilters = useCallback(() => {
+    setSearch('');
+    setOutcomeFilter('FAILURE');
+    setCategoryFilter('all');
+    setTriageStatusFilter('all');
+    setHideAddressed(true);
+    setTagFilter('');
+    setAppliedTagFilter('');
+    clearDateRange();
+  }, [clearDateRange]);
+
+  const hasActiveFilters =
+    search.trim() !== '' ||
+    outcomeFilter !== 'FAILURE' ||
+    categoryFilter !== 'all' ||
+    triageStatusFilter !== 'all' ||
+    !hideAddressed ||
+    tagFilter.trim() !== '' ||
+    appliedFrom != null ||
+    appliedTo != null;
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
@@ -448,17 +875,27 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
     fetchEvents();
   }, [fetchEvents, refreshKey]);
 
+  const updateEventTriage = useCallback((eventId: number, triage: IngestionEventTriageEmbed) => {
+    setEvents((prev) =>
+      prev.map((ev) => (ev.id === eventId ? { ...ev, triage } : ev))
+    );
+  }, []);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return events.filter((e) => {
       if (outcomeFilter !== 'ALL' && e.outcome !== outcomeFilter) return false;
       if (categoryFilter !== 'all' && endpointCategory(e.endpoint) !== categoryFilter) return false;
+
       if (q) {
+        const triage = triageForEvent(e);
         const haystack = [
           eventClientName(e),
           e.supplier_name,
           e.facility_name,
           e.utility_name,
+          ...triage.custom_tags,
+          triage.note,
         ]
           .filter(Boolean)
           .join(' ')
@@ -572,13 +1009,128 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
             </button>
           ))}
         </div>
+
+        {/* Row 3: review status + tag filter */}
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs font-medium text-gray-500">Review</span>
+          <div className="inline-flex flex-wrap rounded-lg border border-gray-200 bg-white p-0.5 gap-0.5">
+            {([
+              { value: 'all', label: 'All statuses' },
+              ...TRIAGE_STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+            ] as { value: TriageStatusFilter; label: string }[]).map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setTriageStatusFilter(opt.value)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                  triageStatusFilter === opt.value
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={hideAddressed}
+              onChange={(e) => setHideAddressed(e.target.checked)}
+              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            Hide addressed
+          </label>
+          <div className="relative min-w-[140px] max-w-xs">
+            <input
+              type="text"
+              placeholder="Filter by tag…"
+              value={tagFilter}
+              onChange={(e) => setTagFilter(e.target.value)}
+              className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        {/* Row 4: date/time range (server-side) */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">From</label>
+            <input
+              type="datetime-local"
+              value={rangeFromInput}
+              onChange={(e) => {
+                setRangeFromInput(e.target.value);
+                setRangeError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') applyDateRange();
+              }}
+              className="px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">To</label>
+            <input
+              type="datetime-local"
+              value={rangeToInput}
+              onChange={(e) => {
+                setRangeToInput(e.target.value);
+                setRangeError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') applyDateRange();
+              }}
+              className="px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={applyDateRange}
+              className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Apply range
+            </button>
+            {(appliedFrom || appliedTo || rangeFromInput || rangeToInput) && (
+              <button
+                type="button"
+                onClick={clearDateRange}
+                className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Clear range
+              </button>
+            )}
+          </div>
+          {(appliedFrom || appliedTo) && (
+            <p className="text-xs text-gray-500 sm:ml-auto">
+              Showing events
+              {appliedFrom ? ` from ${formatRangeLabel(appliedFrom)}` : ''}
+              {appliedTo ? ` to ${formatRangeLabel(appliedTo)}` : ''}
+            </p>
+          )}
+          {rangeError && (
+            <p className="text-xs text-red-600 w-full">{rangeError}</p>
+          )}
+        </div>
+
+        {hasActiveFilters && (
+          <div>
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="text-xs text-blue-600 hover:underline"
+            >
+              Clear all filters
+            </button>
+          </div>
+        )}
       </div>
 
       {filtered.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-xl border border-gray-100">
           <p className="text-gray-500 font-medium">No events match your filters</p>
           <button
-            onClick={() => { setSearch(''); setOutcomeFilter('ALL'); setCategoryFilter('all'); }}
+            onClick={clearAllFilters}
             className="mt-3 text-sm text-blue-600 hover:underline"
           >
             Clear filters
@@ -649,6 +1201,12 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
                         )}
                       </div>
                     )}
+
+                    <EventTriageSection
+                      eventId={ev.id}
+                      triage={triageForEvent(ev)}
+                      onTriageChange={(triage) => updateEventTriage(ev.id, triage)}
+                    />
                   </div>
 
                   <div className="text-right flex-shrink-0">

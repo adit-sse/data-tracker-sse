@@ -338,6 +338,23 @@ export interface IngestionEvent {
   duration_ms: number | null;
   // Joined
   client?: { id: number; name: string } | null;
+  /** Present on GET /api/activity responses */
+  triage?: IngestionEventTriageEmbed;
+}
+
+export type IngestionEventTriageStatus = 'unreviewed' | 'in_progress' | 'addressed';
+
+/** Triage fields embedded on an ingestion event (no event_id — use event.id). */
+export interface IngestionEventTriageEmbed {
+  status: IngestionEventTriageStatus;
+  note: string | null;
+  custom_tags: string[];
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
+export interface IngestionEventTriage extends IngestionEventTriageEmbed {
+  event_id: number;
 }
 
 // -------------------------------------------------------
