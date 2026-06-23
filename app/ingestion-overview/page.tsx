@@ -385,6 +385,25 @@ const EVENT_CATEGORY_OPTIONS: { label: string; value: EventCategory }[] = [
 
 type OutcomeFilter = 'ALL' | 'SUCCESS' | 'FAILURE';
 
+type TriageStatusFilter = 'all' | IngestionEventTriageStatus;
+
+function datetimeLocalToIso(local: string): string | null {
+  if (!local.trim()) return null;
+  const d = new Date(local);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function formatRangeLabel(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function endpointLabel(endpoint: string): string {
   const map: Record<string, string> = {
     'confirm':          'confirm',
@@ -606,13 +625,77 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
   const [search, setSearch] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>('FAILURE');
   const [categoryFilter, setCategoryFilter] = useState<EventCategory>('all');
+  const [triageStatusFilter, setTriageStatusFilter] = useState<TriageStatusFilter>('all');
+  const [hideAddressed, setHideAddressed] = useState(false);
+  const [tagFilter, setTagFilter] = useState('');
+  const [rangeFromInput, setRangeFromInput] = useState('');
+  const [rangeToInput, setRangeToInput] = useState('');
+  const [appliedFrom, setAppliedFrom] = useState<string | null>(null);
+  const [appliedTo, setAppliedTo] = useState<string | null>(null);
+  const [rangeError, setRangeError] = useState<string | null>(null);
 
   const buildUrl = useCallback((before?: string | null) => {
     const params = new URLSearchParams();
     params.set('limit', '500');
     if (before) params.set('before', before);
+    if (appliedFrom) params.set('from', appliedFrom);
+    if (appliedTo) params.set('to', appliedTo);
     return `/api/activity?${params.toString()}`;
+  }, [appliedFrom, appliedTo]);
+
+  const applyDateRange = useCallback(() => {
+    const from = rangeFromInput ? datetimeLocalToIso(rangeFromInput) : null;
+    const to = rangeToInput ? datetimeLocalToIso(rangeToInput) : null;
+
+    if (rangeFromInput && !from) {
+      setRangeError('Invalid start date/time');
+      return;
+    }
+    if (rangeToInput && !to) {
+      setRangeError('Invalid end date/time');
+      return;
+    }
+    if (from && to && new Date(from).getTime() > new Date(to).getTime()) {
+      setRangeError('Start must be before end');
+      return;
+    }
+    if (!from && !to) {
+      setRangeError('Set at least a start or end date/time');
+      return;
+    }
+
+    setRangeError(null);
+    setAppliedFrom(from);
+    setAppliedTo(to);
+  }, [rangeFromInput, rangeToInput]);
+
+  const clearDateRange = useCallback(() => {
+    setRangeFromInput('');
+    setRangeToInput('');
+    setAppliedFrom(null);
+    setAppliedTo(null);
+    setRangeError(null);
   }, []);
+
+  const clearAllFilters = useCallback(() => {
+    setSearch('');
+    setOutcomeFilter('ALL');
+    setCategoryFilter('all');
+    setTriageStatusFilter('all');
+    setHideAddressed(false);
+    setTagFilter('');
+    clearDateRange();
+  }, [clearDateRange]);
+
+  const hasActiveFilters =
+    search.trim() !== '' ||
+    outcomeFilter !== 'ALL' ||
+    categoryFilter !== 'all' ||
+    triageStatusFilter !== 'all' ||
+    hideAddressed ||
+    tagFilter.trim() !== '' ||
+    appliedFrom != null ||
+    appliedTo != null;
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
@@ -660,15 +743,24 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const tagQ = tagFilter.trim().toLowerCase();
     return events.filter((e) => {
       if (outcomeFilter !== 'ALL' && e.outcome !== outcomeFilter) return false;
       if (categoryFilter !== 'all' && endpointCategory(e.endpoint) !== categoryFilter) return false;
+
+      const triage = triageForEvent(e);
+      if (triageStatusFilter !== 'all' && triage.status !== triageStatusFilter) return false;
+      if (hideAddressed && triage.status === 'addressed') return false;
+      if (tagQ && !triage.custom_tags.some((t) => t.toLowerCase().includes(tagQ))) return false;
+
       if (q) {
         const haystack = [
           eventClientName(e),
           e.supplier_name,
           e.facility_name,
           e.utility_name,
+          ...triage.custom_tags,
+          triage.note,
         ]
           .filter(Boolean)
           .join(' ')
@@ -677,7 +769,7 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
       }
       return true;
     });
-  }, [events, search, outcomeFilter, categoryFilter]);
+  }, [events, search, outcomeFilter, categoryFilter, triageStatusFilter, hideAddressed, tagFilter]);
 
   if (loading) {
     return (
@@ -782,13 +874,122 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
             </button>
           ))}
         </div>
+
+        {/* Row 3: review status + tag filter */}
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs font-medium text-gray-500">Review</span>
+          <div className="inline-flex flex-wrap rounded-lg border border-gray-200 bg-white p-0.5 gap-0.5">
+            {([
+              { value: 'all', label: 'All statuses' },
+              ...TRIAGE_STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+            ] as { value: TriageStatusFilter; label: string }[]).map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setTriageStatusFilter(opt.value)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                  triageStatusFilter === opt.value
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={hideAddressed}
+              onChange={(e) => setHideAddressed(e.target.checked)}
+              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            Hide addressed
+          </label>
+          <div className="relative min-w-[140px] max-w-xs">
+            <input
+              type="text"
+              placeholder="Filter by tag…"
+              value={tagFilter}
+              onChange={(e) => setTagFilter(e.target.value)}
+              className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        {/* Row 4: date/time range (server-side) */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">From</label>
+            <input
+              type="datetime-local"
+              value={rangeFromInput}
+              onChange={(e) => {
+                setRangeFromInput(e.target.value);
+                setRangeError(null);
+              }}
+              className="px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">To</label>
+            <input
+              type="datetime-local"
+              value={rangeToInput}
+              onChange={(e) => {
+                setRangeToInput(e.target.value);
+                setRangeError(null);
+              }}
+              className="px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={applyDateRange}
+              className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Apply range
+            </button>
+            {(appliedFrom || appliedTo || rangeFromInput || rangeToInput) && (
+              <button
+                type="button"
+                onClick={clearDateRange}
+                className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Clear range
+              </button>
+            )}
+          </div>
+          {(appliedFrom || appliedTo) && (
+            <p className="text-xs text-gray-500 sm:ml-auto">
+              Showing events
+              {appliedFrom ? ` from ${formatRangeLabel(appliedFrom)}` : ''}
+              {appliedTo ? ` to ${formatRangeLabel(appliedTo)}` : ''}
+            </p>
+          )}
+          {rangeError && (
+            <p className="text-xs text-red-600 w-full">{rangeError}</p>
+          )}
+        </div>
+
+        {hasActiveFilters && (
+          <div>
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="text-xs text-blue-600 hover:underline"
+            >
+              Clear all filters
+            </button>
+          </div>
+        )}
       </div>
 
       {filtered.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-xl border border-gray-100">
           <p className="text-gray-500 font-medium">No events match your filters</p>
           <button
-            onClick={() => { setSearch(''); setOutcomeFilter('ALL'); setCategoryFilter('all'); }}
+            onClick={clearAllFilters}
             className="mt-3 text-sm text-blue-600 hover:underline"
           >
             Clear filters

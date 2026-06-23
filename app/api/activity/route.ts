@@ -13,9 +13,18 @@ const MAX_LIMIT = 500;
 //   &clientId=<id>                   (filter to one client)
 //   &limit=<n>                       (default 100, max 500)
 //   &before=<ISO timestamp>          (cursor: only events created before this, for "load more")
+//   &from=<ISO timestamp>             (inclusive lower bound on created_at)
+//   &to=<ISO timestamp>               (inclusive upper bound on created_at)
 //
 // Returns recent ingestion_events (confirm/error attempts) across all clients the caller
 // can access, newest first. Each event includes embedded triage (status, note, custom tags).
+function parseIsoTimestamp(value: string | null): string | null {
+  if (!value?.trim()) return null;
+  const d = new Date(value);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toISOString();
+}
+
 export async function GET(request: Request) {
   try {
     const supabase = createSupabaseServerClient();
@@ -24,6 +33,18 @@ export async function GET(request: Request) {
     const outcome = searchParams.get('outcome');
     const clientIdParam = searchParams.get('clientId');
     const before = searchParams.get('before');
+    const from = parseIsoTimestamp(searchParams.get('from'));
+    const to = parseIsoTimestamp(searchParams.get('to'));
+
+    if (searchParams.get('from') && !from) {
+      return NextResponse.json({ error: 'Invalid from timestamp' }, { status: 400 });
+    }
+    if (searchParams.get('to') && !to) {
+      return NextResponse.json({ error: 'Invalid to timestamp' }, { status: 400 });
+    }
+    if (from && to && new Date(from).getTime() > new Date(to).getTime()) {
+      return NextResponse.json({ error: 'from must be before to' }, { status: 400 });
+    }
 
     const limitParam = Number(searchParams.get('limit'));
     const limit =
@@ -48,6 +69,14 @@ export async function GET(request: Request) {
       if (Number.isFinite(cid)) {
         query = query.eq('client_id', cid);
       }
+    }
+
+    if (from) {
+      query = query.gte('created_at', from);
+    }
+
+    if (to) {
+      query = query.lte('created_at', to);
     }
 
     if (before) {
