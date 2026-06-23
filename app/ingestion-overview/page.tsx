@@ -88,25 +88,39 @@ type GroupedRow = {
   client_name: string;
   facility_name: string | null;
   supplier_name: string | null;
-  kind: 'metered' | 'non-metered' | 'mixed';
+  group_id: number | null;
+  kind: 'metered' | 'non-metered';
   count: number;
   oldest_hours: number;
 };
 
+function stuckGroupKey(r: StuckPendingRecord): string {
+  if (r.group_id != null) {
+    return `${r.client_id}||g:${r.group_id}`;
+  }
+  return `${r.client_id}||f:${r.facility_name ?? ''}||${r.supplier_name ?? ''}`;
+}
+
 function groupRecords(records: StuckPendingRecord[]): GroupedRow[] {
   const map = new Map<string, GroupedRow>();
   for (const r of records) {
-    const key = `${r.client_id}||${r.facility_name ?? ''}||${r.supplier_name ?? ''}`;
+    const key = stuckGroupKey(r);
+    const displayFacility = r.group_name ?? r.facility_name;
     const existing = map.get(key);
     if (existing) {
       existing.count += 1;
       if (r.age_hours > existing.oldest_hours) existing.oldest_hours = r.age_hours;
-      if (existing.kind !== r.kind) existing.kind = 'mixed';
     } else {
       map.set(key, {
-        key, client_id: r.client_id, client_name: r.client_name,
-        facility_name: r.facility_name, supplier_name: r.supplier_name,
-        kind: r.kind, count: 1, oldest_hours: r.age_hours,
+        key,
+        client_id: r.client_id,
+        client_name: r.client_name,
+        facility_name: displayFacility,
+        supplier_name: r.supplier_name,
+        group_id: r.group_id ?? null,
+        kind: r.kind,
+        count: 1,
+        oldest_hours: r.age_hours,
       });
     }
   }
@@ -281,7 +295,7 @@ function StuckPendingTable({ refreshKey }: { refreshKey: number }) {
                   Client <SortIcon col="client" />
                 </th>
                 <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap">
-                  Facility
+                  {grouped.some((g) => g.group_id != null) ? 'Facility / Group' : 'Facility'}
                 </th>
                 <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap hidden md:table-cell">
                   Supplier
@@ -315,6 +329,9 @@ function StuckPendingTable({ refreshKey }: { refreshKey: number }) {
                   </td>
                   <td className="px-4 py-3 text-gray-700">
                     {g.facility_name ?? <span className="text-gray-400">—</span>}
+                    {g.group_id != null && (
+                      <span className="ml-1.5 text-xs text-purple-600 font-medium">group</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-gray-600 hidden md:table-cell">
                     {g.supplier_name ?? <span className="text-gray-400">—</span>}
@@ -323,9 +340,7 @@ function StuckPendingTable({ refreshKey }: { refreshKey: number }) {
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                       g.kind === 'metered'
                         ? 'bg-indigo-100 text-indigo-700'
-                        : g.kind === 'non-metered'
-                        ? 'bg-purple-100 text-purple-700'
-                        : 'bg-gray-100 text-gray-600'
+                        : 'bg-purple-100 text-purple-700'
                     }`}>
                       {g.kind}
                     </span>

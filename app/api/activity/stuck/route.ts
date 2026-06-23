@@ -25,8 +25,13 @@ function ageHoursFrom(iso: string | null | undefined): number {
   return Math.max(0, (Date.now() - then) / 3_600_000);
 }
 
+type GroupInfo = { groupId: string; groupName: string };
+
 type NonMeteredRow = {
   id: number;
+  facility_id: number;
+  supplier_id: number | null;
+  input_type_id: number;
   period_start_date: string | null;
   created_at: string | null;
   facility: Joined<{
@@ -54,13 +59,44 @@ type MeteredRow = {
   }>;
 };
 
-function mapNonMeteredRow(row: NonMeteredRow): StuckPendingRecord | null {
+type GroupMemberRow = {
+  line: Joined<{
+    facility_id: number;
+    input_type_id: number;
+    supplier_id: number | null;
+  }>;
+  group: Joined<{
+    id: number;
+    name: string;
+    supplier_id: number;
+  }>;
+};
+
+function buildGroupByMemberKey(members: GroupMemberRow[]): Map<string, GroupInfo> {
+  const map = new Map<string, GroupInfo>();
+  for (const gm of members) {
+    const group = joinedOne(gm.group);
+    const line = joinedOne(gm.line);
+    if (!group || !line || line.supplier_id == null) continue;
+    const key = `${line.facility_id}__${line.input_type_id}__${line.supplier_id}`;
+    map.set(key, { groupId: String(group.id), groupName: String(group.name) });
+  }
+  return map;
+}
+
+function mapNonMeteredRow(
+  row: NonMeteredRow,
+  groupByMemberKey: Map<string, GroupInfo>
+): StuckPendingRecord | null {
   const facility = joinedOne(row.facility);
   const client = joinedOne(facility?.client);
-  if (!facility || !client) return null;
+  if (!facility || !client || row.supplier_id == null) return null;
 
   const createdAt = row.created_at ?? row.period_start_date;
   if (!createdAt) return null;
+
+  const memberKey = `${row.facility_id}__${row.input_type_id}__${row.supplier_id}`;
+  const groupInfo = groupByMemberKey.get(memberKey);
 
   return {
     id: row.id,
@@ -73,6 +109,8 @@ function mapNonMeteredRow(row: NonMeteredRow): StuckPendingRecord | null {
     period_start: periodStart(row.period_start_date),
     created_at: createdAt,
     age_hours: ageHoursFrom(createdAt),
+    group_id: groupInfo ? Number(groupInfo.groupId) : null,
+    group_name: groupInfo?.groupName ?? null,
   };
 }
 
@@ -118,12 +156,15 @@ export async function GET(request: Request) {
     const minAgeHours =
       Number.isFinite(minAgeHoursParam) && minAgeHoursParam >= 0 ? minAgeHoursParam : 0;
 
-    const [nonMeteredRes, meteredRes] = await Promise.all([
+    const [nonMeteredRes, meteredRes, groupMembersRes] = await Promise.all([
       supabase
         .from('non_metered_records')
         .select(
           `
           id,
+          facility_id,
+          supplier_id,
+          input_type_id,
           period_start_date,
           created_at,
           facility:facilities(id, name, client_id, client:clients(id, name)),
@@ -148,15 +189,28 @@ export async function GET(request: Request) {
         )
         .eq('status', 'PENDING')
         .order('period_start_date', { ascending: true }),
+      supabase
+        .from('facility_group_members')
+        .select(
+          `
+          line:non_metered_lines(facility_id, input_type_id, supplier_id),
+          group:facility_groups!inner(id, name, supplier_id)
+        `
+        ),
     ]);
 
     if (nonMeteredRes.error) throw nonMeteredRes.error;
     if (meteredRes.error) throw meteredRes.error;
+    if (groupMembersRes.error) throw groupMembersRes.error;
+
+    const groupByMemberKey = buildGroupByMemberKey(
+      (groupMembersRes.data ?? []) as GroupMemberRow[]
+    );
 
     const rows: StuckPendingRecord[] = [];
 
     for (const raw of (nonMeteredRes.data ?? []) as NonMeteredRow[]) {
-      const mapped = mapNonMeteredRow(raw);
+      const mapped = mapNonMeteredRow(raw, groupByMemberKey);
       if (mapped) rows.push(mapped);
     }
 

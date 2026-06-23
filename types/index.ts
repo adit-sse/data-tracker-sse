@@ -355,4 +355,7 @@ export interface StuckPendingRecord {
   period_start: string | null;
   created_at: string;
   age_hours: number;
+  /** Set when this non-metered row belongs to a facility group. */
+  group_id?: number | null;
+  group_name?: string | null;
 }
