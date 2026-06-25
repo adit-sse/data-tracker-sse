@@ -19,6 +19,7 @@ export interface IngestionEventInput {
   endpoint: string;
   outcome: IngestionOutcome;
   scope_kind?: string | null;
+  group_id?: number | null;
   client_id?: number | null;
   client_name?: string | null;
   supplier_name?: string | null;
@@ -174,6 +175,7 @@ export async function logIngestionEvent(
       endpoint: event.endpoint,
       outcome: event.outcome,
       scope_kind: event.scope_kind ?? null,
+      group_id: event.group_id ?? null,
       client_id,
       client_name: event.client_name ?? null,
       supplier_name: event.supplier_name ?? null,
@@ -249,6 +251,7 @@ export async function logIngestionErrorReport(
   opts: {
     endpoint: string;
     scopeKind?: string | null;
+    groupId?: number | null;
     request: unknown;
     response: NextResponse;
     startedAt: number;
@@ -292,6 +295,7 @@ export async function logIngestionErrorReport(
     endpoint: opts.endpoint,
     outcome: 'FAILURE',
     scope_kind: opts.scopeKind ?? null,
+    group_id: opts.groupId ?? null,
     reason,
     http_status: status,
     affected_count: affected,

@@ -88,7 +88,7 @@ export async function GET(request: Request) {
     let query = supabase
       .from('ingestion_events')
       .select(
-        'id, created_at, endpoint, outcome, scope_kind, client_id, client_name, supplier_name, facility_name, utility_name, period_start, reason, http_status, affected_count, duration_ms, client:clients(id, name)'
+        'id, created_at, endpoint, outcome, scope_kind, group_id, client_id, client_name, supplier_name, facility_name, utility_name, period_start, reason, http_status, affected_count, duration_ms, client:clients(id, name)'
       )
       .order('created_at', { ascending: false })
       .limit(limit);

@@ -325,6 +325,7 @@ export interface IngestionEvent {
   endpoint: string;
   outcome: IngestionEventOutcome;
   scope_kind: string | null;
+  group_id?: number | null;
   client_id: number | null;
   client_name: string | null;
   supplier_name: string | null;
