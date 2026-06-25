@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getCurrentFiscalYearMonthsThroughNow } from '@/lib/non-metered-pending-seed';
-import { upsertNonMeteredLines } from '@/lib/non-metered-lines';
+import { upsertNonMeteredLines, resolveNonMeteredLineIdMap, nonMeteredLineKey } from '@/lib/non-metered-lines';
 
 export type GroupPendingMember = { facility_id: string; input_type_id: string };
 
@@ -53,14 +53,38 @@ export async function seedNonMeteredFacilityGroupPending(
     )
   );
 
+  await upsertNonMeteredLines(
+    supabase,
+    members.map((m) => ({
+      facilityId: m.facility_id,
+      supplierId,
+      inputTypeId: m.input_type_id,
+    }))
+  );
+
+  const lineIdByKey = await resolveNonMeteredLineIdMap(
+    supabase,
+    members.map((m) => ({
+      facilityId: m.facility_id,
+      supplierId,
+      inputTypeId: m.input_type_id,
+    }))
+  );
+
   const toInsert = [];
   for (const member of members) {
     const catId = member.input_type_id;
+    const lineKey = nonMeteredLineKey(member.facility_id, supplierId, catId);
+    const lineId = lineIdByKey.get(lineKey);
+    if (!lineId) {
+      throw new Error(`Non-metered line not found for member ${member.facility_id} / ${catId}`);
+    }
     for (const month of months) {
       const catKey = `${member.facility_id}__${catId}__${month.start}`;
       const greenKey = `${member.facility_id}__${month.start}`;
       if (!existingByCategoryKey.has(catKey) && !greenSet.has(greenKey)) {
         toInsert.push({
+          non_metered_line_id: lineId,
           facility_id: member.facility_id,
           supplier_id: supplierId,
           input_type_id: catId,
@@ -72,15 +96,6 @@ export async function seedNonMeteredFacilityGroupPending(
       }
     }
   }
-
-  await upsertNonMeteredLines(
-    supabase,
-    members.map((m) => ({
-      facilityId: m.facility_id,
-      supplierId,
-      inputTypeId: m.input_type_id,
-    }))
-  );
 
   if (toInsert.length > 0) {
     const { error: insertError } = await supabase.from('non_metered_records').insert(toInsert);

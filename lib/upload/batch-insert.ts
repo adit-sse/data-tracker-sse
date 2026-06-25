@@ -9,7 +9,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { upsertNonMeteredLines } from '@/lib/non-metered-lines';
+import { upsertNonMeteredLines, resolveNonMeteredLineIdMap, nonMeteredLineKey } from '@/lib/non-metered-lines';
 import { autoCreateNonMeteredGroups } from '@/lib/upload/auto-groups';
 import { runInferenceForBatch } from '@/lib/upload/inference';
 import type { UploadContext } from '@/lib/upload/resolver';
@@ -193,6 +193,11 @@ export async function processNonMeteredBatch(
     );
   }
 
+  const lineIdByKey =
+    linePayloads.length > 0
+      ? await resolveNonMeteredLineIdMap(ctx.supabase, linePayloads)
+      : new Map<string, string>();
+
   let successCount = 0;
   const upsertedIds: Array<{
     id: string;
@@ -206,25 +211,44 @@ export async function processNonMeteredBatch(
 
   for (let i = 0; i < deduped.length; i += BATCH_CHUNK_SIZE) {
     const chunk = deduped.slice(i, i + BATCH_CHUNK_SIZE);
-    const rows = chunk.map((rec) => ({
-      facility_id: rec.facilityId,
-      supplier_id: rec.supplierId,
-      input_type_id: rec.categoryId,
-      invoice_number: rec.invoiceNumber,
-      invoice_date: rec.invoiceDate,
-      period_start_date: rec.periodStart,
-      period_end_date: rec.periodEnd,
-      consumption: rec.consumption,
-      unit: rec.unit,
-      amount: rec.amount,
-      sub_category: rec.subCategory,
-      input_type: rec.inputType,
-      framework: rec.framework,
-      version: rec.version,
-      customer: rec.customer,
-      status: rec.status || 'IMPORTED',
-      inferred_from_id: null,
-    }));
+    const rows = chunk
+      .map((rec) => {
+        if (rec.supplierId === null) {
+          errors.push(
+            `Skipping non-metered record without supplier for facility ${rec.facilityId}`,
+          );
+          return null;
+        }
+        const lineKey = nonMeteredLineKey(rec.facilityId, rec.supplierId, rec.categoryId);
+        const lineId = lineIdByKey.get(lineKey);
+        if (!lineId) {
+          errors.push(`Non-metered line not found for ${lineKey}`);
+          return null;
+        }
+        return {
+          non_metered_line_id: lineId,
+          facility_id: rec.facilityId,
+          supplier_id: rec.supplierId,
+          input_type_id: rec.categoryId,
+          invoice_number: rec.invoiceNumber,
+          invoice_date: rec.invoiceDate,
+          period_start_date: rec.periodStart,
+          period_end_date: rec.periodEnd,
+          consumption: rec.consumption,
+          unit: rec.unit,
+          amount: rec.amount,
+          sub_category: rec.subCategory,
+          input_type: rec.inputType,
+          framework: rec.framework,
+          version: rec.version,
+          customer: rec.customer,
+          status: rec.status || 'IMPORTED',
+          inferred_from_id: null,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null);
+
+    if (rows.length === 0) continue;
 
     const { data, error } = await ctx.supabase
       .from('non_metered_records')
