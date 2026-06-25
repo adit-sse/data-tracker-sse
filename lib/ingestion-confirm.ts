@@ -23,6 +23,11 @@ import {
 } from '@/lib/ingestion-metered';
 import { eachMonthStartIsoOverlapping, syncMeteredGapPendingForMonths } from '@/lib/metered-gap-pending';
 import { getCurrentFiscalYearMonthsThroughNow } from '@/lib/non-metered-pending-seed';
+import {
+  ensureLineInFacilityGroup,
+  ensureLineInMatchingFacilityGroups,
+  upsertNonMeteredLine,
+} from '@/lib/non-metered-lines';
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -60,16 +65,30 @@ export async function confirmOrUpsertNonMeteredRecord(
     periodStart: string;
     periodEnd: string;
     confirmedAt: string;
+    /** When confirming via a facility group, attach new lines to this group. */
+    groupId?: string;
   }
 ): Promise<void> {
-  const { facilityId, supplierId, inputTypeId, periodStart, periodEnd, confirmedAt } = params;
+  const { facilityId, supplierId, inputTypeId, periodStart, periodEnd, confirmedAt, groupId } = params;
+
+  const { id: lineId, created } = await upsertNonMeteredLine(supabase, {
+    facilityId,
+    supplierId,
+    inputTypeId,
+  });
+
+  if (created) {
+    if (groupId) {
+      await ensureLineInFacilityGroup(supabase, lineId, groupId);
+    } else {
+      await ensureLineInMatchingFacilityGroups(supabase, { lineId, facilityId, supplierId });
+    }
+  }
 
   const { data: existing } = await supabase
     .from('non_metered_records')
     .select('id')
-    .eq('facility_id', facilityId)
-    .eq('supplier_id', supplierId)
-    .eq('input_type_id', inputTypeId)
+    .eq('non_metered_line_id', lineId)
     .eq('period_start_date', periodStart)
     .eq('status', 'PENDING')
     .maybeSingle();
@@ -83,6 +102,7 @@ export async function confirmOrUpsertNonMeteredRecord(
   } else {
     const { error: upErr } = await supabase.from('non_metered_records').upsert(
       {
+        non_metered_line_id: lineId,
         facility_id: facilityId,
         supplier_id: supplierId,
         input_type_id: inputTypeId,
@@ -236,6 +256,7 @@ export async function processNonMeteredGroupRows(
         periodStart: parsed.start,
         periodEnd: parsed.end,
         confirmedAt,
+        groupId: useFacilityGroup ? String(group!.id) : undefined,
       });
       totalConfirmed++;
     }

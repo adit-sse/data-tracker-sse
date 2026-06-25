@@ -111,7 +111,7 @@ export async function PUT(
     }
 
     if (memberFacilityIds && memberFacilityIds.length > 0 && effectiveSupplierId) {
-      await runGroupBackfill(supabase, effectiveSupplierId, memberFacilityIds);
+      await runGroupBackfill(supabase, effectiveSupplierId, memberFacilityIds, groupId);
     }
 
     const { data, error } = await supabase
