@@ -134,6 +134,70 @@ function groupRecords(records: StuckPendingRecord[]): GroupedRow[] {
 }
 
 // ---------------------------------------------------------------------------
+// Event log — flexible grouping
+// ---------------------------------------------------------------------------
+
+type GroupBy = 'none' | 'facility-group' | 'http-status' | 'endpoint';
+
+const GROUP_BY_OPTIONS: { value: GroupBy; label: string }[] = [
+  { value: 'none',           label: 'No grouping' },
+  { value: 'facility-group', label: 'Facility group' },
+  { value: 'http-status',    label: 'HTTP status' },
+  { value: 'endpoint',       label: 'Endpoint' },
+];
+
+type EventGroup = {
+  key: string;
+  groupBy: GroupBy;
+  group_id: number | null;
+  groupLabel: string | null;
+  events: IngestionEvent[];
+};
+
+function groupEvents(events: IngestionEvent[], groupBy: GroupBy): EventGroup[] {
+  if (groupBy === 'none') {
+    return events.map((ev) => ({
+      key: `e:${ev.id}`,
+      groupBy,
+      group_id: null,
+      groupLabel: null,
+      events: [ev],
+    }));
+  }
+
+  const map = new Map<string, EventGroup>();
+  for (const ev of events) {
+    let key: string;
+    let groupLabel: string | null = null;
+
+    if (groupBy === 'facility-group') {
+      key = ev.group_id != null ? `g:${ev.group_id}:${ev.http_status ?? 'null'}` : `e:${ev.id}`;
+    } else if (groupBy === 'http-status') {
+      const status = ev.http_status ?? 'none';
+      key = `http:${status}`;
+      groupLabel = ev.http_status ? `HTTP ${ev.http_status}` : 'No HTTP status';
+    } else {
+      key = `ep:${ev.endpoint}`;
+      groupLabel = endpointLabel(ev.endpoint);
+    }
+
+    const existing = map.get(key);
+    if (existing) {
+      existing.events.push(ev);
+    } else {
+      map.set(key, {
+        key,
+        groupBy,
+        group_id: ev.group_id ?? null,
+        groupLabel,
+        events: [ev],
+      });
+    }
+  }
+  return Array.from(map.values());
+}
+
+// ---------------------------------------------------------------------------
 // Stuck Pending table
 // ---------------------------------------------------------------------------
 
@@ -752,6 +816,8 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [groupBy, setGroupBy] = useState<GroupBy>('facility-group');
   const [search, setSearch] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>('FAILURE');
   const [categoryFilter, setCategoryFilter] = useState<EventCategory>('all');
@@ -880,6 +946,7 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
       prev.map((ev) => (ev.id === eventId ? { ...ev, triage } : ev))
     );
   }, []);
+
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1113,6 +1180,27 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
           )}
         </div>
 
+        {/* Group by */}
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs font-medium text-gray-500">Group by</span>
+          <div className="inline-flex flex-wrap rounded-lg border border-gray-200 bg-white p-0.5 gap-0.5">
+            {GROUP_BY_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setGroupBy(opt.value)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                  groupBy === opt.value
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {hasActiveFilters && (
           <div>
             <button
@@ -1138,86 +1226,186 @@ function EventLogPanel({ refreshKey }: { refreshKey: number }) {
         </div>
       ) : (
         <div className="space-y-2.5">
-          {filtered.map((ev) => {
-            const isFailure = ev.outcome === 'FAILURE';
-            const isSuccess = ev.outcome === 'SUCCESS';
-            return (
-              <div
-                key={ev.id}
-                className={`rounded-xl border bg-white p-4 shadow-sm ${
-                  isFailure
-                    ? 'border-red-200'
-                    : 'border-gray-100'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {/* Outcome badge */}
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                        isFailure
-                          ? 'bg-red-100 text-red-700'
-                          : isSuccess
-                          ? 'bg-emerald-100 text-emerald-700'
-                          : 'bg-gray-100 text-gray-600'
-                      }`}>
-                        {isFailure ? 'Failed' : 'Success'}
-                      </span>
-                      {/* Endpoint badge */}
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 font-mono">
-                        {endpointLabel(ev.endpoint)}
-                      </span>
-                      {/* Client link */}
-                      {ev.client_id ? (
-                        <Link href={`/clients/${ev.client_id}`} className="text-sm font-semibold text-blue-600 hover:underline">
-                          {eventClientName(ev)}
-                        </Link>
-                      ) : (
-                        <span className="text-sm font-semibold text-gray-900">{eventClientName(ev)}</span>
-                      )}
-                    </div>
+          {groupEvents(filtered, groupBy).map((group) => {
+            const isGrouped = group.groupBy !== 'none';
 
-                    {/* Detail line */}
-                    <div className="mt-1 text-sm text-gray-600 truncate">
-                      {[ev.facility_name, ev.supplier_name, ev.utility_name].filter(Boolean).join(' · ') || (
-                        <span className="text-gray-400 italic">No facility / supplier context</span>
-                      )}
-                      {ev.period_start && (
-                        <span className="text-gray-400"> · {formatPeriod(ev.period_start)}</span>
-                      )}
-                      {typeof ev.affected_count === 'number' && (
-                        <span className="text-gray-400">
-                          {' · '}{ev.affected_count} record{ev.affected_count === 1 ? '' : 's'} {isFailure ? 'affected' : 'confirmed'}
+            if (!isGrouped) {
+              // Single event — render exactly as before
+              const ev = group.events[0];
+              const isFailure = ev.outcome === 'FAILURE';
+              const isSuccess = ev.outcome === 'SUCCESS';
+              return (
+                <div
+                  key={group.key}
+                  className={`rounded-xl border bg-white p-4 shadow-sm ${
+                    isFailure ? 'border-red-200' : 'border-gray-100'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
+                          isFailure
+                            ? 'bg-red-100 text-red-700'
+                            : isSuccess
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {isFailure ? 'Failed' : 'Success'}
                         </span>
-                      )}
-                    </div>
-
-                    {/* Failure reason */}
-                    {isFailure && ev.reason && (
-                      <div className="mt-2 text-sm text-red-700 bg-red-50 rounded-md px-3 py-1.5 break-words">
-                        {ev.reason}
-                        {ev.http_status && (
-                          <span className="text-red-400 ml-1">(HTTP {ev.http_status})</span>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 font-mono">
+                          {endpointLabel(ev.endpoint)}
+                        </span>
+                        {ev.client_id ? (
+                          <Link href={`/clients/${ev.client_id}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                            {eventClientName(ev)}
+                          </Link>
+                        ) : (
+                          <span className="text-sm font-semibold text-gray-900">{eventClientName(ev)}</span>
                         )}
                       </div>
-                    )}
-
-                    <EventTriageSection
-                      eventId={ev.id}
-                      triage={triageForEvent(ev)}
-                      onTriageChange={(triage) => updateEventTriage(ev.id, triage)}
-                    />
-                  </div>
-
-                  <div className="text-right flex-shrink-0">
-                    <div
-                      className="text-xs text-gray-500"
-                      title={formatAbsolute(ev.created_at)}
-                    >
-                      {formatRelative(ev.created_at)}
+                      <div className="mt-1 text-sm text-gray-600 truncate">
+                        {[ev.facility_name, ev.supplier_name, ev.utility_name].filter(Boolean).join(' · ') || (
+                          <span className="text-gray-400 italic">No facility / supplier context</span>
+                        )}
+                        {ev.period_start && (
+                          <span className="text-gray-400"> · {formatPeriod(ev.period_start)}</span>
+                        )}
+                        {typeof ev.affected_count === 'number' && (
+                          <span className="text-gray-400">
+                            {' · '}{ev.affected_count} record{ev.affected_count === 1 ? '' : 's'} {isFailure ? 'affected' : 'confirmed'}
+                          </span>
+                        )}
+                      </div>
+                      {isFailure && ev.reason && (
+                        <div className="mt-2 text-sm text-red-700 bg-red-50 rounded-md px-3 py-1.5 break-words">
+                          {ev.reason}
+                          {ev.http_status && (
+                            <span className="text-red-400 ml-1">(HTTP {ev.http_status})</span>
+                          )}
+                        </div>
+                      )}
+                      <EventTriageSection
+                        eventId={ev.id}
+                        triage={triageForEvent(ev)}
+                        onTriageChange={(triage) => updateEventTriage(ev.id, triage)}
+                      />
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-xs text-gray-500" title={formatAbsolute(ev.created_at)}>
+                        {formatRelative(ev.created_at)}
+                      </div>
                     </div>
                   </div>
                 </div>
+              );
+            }
+
+            // Grouped events — unified collapsed card for all groupBy modes
+            const rep = group.events[0];
+            const isExpanded = expandedGroups.has(group.key);
+
+            const toggleExpand = () =>
+              setExpandedGroups((prev) => {
+                const next = new Set(prev);
+                if (next.has(group.key)) next.delete(group.key);
+                else next.add(group.key);
+                return next;
+              });
+
+            return (
+              <div key={group.key} className="rounded-xl border bg-white shadow-sm border-red-200">
+                {/* Collapsed group header */}
+                <button
+                  type="button"
+                  onClick={toggleExpand}
+                  className="w-full text-left p-4 hover:bg-gray-50 transition-colors rounded-xl"
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2 flex-wrap min-w-0">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">
+                        Failed
+                      </span>
+                      {group.groupLabel ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-800 text-white font-mono">
+                          {group.groupLabel}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 font-mono">
+                          {endpointLabel(rep.endpoint)}
+                        </span>
+                      )}
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                        {group.events.length} event{group.events.length !== 1 ? 's' : ''}
+                      </span>
+                      <span className="text-sm text-gray-500 truncate">
+                        {isExpanded ? '▴' : '▾'}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-400 flex-shrink-0" title={formatAbsolute(rep.created_at)}>
+                      {formatRelative(rep.created_at)}
+                    </div>
+                  </div>
+                </button>
+
+                {/* Individual event rows (expanded) */}
+                {isExpanded && (
+                  <div className="border-t border-gray-100 divide-y divide-gray-100">
+                    {group.events.map((ev) => {
+                      const isFailure = ev.outcome === 'FAILURE';
+                      const isSuccess = ev.outcome === 'SUCCESS';
+                      return (
+                        <div key={ev.id} className="px-4 py-3 bg-gray-50">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                  isFailure ? 'bg-red-100 text-red-700' : isSuccess ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'
+                                }`}>
+                                  {isFailure ? 'Failed' : 'Success'}
+                                </span>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 font-mono">
+                                  {endpointLabel(ev.endpoint)}
+                                </span>
+                                {ev.client_id ? (
+                                  <Link href={`/clients/${ev.client_id}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                                    {eventClientName(ev)}
+                                  </Link>
+                                ) : (
+                                  <span className="text-sm font-semibold text-gray-900">{eventClientName(ev)}</span>
+                                )}
+                              </div>
+                              <div className="mt-1 text-sm text-gray-600 truncate">
+                                {[ev.facility_name, ev.supplier_name, ev.utility_name].filter(Boolean).join(' · ') || (
+                                  <span className="text-gray-400 italic">No facility context</span>
+                                )}
+                                {ev.period_start && (
+                                  <span className="text-gray-400"> · {formatPeriod(ev.period_start)}</span>
+                                )}
+                              </div>
+                              {isFailure && ev.reason && (
+                                <div className="mt-2 text-sm text-red-700 bg-red-50 rounded-md px-3 py-1.5 break-words">
+                                  {ev.reason}
+                                  {ev.http_status && (
+                                    <span className="text-red-400 ml-1">(HTTP {ev.http_status})</span>
+                                  )}
+                                </div>
+                              )}
+                              <EventTriageSection
+                                eventId={ev.id}
+                                triage={triageForEvent(ev)}
+                                onTriageChange={(triage) => updateEventTriage(ev.id, triage)}
+                              />
+                            </div>
+                            <div className="text-xs text-gray-400 flex-shrink-0" title={formatAbsolute(ev.created_at)}>
+                              {formatRelative(ev.created_at)}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}

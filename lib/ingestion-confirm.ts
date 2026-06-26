@@ -554,8 +554,7 @@ export async function processMeteredRows(
     const gapSync = await syncMeteredGapPendingForMonths(
       supabase,
       meterId,
-      monthKeysConfirmed,
-      confirmedAt
+      monthKeysConfirmed
     );
     totalDeletedPending += gapSync.deleted;
     totalGapPendingInserted += gapSync.inserted;
