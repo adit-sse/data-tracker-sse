@@ -121,8 +121,7 @@ function mergeContiguousDayRanges(sortedDayKeys: string[]): { start: string; end
 export async function syncMeteredGapPendingForMonths(
   supabase: SupabaseClient,
   meterId: string,
-  monthStarts: Iterable<string>,
-  pendingReceivedAt: string
+  monthStarts: Iterable<string>
 ): Promise<{ deleted: number; inserted: number }> {
   const uniqueMonthStarts = Array.from(new Set(monthStarts)).sort();
   if (uniqueMonthStarts.length === 0) return { deleted: 0, inserted: 0 };
@@ -167,7 +166,6 @@ export async function syncMeteredGapPendingForMonths(
     period_start_date: string;
     period_end_date: string;
     status: string;
-    created_at: string;
   }> = [];
 
   for (const monthStart of uniqueMonthStarts) {
@@ -183,7 +181,6 @@ export async function syncMeteredGapPendingForMonths(
         period_start_date: r.start,
         period_end_date: r.end,
         status: 'PENDING',
-        created_at: pendingReceivedAt,
       });
     }
   }
