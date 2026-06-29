@@ -11,6 +11,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { ensureLineInFacilityGroup, upsertNonMeteredLine } from '@/lib/non-metered-lines';
 
 const BATCH_CHUNK_SIZE = 200;
 
@@ -100,8 +101,7 @@ export async function runInferenceForBatch(
     membersByGroup.get(m.group_id)!.push(String(facilityId));
   }
 
-  // Build inference rows for absent facilities in each group slice.
-  const inferenceRows: Array<{
+  type InferenceDraft = {
     facility_id: string;
     supplier_id: string;
     input_type_id: string;
@@ -109,7 +109,10 @@ export async function runInferenceForBatch(
     period_end_date: string;
     status: string;
     inferred_from_id: string;
-  }> = [];
+    group_id: string;
+  };
+
+  const inferenceDrafts: InferenceDraft[] = [];
 
   for (const group of groups.values()) {
     if (!group.supplierId) continue;
@@ -133,7 +136,7 @@ export async function runInferenceForBatch(
       const absentFacilityIds = allMembers.filter((fid) => !group.facilityIds.has(fid));
 
       for (const absentFacilityId of absentFacilityIds) {
-        inferenceRows.push({
+        inferenceDrafts.push({
           facility_id: absentFacilityId,
           supplier_id: group.supplierId,
           input_type_id: group.categoryId,
@@ -141,19 +144,43 @@ export async function runInferenceForBatch(
           period_end_date: group.periodEnd,
           status: 'INFERRED_EMPTY',
           inferred_from_id: group.referenceId,
+          group_id: groupId,
         });
       }
     }
   }
 
-  for (let i = 0; i < inferenceRows.length; i += BATCH_CHUNK_SIZE) {
-    const chunk = inferenceRows.slice(i, i + BATCH_CHUNK_SIZE);
+  for (let i = 0; i < inferenceDrafts.length; i += BATCH_CHUNK_SIZE) {
+    const chunk = inferenceDrafts.slice(i, i + BATCH_CHUNK_SIZE);
+    const resolvedChunk: Array<InferenceDraft & { non_metered_line_id: string }> = [];
+
+    for (const draft of chunk) {
+      try {
+        const { id: lineId } = await upsertNonMeteredLine(supabase, {
+          facilityId: draft.facility_id,
+          supplierId: draft.supplier_id,
+          inputTypeId: draft.input_type_id,
+        });
+        await ensureLineInFacilityGroup(supabase, lineId, draft.group_id);
+        resolvedChunk.push({ ...draft, non_metered_line_id: lineId });
+      } catch (e) {
+        errors.push(
+          `Batch inference line resolve failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+
+    if (resolvedChunk.length === 0) continue;
+
     const { error: inferError } = await supabase
       .from('non_metered_records')
-      .upsert(chunk, {
-        onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
-        ignoreDuplicates: true,
-      });
+      .upsert(
+        resolvedChunk.map(({ group_id: _groupId, ...row }) => row),
+        {
+          onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
+          ignoreDuplicates: true,
+        }
+      );
 
     if (inferError) {
       errors.push(`Batch inference upsert failed: ${inferError.message}`);

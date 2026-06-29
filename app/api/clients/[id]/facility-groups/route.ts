@@ -97,7 +97,7 @@ export async function POST(
     // Retroactive inference backfill for existing records
     const memberFacilityIds = [...new Set(members.map((m) => m.facility_id))];
     if (memberFacilityIds.length > 0) {
-      await runGroupBackfill(supabase, supplier_id, memberFacilityIds);
+      await runGroupBackfill(supabase, supplier_id, memberFacilityIds, String(group.id));
     }
 
     const { data: full, error: fullError } = await supabase

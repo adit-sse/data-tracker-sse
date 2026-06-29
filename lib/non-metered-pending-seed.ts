@@ -63,7 +63,7 @@ export async function seedIngestionPendingNonMeteredLineMonths(
 ): Promise<number> {
   const { facilityId, supplierId, inputTypeId, categoryId, pendingReceivedAt } = params;
 
-  await upsertNonMeteredLine(supabase, { facilityId, supplierId, inputTypeId, categoryId });
+  const { id: lineId } = await upsertNonMeteredLine(supabase, { facilityId, supplierId, inputTypeId, categoryId });
   const months = getCurrentFiscalYearMonthsThroughNow();
   const periodStarts = months.map((m) => m.start);
 
@@ -97,6 +97,7 @@ export async function seedIngestionPendingNonMeteredLineMonths(
   );
 
   const toInsert: Array<{
+    non_metered_line_id: string;
     facility_id: string;
     supplier_id: string;
     input_type_id: string;
@@ -112,6 +113,7 @@ export async function seedIngestionPendingNonMeteredLineMonths(
     const greenKey = `${facilityId}__${month.start}`;
     if (!existingByInputTypeKey.has(typeKey) && !greenSet.has(greenKey)) {
       toInsert.push({
+        non_metered_line_id: lineId,
         facility_id: facilityId,
         supplier_id: supplierId,
         input_type_id: inputTypeId,
@@ -142,10 +144,11 @@ export async function upsertTemplateScope3CoverageMonths(
 ): Promise<number> {
   const { facilityId, supplierId, inputTypeId, categoryId } = params;
 
-  await upsertNonMeteredLine(supabase, { facilityId, supplierId, inputTypeId, categoryId });
+  const { id: lineId } = await upsertNonMeteredLine(supabase, { facilityId, supplierId, inputTypeId, categoryId });
   const months = getFullCurrentFiscalYearMonthPeriods();
 
   const rows = months.map((month) => ({
+    non_metered_line_id: lineId,
     facility_id: facilityId,
     supplier_id: supplierId,
     input_type_id: inputTypeId,

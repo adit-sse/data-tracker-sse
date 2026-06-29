@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { ensureLineInFacilityGroup, upsertNonMeteredLine } from '@/lib/non-metered-lines';
 
 /**
  * Retroactive inference backfill for a facility group.
@@ -14,7 +15,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export async function runGroupBackfill(
   supabase: SupabaseClient,
   supplierId: string,
-  memberFacilityIds: string[]
+  memberFacilityIds: string[],
+  groupId: string
 ): Promise<void> {
   if (memberFacilityIds.length < 2) return;
 
@@ -60,9 +62,7 @@ export async function runGroupBackfill(
 
   const memberIdSet = new Set(memberFacilityIds.map(String));
 
-  // Collect all absent-facility rows across all slices into a single array,
-  // then issue one bulk upsert — replaces one upsert per absent facility per slice.
-  const rowsToUpsert: Array<{
+  type BackfillDraft = {
     facility_id: string;
     supplier_id: string;
     input_type_id: string;
@@ -70,14 +70,16 @@ export async function runGroupBackfill(
     period_end_date: string;
     status: string;
     inferred_from_id: string;
-  }> = [];
+  };
+
+  const drafts: BackfillDraft[] = [];
 
   for (const slice of Array.from(slices.values())) {
     const absentIds = Array.from(memberIdSet).filter(
       (fid) => !slice.presentFacilityIds.has(fid)
     );
     for (const facilityId of absentIds) {
-      rowsToUpsert.push({
+      drafts.push({
         facility_id: facilityId,
         supplier_id: supplierId,
         input_type_id: slice.input_type_id,
@@ -89,12 +91,23 @@ export async function runGroupBackfill(
     }
   }
 
-  if (rowsToUpsert.length > 0) {
-    await supabase
-      .from('non_metered_records')
-      .upsert(rowsToUpsert, {
-        onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
-        ignoreDuplicates: true, // never overwrite IMPORTED or MANUAL
-      });
+  if (drafts.length === 0) return;
+
+  const rowsToUpsert: Array<BackfillDraft & { non_metered_line_id: string }> = [];
+  for (const draft of drafts) {
+    const { id: lineId } = await upsertNonMeteredLine(supabase, {
+      facilityId: draft.facility_id,
+      supplierId: draft.supplier_id,
+      inputTypeId: draft.input_type_id,
+    });
+    await ensureLineInFacilityGroup(supabase, lineId, groupId);
+    rowsToUpsert.push({ ...draft, non_metered_line_id: lineId });
   }
+
+  await supabase
+    .from('non_metered_records')
+    .upsert(rowsToUpsert, {
+      onConflict: 'facility_id,supplier_id,input_type_id,period_start_date,period_end_date',
+      ignoreDuplicates: true, // never overwrite IMPORTED or MANUAL
+    });
 }
