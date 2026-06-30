@@ -312,10 +312,11 @@ async function handlePending(
     // ── Bulk mode: run non-metered AND metered paths in parallel ─────────────
     //
     // Resolve client + supplier IDs first (both paths need them).
-    const [{ data: client }, { data: supplier }] = await Promise.all([
+    const [{ data: client }, { data: supplierRaw }] = await Promise.all([
       supabase.from('clients').select('id').ilike('name', String(client_name)).single(),
-      supabase.from('suppliers').select('id').ilike('name', String(supplier_name)).single(),
+      supabase.rpc('get_supplier_by_name', { input_name: String(supplier_name) }).single(),
     ]);
+    const supplier = supplierRaw as { id: string; name: string } | null;
 
     if (!client) return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
     if (!supplier) return NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 });

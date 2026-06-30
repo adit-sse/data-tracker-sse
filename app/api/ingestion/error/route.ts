@@ -116,11 +116,12 @@ async function handleError(supabase: SupabaseClient, body: Record<string, unknow
     }
 
     // ----- Facility group -----
-    const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
+    const [{ data: client }, { data: supplierRaw }, { data: groupCategory }] = await Promise.all([
       supabase.from('clients').select('id').ilike('name', client_name).single(),
-      supabase.from('suppliers').select('id').ilike('name', supplier_name).single(),
+      supabase.rpc('get_supplier_by_name', { input_name: supplier_name }).single(),
       supabase.from('categories').select('id').ilike('name', utility_name).single(),
     ]);
+    const supplier = supplierRaw as { id: string; name: string } | null;
 
     if (!client) return ok(NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 }));
     if (!supplier) return ok(NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 }));
