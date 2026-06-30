@@ -44,10 +44,11 @@ export async function seedAllScope1NonMeteredPending(
     }
   | { ok: false; error: string; status: number }
 > {
-  const [{ data: client }, { data: supplier }] = await Promise.all([
-    supabase.from('clients').select('id').ilike('name', clientName).single(),
+  const [{ data: clientRaw }, { data: supplier }] = await Promise.all([
+    supabase.rpc('get_client_by_name', { input_name: clientName }).single(),
     supabase.from('suppliers').select('id').ilike('name', supplierName).single(),
   ]);
+  const client = clientRaw as { id: number; name: string } | null;
 
   if (!client) {
     return { ok: false, error: `Client "${clientName}" not found`, status: 404 };

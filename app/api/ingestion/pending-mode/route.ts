@@ -48,10 +48,11 @@ export async function GET(request: Request) {
   try {
     const supabase = createSupabaseServiceRoleClient();
 
-    const [{ data: client }, { data: supplier }] = await Promise.all([
-      supabase.from('clients').select('id, name').ilike('name', client_name).single(),
+    const [{ data: clientRaw }, { data: supplier }] = await Promise.all([
+      supabase.rpc('get_client_by_name', { input_name: client_name }).single(),
       supabase.from('suppliers').select('id, name').ilike('name', supplier_name).single(),
     ]);
+    const client = clientRaw as { id: number; name: string } | null;
 
     if (!client) {
       return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });

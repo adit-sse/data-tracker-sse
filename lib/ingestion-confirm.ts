@@ -152,11 +152,12 @@ export async function processNonMeteredGroupRows(
       };
     }
 
-    const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
-      supabase.from('clients').select('id').ilike('name', Company).single(),
+    const [{ data: clientRaw }, { data: supplier }, { data: groupCategory }] = await Promise.all([
+      supabase.rpc('get_client_by_name', { input_name: Company }).single(),
       supabase.from('suppliers').select('id').ilike('name', Provider).single(),
       supabase.from('categories').select('id').ilike('name', Category).single(),
     ]);
+    const client = clientRaw as { id: number; name: string } | null;
 
     if (!client) return { ok: false, error: `Client "${Company}" not found`, status: 404 };
     if (!supplier) return { ok: false, error: `Supplier "${Provider}" not found`, status: 404 };

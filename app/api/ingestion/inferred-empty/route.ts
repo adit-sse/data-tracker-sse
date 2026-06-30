@@ -113,11 +113,12 @@ async function handleInferredEmpty(
     );
   }
 
-  const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
-    supabase.from('clients').select('id').ilike('name', String(client_name)).single(),
+  const [{ data: clientRaw }, { data: supplier }, { data: groupCategory }] = await Promise.all([
+    supabase.rpc('get_client_by_name', { input_name: String(client_name) }).single(),
     supabase.from('suppliers').select('id').ilike('name', String(supplier_name)).single(),
     supabase.from('categories').select('id').ilike('name', String(category)).single(),
   ]);
+  const client = clientRaw as { id: number; name: string } | null;
 
   if (!client) return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
   if (!supplier) return NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 });
