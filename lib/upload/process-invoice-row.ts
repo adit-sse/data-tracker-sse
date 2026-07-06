@@ -72,9 +72,6 @@ export async function processRow(
   const facilityId = await cachedFindOrCreateFacility(ctx, facilityName, row['Supply Address']?.trim() || null);
   const supplierId = providerName ? await cachedFindOrCreateSupplier(ctx, providerName) : null;
 
-  const inputTypeColRaw = row['Input Type']?.trim();
-  const inputTypeCol = inputTypeColRaw ? toSentenceCase(inputTypeColRaw) : null;
-
   if (is_metered === false) {
     return {
       type: 'non_metered',
@@ -83,18 +80,8 @@ export async function processRow(
         supplierId,
         categoryId,
         reportingCategoryId: null,
-        invoiceNumber: row['Invoice Number']?.trim() || null,
-        invoiceDate: row['Invoice Date']?.trim() || null,
         periodStart: dateRange.startDate,
         periodEnd: dateRange.endDate,
-        consumption: row.Consumption ? parseFloat(row.Consumption) : null,
-        unit: row['Unit Type']?.trim() || null,
-        amount: row['Amount($)'] ? parseFloat(row['Amount($)'].replace(/[^0-9.-]/g, '')) : null,
-        subCategory: row['Sub-category']?.trim() || null,
-        inputType: inputTypeCol,
-        framework: row.Framework?.trim() || null,
-        version: row.Version?.trim() || null,
-        customer: row.Customer?.trim() || null,
         status: 'IMPORTED',
       },
     };
@@ -116,30 +103,10 @@ export async function processRow(
     lookup2: identResult.lookup2,
   });
 
-  // Per-row duplicate check by invoice_number (batch-level dedup happens in batchInsertInvoices).
-  if (row['Invoice Number']?.trim()) {
-    const { data: existingInvoice } = await ctx.supabase
-      .from('actual_invoices')
-      .select('id')
-      .eq('meter_id', meterId)
-      .eq('invoice_number', row['Invoice Number'].trim())
-      .maybeSingle();
-    if (existingInvoice) return;
-  }
-
   pendingInvoices.push({
     meter_id: meterId,
-    invoice_number: row['Invoice Number']?.trim() || null,
-    invoice_date: row['Invoice Date'] || null,
     period_start_date: dateRange.startDate,
     period_end_date: dateRange.endDate,
-    consumption: row.Consumption ? parseFloat(row.Consumption) : null,
-    amount: row['Amount($)'] ? parseFloat(row['Amount($)'].replace(/[^0-9.-]/g, '')) : null,
-    framework: row.Framework?.trim() || null,
-    version: row.Version?.trim() || null,
-    input_type: inputTypeCol,
-    emissions_factor: row['Output (tCO2-e)'] ? parseFloat(row['Output (tCO2-e)']) : null,
-    customer: row.Customer?.trim() || null,
     status: 'IMPORTED',
   });
 }

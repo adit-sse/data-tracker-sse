@@ -100,17 +100,8 @@ export interface Meter {
 export interface ActualInvoice {
   id: string;
   meter_id: string;
-  invoice_number?: string;
-  invoice_date?: string;
   period_start_date: string;  // ISO date string
   period_end_date: string;    // ISO date string
-  consumption?: number;
-  amount?: number;
-  framework?: string;
-  version?: string;
-  input_type?: string;
-  emissions_factor?: number;
-  customer?: string;
   status?: string;
   created_at?: string;
   confirmed_at?: string;
@@ -285,20 +276,8 @@ export interface NonMeteredRecord {
   facility_id: string;
   supplier_id: string | null;
   input_type_id: string;
-  invoice_number?: string | null;
-  invoice_date?: string | null;
   period_start_date: string;
   period_end_date: string;
-  consumption?: number | null;
-  unit?: string | null;
-  amount?: number | null;
-  /** @deprecated Legacy text field — category is now a FK on the line */
-  sub_category?: string | null;
-  /** @deprecated Legacy text field — use input_type_id FK instead */
-  input_type?: string | null;
-  framework?: string | null;
-  version?: string | null;
-  customer?: string | null;
   status: NonMeteredStatus;
   inferred_from_id?: string | null;
   created_at?: string;
