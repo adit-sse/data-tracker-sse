@@ -402,6 +402,16 @@ export default function ClientDetailPage() {
                       )}
                     </div>
                   )}
+                  <a
+                    href={`/api/clients/${clientId}/facilities/export`}
+                    download
+                    className="text-sm text-gray-600 hover:text-gray-700 font-medium flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Export CSV
+                  </a>
                   <button
                     onClick={() => setAddFacilityModalOpen(true)}
                     className="text-sm text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1.5 px-3 py-1.5 border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors"

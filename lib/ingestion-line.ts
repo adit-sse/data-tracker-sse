@@ -52,12 +52,10 @@ export async function resolveIngestionLine(
       };
     }
 
-    const { data: facility, error: facErr } = await supabase
-      .from('facilities')
-      .select('id, name')
-      .eq('client_id', client.id)
-      .ilike('name', facTrimmed)
-      .single();
+    const { data: facilityRows, error: facErr } = await supabase
+      .rpc('get_facility_by_name', { input_name: facTrimmed, input_client_id: Number(client.id) });
+
+    const facility = facilityRows?.[0] ?? null;
 
     if (facErr || !facility) {
       return {
@@ -178,17 +176,15 @@ export async function resolveNonMeteredCoverageWithoutFacilityGroup(
     return { ok: false, error: 'Row is missing Facility', status: 422 };
   }
 
-  const { data: facility, error: facErr } = await supabase
-    .from('facilities')
-    .select('id')
-    .eq('client_id', params.clientId)
-    .ilike('name', facTrimmed)
-    .limit(1)
-    .maybeSingle();
+  const { data: facilityRows, error: facErr } = await supabase
+    .rpc('get_facility_by_name', { input_name: facTrimmed, input_client_id: Number(params.clientId) });
 
   if (facErr) {
     return { ok: false, error: facErr.message, status: 500 };
   }
+
+  const facility = facilityRows?.[0] ?? null;
+
   if (!facility) {
     return {
       ok: false,
