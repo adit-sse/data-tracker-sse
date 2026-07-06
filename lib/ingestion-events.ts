@@ -147,6 +147,7 @@ function deriveAffected(body: unknown): number | null {
   if (typeof b.updated === 'number') return b.updated;
   if (typeof b.created === 'number') return b.created;
   if (typeof b.inferred_empty === 'number') return b.inferred_empty;
+  if (typeof b.reverted === 'number') return b.reverted;
   // unified-confirm shape: { non_metered: { confirmed }, metered: { confirmed } }
   const nm = (b.non_metered as { confirmed?: unknown } | undefined)?.confirmed;
   const m = (b.metered as { confirmed?: unknown } | undefined)?.confirmed;

@@ -16,7 +16,9 @@ Confirm — Unified          ← turn PENDING → CONFIRMED for all row types in
         ↓  (after ALL invoices for a period are submitted — non-metered only)
 Pending Mode — GET         ← optional: read which group categories + standalone lines exist (drive inferred-empty)
         ↓
-NM Inferred Empty          ← mark remaining non-metered PENDING as INFERRED_EMPTY
+NM Inferred Empty          ← mark remaining non-metered PENDING as INFERRED_EMPTY (in confirmed months)
+        ↓  (very last step — after inferred-empty for the group/line)
+NM Revert Pending          ← delete any still-PENDING non-metered records → back to "no data"
         ↓  (if a parse fails)
 Error — NM / Metered       ← mark that period as ERROR
 ```
@@ -27,6 +29,7 @@ Error — NM / Metered       ← mark that period as ERROR
 - Confirm only touches what you send. Other facilities, months, and scopes are always left as-is.
 - **Pending Mode — GET** is read-only configuration for this client+supplier. Use it **before** pending to branch group vs line bodies, or **after** all confirms to loop **NM Inferred Empty — Group** (each `facility_groups[].category_name`). It also returns `standalone_non_metered_line_count` (not per-line details — use **NM Inferred Empty — Line** when you already know each standalone line).
 - Inferred Empty is non-metered only — metered months have no "inferred" concept.
+- **NM Revert Pending** is the **very last** step. Run it only **after** inferred-empty has run for the same group/line: inferred-empty converts PENDING → INFERRED_EMPTY for months that got a confirmed record, and revert-pending then deletes whatever PENDING is left (e.g. months where nothing was confirmed), returning those months to "no data". It never touches CONFIRMED or INFERRED_EMPTY records. Non-metered only.
 
 ---
 
@@ -57,6 +60,8 @@ The unified confirm classifies each row independently before processing:
 | Metered Confirm | `POST /api/ingestion/metered/confirm` | Confirm metered rows only (legacy) |
 | NM Inferred Empty — Group | `POST /api/ingestion/inferred-empty` | After all invoices for a period — mark remaining PENDING as INFERRED_EMPTY |
 | NM Inferred Empty — Line | `POST /api/ingestion/inferred-empty` | Same, for standalone lines |
+| NM Revert Pending — Group | `POST /api/ingestion/revert-pending` | Very last step — delete any still-PENDING group records (back to "no data") |
+| NM Revert Pending — Line | `POST /api/ingestion/revert-pending` | Same, for standalone lines |
 | NM Error — Group | `POST /api/ingestion/error` | Mark a non-metered group invoice month as ERROR |
 | NM Error — Line | `POST /api/ingestion/error` | Mark a non-metered line invoice month as ERROR |
 | Metered Error | `POST /api/ingestion/metered/error` | Mark a metered month as ERROR |
@@ -427,6 +432,82 @@ Use **`category`** = the NGERS reporting category for that facility group (same 
       "typeVersion": 4.4,
       "position": [240, 600],
       "name": "NM Inferred Empty — Line"
+    }
+  ],
+  "connections": {},
+  "pinData": {}
+}
+```
+
+---
+
+## 4b · NM Revert Pending — Group *(new)*
+
+The **very last** step of a group confirm cycle. Run it **after** **NM Inferred Empty — Group** for the same `category`. Deletes every `non_metered_records` row still `PENDING` for the group (across all input types / months), returning those months to **"no data"**. `CONFIRMED` and `INFERRED_EMPTY` records are left untouched.
+
+Use the same **`category`** you passed to inferred-empty (the NGERS `facility_groups[].category_name` from **Pending Mode — GET**, section **2b**). When looping per group, call inferred-empty then revert-pending for each `category`.
+
+**Response:** `{ "mode": "group", "reverted": n }`
+
+```json
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/revert-pending",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_INGESTION_API_KEY" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"client_name\": \"Your Client Name\",\n  \"supplier_name\": \"Your Supplier Name\",\n  \"category\": \"Transport Fuels\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [480, 600],
+      "name": "NM Revert Pending — Group"
+    }
+  ],
+  "connections": {},
+  "pinData": {}
+}
+```
+
+---
+
+## 4c · NM Revert Pending — Line *(new)*
+
+Same as 4b, but for a single standalone non-metered line. Run it **after** **NM Inferred Empty — Line** for the same line. Deletes every `PENDING` record for that facility + supplier + input type, returning those months to **"no data"**. Add `facility_name` when more than one site matches.
+
+**Response:** `{ "mode": "line", "reverted": n }`
+
+```json
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/revert-pending",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_INGESTION_API_KEY" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"mode\": \"line\",\n  \"client_name\": \"Your Client Name\",\n  \"supplier_name\": \"Your Supplier Name\",\n  \"input_type\": \"GREASE\",\n  \"facility_name\": \"Site A\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [720, 600],
+      "name": "NM Revert Pending — Line"
     }
   ],
   "connections": {},
