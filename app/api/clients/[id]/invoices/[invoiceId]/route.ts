@@ -6,17 +6,8 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 interface InvoiceUpdatePayload {
   meter_id?: string;
-  invoice_number?: string | null;
-  invoice_date?: string | null;
   period_start_date?: string;
   period_end_date?: string;
-  consumption?: number | null;
-  amount?: number | null;
-  framework?: string | null;
-  version?: string | null;
-  input_type?: string | null;
-  emissions_factor?: number | null;
-  customer?: string | null;
 }
 
 // PATCH /api/clients/[id]/invoices/[invoiceId] - Update invoice
@@ -30,17 +21,8 @@ export async function PATCH(
     const { invoiceId } = params;
     const {
       meter_id,
-      invoice_number,
-      invoice_date,
       period_start_date,
       period_end_date,
-      consumption,
-      amount,
-      framework,
-      version,
-      input_type,
-      emissions_factor,
-      customer
     } = body;
 
     if (!invoiceId) {
@@ -53,24 +35,6 @@ export async function PATCH(
       const endDate = new Date(period_end_date);
       if (endDate < startDate) {
         return NextResponse.json({ error: 'End date must be after or equal to start date' }, { status: 400 });
-      }
-    }
-
-    // Check for invoice number duplicates for the same meter (exclude current invoice)
-    const invoiceNumberTrimmed = invoice_number?.toString().trim() || null;
-    if (invoiceNumberTrimmed && meter_id) {
-      const { data: existingByNumber, error: existingByNumberError } = await supabase
-        .from('actual_invoices')
-        .select('id')
-        .eq('meter_id', meter_id)
-        .eq('invoice_number', invoiceNumberTrimmed)
-        .neq('id', invoiceId)
-        .limit(1)
-        .maybeSingle();
-
-      if (existingByNumberError) throw existingByNumberError;
-      if (existingByNumber) {
-        return NextResponse.json({ error: 'An invoice with that invoice number already exists for this meter' }, { status: 409 });
       }
     }
 
@@ -92,20 +56,11 @@ export async function PATCH(
       }
     }
 
-    // Build update payload: keep fields if provided, convert empty strings to null where appropriate
+    // Build update payload
     const payload: InvoiceUpdatePayload = {};
     if (meter_id) payload.meter_id = meter_id;
-    if (invoice_number !== undefined) payload.invoice_number = invoiceNumberTrimmed;
-    if (invoice_date !== undefined) payload.invoice_date = invoice_date ? invoice_date.toString() : null;
     if (period_start_date !== undefined) payload.period_start_date = period_start_date;
     if (period_end_date !== undefined) payload.period_end_date = period_end_date;
-    if (consumption !== undefined) payload.consumption = consumption == null ? null : consumption;
-    if (amount !== undefined) payload.amount = amount == null ? null : amount;
-    if (framework !== undefined) payload.framework = framework?.trim() || null;
-    if (version !== undefined) payload.version = version?.trim() || null;
-    if (input_type !== undefined) payload.input_type = input_type?.trim() || null;
-    if (emissions_factor !== undefined) payload.emissions_factor = emissions_factor ?? null;
-    if (customer !== undefined) payload.customer = customer?.toString().trim() || null;
 
     const { data, error } = await supabase
       .from('actual_invoices')

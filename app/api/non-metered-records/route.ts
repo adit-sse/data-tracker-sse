@@ -17,11 +17,6 @@ export async function POST(request: Request) {
       period_start_date,
       period_end_date,
       status = 'MANUAL',
-      consumption,
-      unit,
-      amount,
-      invoice_number,
-      invoice_date,
     } = body;
 
     if (!facility_id || !input_type_id || !period_start_date || !period_end_date) {
@@ -54,11 +49,6 @@ export async function POST(request: Request) {
         period_start_date,
         period_end_date,
         status,
-        consumption: consumption ?? null,
-        unit: unit || null,
-        amount: amount ?? null,
-        invoice_number: invoice_number || null,
-        invoice_date: invoice_date || null,
       })
       .select()
       .single();

@@ -672,12 +672,9 @@ export default function ClientDetailPage() {
                 <div key={inv.id} className="border border-gray-100 rounded-lg p-4 hover:border-gray-200 transition-colors">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
-                      <div className="font-medium text-gray-900">{inv.invoice_number || 'No invoice number'}</div>
-                      <div className="text-sm text-gray-500 mt-1">{inv.period_start_date} → {inv.period_end_date}</div>
+                      <div className="font-medium text-gray-900">{inv.period_start_date} → {inv.period_end_date}</div>
                       <div className="text-sm text-gray-400 mt-0.5">
                         Meter: {inv.meter?.lookup1 || String(inv.meter_id)}
-                        {inv.amount != null && ` • $${inv.amount.toLocaleString()}`}
-                        {inv.consumption != null && ` • ${inv.consumption.toLocaleString()} units`}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 ml-4">
@@ -686,17 +683,8 @@ export default function ClientDetailPage() {
                           setInvoiceInitialData({
                             id: inv.id,
                             meter_id: String(inv.meter_id),
-                            invoice_number: inv.invoice_number || '',
-                            invoice_date: inv.invoice_date || '',
                             period_start_date: inv.period_start_date,
                             period_end_date: inv.period_end_date,
-                            consumption: inv.consumption,
-                            amount: inv.amount,
-                            framework: inv.framework || '',
-                            version: inv.version || '',
-                            input_type: inv.input_type || '',
-                            emissions_factor: inv.emissions_factor,
-                            customer: inv.customer || '',
                           });
                           setInvoiceInitialFacilityId(inv.meter?.facility_id ? String(inv.meter.facility_id) : '');
                           setInvoiceListModalOpen(false);
@@ -1045,7 +1033,7 @@ export default function ClientDetailPage() {
       {deletingInvoice && (
         <ConfirmModal
           title="Delete Invoice"
-          message={<>Are you sure you want to delete this invoice?{deletingInvoice.invoice_number && <span className="font-medium"> ({deletingInvoice.invoice_number})</span>}</>}
+          message={<>Are you sure you want to delete this invoice?</>}
           subMessage={`Period: ${deletingInvoice.period_start_date} → ${deletingInvoice.period_end_date}`}
           confirmLabel="Delete"
           cancelLabel="Cancel"
@@ -1232,54 +1220,6 @@ function NonMeteredRecordModal({
             <span className="text-gray-500">Period</span>
             <span className="text-gray-900 font-medium">{record.period_start_date} → {record.period_end_date}</span>
           </div>
-          {record.invoice_number && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Invoice No.</span>
-              <span className="text-gray-900">{record.invoice_number}</span>
-            </div>
-          )}
-          {record.invoice_date && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Invoice Date</span>
-              <span className="text-gray-900">{record.invoice_date}</span>
-            </div>
-          )}
-          {record.consumption != null && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Consumption</span>
-              <span className="text-gray-900">{record.consumption.toLocaleString()} {record.unit || ''}</span>
-            </div>
-          )}
-          {record.amount != null && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Amount</span>
-              <span className="text-gray-900">${record.amount.toLocaleString()}</span>
-            </div>
-          )}
-          {record.sub_category && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Sub-category</span>
-              <span className="text-gray-900">{record.sub_category}</span>
-            </div>
-          )}
-          {record.input_type && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Input Type</span>
-              <span className="text-gray-900">{record.input_type}</span>
-            </div>
-          )}
-          {record.framework && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Framework</span>
-              <span className="text-gray-900">{record.framework} {record.version}</span>
-            </div>
-          )}
-          {record.customer && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Customer</span>
-              <span className="text-gray-900">{record.customer}</span>
-            </div>
-          )}
           {record.status === 'INFERRED_EMPTY' && (
             <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
               <p className="text-xs text-slate-600">

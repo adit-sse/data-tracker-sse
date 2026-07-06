@@ -47,7 +47,7 @@ export async function batchInsertInvoices(
     chunks.map((meterChunk) =>
       supabase
         .from('actual_invoices')
-        .select('id, meter_id, invoice_number, period_start_date, period_end_date, status')
+        .select('id, meter_id, period_start_date, period_end_date, status')
         .in('meter_id', meterChunk)
         .limit(10000)
     )
@@ -56,11 +56,7 @@ export async function batchInsertInvoices(
   for (const { data: existing } of fetchResults) {
     for (const e of existing || []) {
       const st = (e.status || '').toUpperCase();
-      if (e.invoice_number) {
-        existingKeys.add(`${e.meter_id}__inv__${e.invoice_number}`);
-        existingKeys.add(`${e.meter_id}__${e.period_start_date}__${e.period_end_date}`);
-      } else if (st === 'DEACTIVATED') {
-        // Record ID so we can delete it if a real invoice arrives for the same slot.
+      if (st === 'DEACTIVATED') {
         deactivatedIdByPeriodKey.set(
           `${e.meter_id}__${e.period_start_date}__${e.period_end_date}`,
           e.id as string,
@@ -74,16 +70,6 @@ export async function batchInsertInvoices(
   const seen = new Set<string>(existingKeys);
   const newInvoices: PendingInvoice[] = [];
   for (const inv of invoices) {
-    if (inv.invoice_number) {
-      const invKey = `${inv.meter_id}__inv__${inv.invoice_number}`;
-      if (seen.has(invKey)) continue;
-      const periodKey = `${inv.meter_id}__${inv.period_start_date}__${inv.period_end_date}`;
-      if (seen.has(periodKey)) continue;
-      seen.add(invKey);
-      seen.add(periodKey);
-      newInvoices.push(inv);
-      continue;
-    }
     const periodKey = `${inv.meter_id}__${inv.period_start_date}__${inv.period_end_date}`;
     if (seen.has(periodKey)) continue;
     seen.add(periodKey);
@@ -144,10 +130,7 @@ function nonMeteredPayloadPriority(rec: NonMeteredPayload): number {
     IMPORTED: 100, MANUAL: 95, CONFIRMED: 90, DEACTIVATED: 50,
     PENDING: 40, INFERRED_EMPTY: 30, ERROR: 10,
   };
-  let p = order[s] ?? 20;
-  if (rec.consumption != null || rec.amount != null) p += 5;
-  if (rec.invoiceNumber?.trim()) p += 2;
-  return p;
+  return order[s] ?? 20;
 }
 
 function dedupeNonMeteredForUpsert(records: NonMeteredPayload[]): NonMeteredPayload[] {
@@ -230,18 +213,8 @@ export async function processNonMeteredBatch(
           facility_id: rec.facilityId,
           supplier_id: rec.supplierId,
           input_type_id: rec.categoryId,
-          invoice_number: rec.invoiceNumber,
-          invoice_date: rec.invoiceDate,
           period_start_date: rec.periodStart,
           period_end_date: rec.periodEnd,
-          consumption: rec.consumption,
-          unit: rec.unit,
-          amount: rec.amount,
-          sub_category: rec.subCategory,
-          input_type: rec.inputType,
-          framework: rec.framework,
-          version: rec.version,
-          customer: rec.customer,
           status: rec.status || 'IMPORTED',
           inferred_from_id: null,
         };

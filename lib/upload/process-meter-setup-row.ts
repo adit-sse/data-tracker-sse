@@ -199,17 +199,8 @@ export async function processMeterSetupRow(
   for (const period of dataPeriods) {
     pendingInvoices.push({
       meter_id: meterId,
-      invoice_number: null,
-      invoice_date: null,
       period_start_date: period.start,
       period_end_date: period.end,
-      consumption: null,
-      amount: null,
-      framework: null,
-      version: null,
-      input_type: null,
-      emissions_factor: null,
-      customer: null,
       status: 'IMPORTED',
     });
   }
@@ -217,17 +208,8 @@ export async function processMeterSetupRow(
     if (dataMonthStarts.has(period.start)) continue;
     pendingInvoices.push({
       meter_id: meterId,
-      invoice_number: null,
-      invoice_date: null,
       period_start_date: period.start,
       period_end_date: period.end,
-      consumption: null,
-      amount: null,
-      framework: null,
-      version: null,
-      input_type: null,
-      emissions_factor: null,
-      customer: null,
       status: 'DEACTIVATED',
     });
   }
