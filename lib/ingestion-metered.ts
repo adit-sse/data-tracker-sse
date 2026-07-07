@@ -12,6 +12,21 @@ export const METERED_GREEN_INVOICE_STATUSES = [
 
 export type NgersMeterRow = Record<string, unknown>;
 
+/** Earliest actual_invoices.period_start_date (YYYY-MM-DD) for a meter, or null if none. */
+export async function earliestMeterMonthStart(
+  supabase: SupabaseClient,
+  meterId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('actual_invoices')
+    .select('period_start_date')
+    .eq('meter_id', meterId)
+    .order('period_start_date', { ascending: true })
+    .limit(1);
+  const first = (data ?? [])[0]?.period_start_date;
+  return typeof first === 'string' ? first.slice(0, 10) : null;
+}
+
 /** Normalize cell values from CSV (string) or JSON APIs (often number for NMIs / account #s). */
 function meterIdCell(v: unknown): string {
   if (typeof v === 'string') return v.trim();

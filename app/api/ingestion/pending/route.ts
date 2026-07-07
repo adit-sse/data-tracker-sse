@@ -4,6 +4,7 @@ import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { findCategoryForIngestion } from '@/lib/ingestion-utility-category';
 import {
   getCurrentFiscalYearMonthsThroughNow,
+  monthsFromIsoThroughNow,
   seedIngestionPendingNonMeteredLineMonths,
 } from '@/lib/non-metered-pending-seed';
 import { seedNonMeteredFacilityGroupPending, type GroupPendingMember } from '@/lib/ingestion-group-pending';
@@ -12,6 +13,7 @@ import {
   meterMonthBlocksNewPending,
   bulkFetchMeterInvoicesForMonths,
   meterMonthBlocksNewPendingFromCache,
+  earliestMeterMonthStart,
 } from '@/lib/ingestion-metered';
 import { checkApiKey } from '@/lib/ingestion-auth';
 import { logIngestionFromResponse } from '@/lib/ingestion-events';
@@ -108,19 +110,28 @@ async function seedMeteredPending(
 
   if (candidateMeters.length === 0) return { ok: true, meters: 0, created: 0, skipped: 0 };
 
-  const months = getCurrentFiscalYearMonthsThroughNow();
-  let totalCreated = 0;
-  let totalSkipped = 0;
-
-  if (months.length === 0) {
+  const fallbackMonths = getCurrentFiscalYearMonthsThroughNow();
+  if (fallbackMonths.length === 0) {
     return { ok: true, meters: candidateMeters.length, created: 0, skipped: 0 };
   }
 
-  // Bulk pre-fetch all invoices for all candidate meters in one pass, then compute
-  // blocking in memory — replaces ~(meters × months) sequential DB round-trips.
   const meterIdList = candidateMeters.map((m: any) => String(m.id));
-  const rangeStart = months[0].start;
-  const rangeEnd = months[months.length - 1].end;
+
+  // Bound the bulk invoice fetch by the earliest record across all candidate
+  // meters so each meter's own earliest (→ its pending start) is in the cache.
+  const { data: earliestRow } = await supabase
+    .from('actual_invoices')
+    .select('period_start_date')
+    .in('meter_id', meterIdList)
+    .order('period_start_date', { ascending: true })
+    .limit(1);
+  const globalEarliest =
+    typeof earliestRow?.[0]?.period_start_date === 'string'
+      ? String(earliestRow[0].period_start_date).slice(0, 10)
+      : null;
+
+  const rangeStart = globalEarliest ?? fallbackMonths[0].start;
+  const rangeEnd = fallbackMonths[fallbackMonths.length - 1].end;
   const invoiceCache = await bulkFetchMeterInvoicesForMonths(
     supabase,
     meterIdList,
@@ -133,11 +144,23 @@ async function seedMeteredPending(
     period_start_date: string;
     period_end_date: string;
     status: string;
-    created_at: string;
   }> = [];
+
+  let totalCreated = 0;
+  let totalSkipped = 0;
 
   for (const meter of candidateMeters) {
     const cachedRows = invoiceCache.get(String(meter.id)) ?? [];
+
+    // Per-meter earliest from the cache; fall back to current-FY-through-now
+    // for meters with no records yet.
+    let earliest: string | null = null;
+    for (const r of cachedRows) {
+      const ps = String(r.period_start_date).slice(0, 10);
+      if (!earliest || ps < earliest) earliest = ps;
+    }
+    const months = earliest ? monthsFromIsoThroughNow(earliest) : fallbackMonths;
+
     for (const month of months) {
       if (meterMonthBlocksNewPendingFromCache(cachedRows, month.start, month.end)) {
         totalSkipped++;
@@ -148,7 +171,6 @@ async function seedMeteredPending(
         period_start_date: month.start,
         period_end_date: month.end,
         status: 'PENDING',
-        created_at: pendingReceivedAt,
       });
     }
   }
@@ -235,8 +257,7 @@ async function handlePending(
         );
       }
 
-      const months = getCurrentFiscalYearMonthsThroughNow();
-      const created = await seedIngestionPendingNonMeteredLineMonths(supabase, {
+      const { created, skipped } = await seedIngestionPendingNonMeteredLineMonths(supabase, {
         facilityId: resolved.facilityId,
         supplierId: resolved.supplierId,
         inputTypeId: resolved.categoryId,
@@ -253,7 +274,7 @@ async function handlePending(
           input_type_id: resolved.categoryId,
         },
         created,
-        skipped: months.length - created,
+        skipped,
       });
     }
 
@@ -274,13 +295,13 @@ async function handlePending(
         return NextResponse.json({ error: resolved.error }, { status: resolved.status });
       }
 
-      const months = getCurrentFiscalYearMonthsThroughNow();
+      const earliest = await earliestMeterMonthStart(supabase, resolved.meterId);
+      const months = earliest ? monthsFromIsoThroughNow(earliest) : getCurrentFiscalYearMonthsThroughNow();
       const toInsert: Array<{
         meter_id: string;
         period_start_date: string;
         period_end_date: string;
         status: string;
-        created_at: string;
       }> = [];
 
       for (const month of months) {
@@ -292,7 +313,6 @@ async function handlePending(
           period_start_date: month.start,
           period_end_date: month.end,
           status: 'PENDING',
-          created_at: pendingReceivedAt,
         });
       }
 
