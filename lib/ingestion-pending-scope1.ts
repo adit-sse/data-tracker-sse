@@ -1,6 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  getCurrentFiscalYearMonthsThroughNow,
   seedIngestionPendingNonMeteredLineMonths,
 } from '@/lib/non-metered-pending-seed';
 import { seedNonMeteredFacilityGroupPending, type GroupPendingMember } from '@/lib/ingestion-group-pending';
@@ -164,8 +163,6 @@ export async function seedAllScope1NonMeteredPending(
       return { ok: false, error: linesErr.message, status: 500 };
     }
 
-    const months = getCurrentFiscalYearMonthsThroughNow();
-
     for (const row of lineRows ?? []) {
       const r = row as {
         id: string;
@@ -185,7 +182,7 @@ export async function seedAllScope1NonMeteredPending(
       const fac = Array.isArray(facRaw) ? facRaw[0] : facRaw;
       if (!fac?.id) continue;
 
-      const created = await seedIngestionPendingNonMeteredLineMonths(supabase, {
+      const { created, skipped } = await seedIngestionPendingNonMeteredLineMonths(supabase, {
         facilityId: r.facility_id,
         supplierId: supplier.id,
         inputTypeId: r.input_type_id,
@@ -193,7 +190,6 @@ export async function seedAllScope1NonMeteredPending(
       });
 
       sumCreated += created;
-      const skipped = months.length - created;
       sumSkipped += skipped;
 
       linesOut.push({

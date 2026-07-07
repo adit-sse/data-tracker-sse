@@ -26,6 +26,56 @@ export function getCurrentFiscalYearMonthsThroughNow(): Array<{ start: string; e
   return months;
 }
 
+/**
+ * Month periods from the given month (any ISO date string, e.g. "2025-07-01"
+ * or "2025-07-14") through the current calendar month. Returns [] if the start
+ * is after the current month or unparseable. Used to seed PENDING from an
+ * entity's earliest existing record through now.
+ */
+export function monthsFromIsoThroughNow(startIso: string): Array<{ start: string; end: string }> {
+  const [yStr, mStr] = String(startIso).slice(0, 7).split('-');
+  const startYear = Number(yStr);
+  const startMonthZero = Number(mStr) - 1;
+  if (Number.isNaN(startYear) || Number.isNaN(startMonthZero)) return [];
+
+  const now = new Date();
+  const endMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const cursor = new Date(startYear, startMonthZero, 1);
+  if (cursor > endMonth) return [];
+
+  const months: Array<{ start: string; end: string }> = [];
+  while (cursor <= endMonth) {
+    const y = cursor.getFullYear();
+    const m = cursor.getMonth();
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    months.push({
+      start: `${y}-${String(m + 1).padStart(2, '0')}-01`,
+      end: `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
+    });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  return months;
+}
+
+/** Earliest non_metered_records.period_start_date (YYYY-MM-DD) for a line, or null if none. */
+export async function earliestNonMeteredMonthStart(
+  supabase: SupabaseClient,
+  facilityId: string,
+  supplierId: string,
+  inputTypeId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('non_metered_records')
+    .select('period_start_date')
+    .eq('facility_id', facilityId)
+    .eq('supplier_id', supplierId)
+    .eq('input_type_id', inputTypeId)
+    .order('period_start_date', { ascending: true })
+    .limit(1);
+  const first = (data ?? [])[0]?.period_start_date;
+  return typeof first === 'string' ? first.slice(0, 10) : null;
+}
+
 function currentFiscalYearEnd(): number {
   const now = new Date();
   return now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
@@ -48,7 +98,10 @@ export function getFullCurrentFiscalYearMonthPeriods(): Array<{ start: string; e
 const GREEN_STATUSES = ['IMPORTED', 'MANUAL', 'CONFIRMED', 'DEACTIVATED'] as const;
 
 /**
- * Email/API workflow: insert PENDING for months Jul → current month when the slot is empty.
+ * Email/API workflow: insert PENDING for every "no data" month from the line's
+ * earliest existing record through the current month. Falls back to the current
+ * fiscal year through now when the line has no records yet. Returns created /
+ * skipped counts.
  */
 export async function seedIngestionPendingNonMeteredLineMonths(
   supabase: SupabaseClient,
@@ -60,11 +113,13 @@ export async function seedIngestionPendingNonMeteredLineMonths(
     /** When POST /api/ingestion/pending ran — stored as created_at so UI shows invoice-received time. */
     pendingReceivedAt?: string;
   }
-): Promise<number> {
+): Promise<{ created: number; skipped: number }> {
   const { facilityId, supplierId, inputTypeId, categoryId, pendingReceivedAt } = params;
 
   const { id: lineId } = await upsertNonMeteredLine(supabase, { facilityId, supplierId, inputTypeId, categoryId });
-  const months = getCurrentFiscalYearMonthsThroughNow();
+
+  const earliest = await earliestNonMeteredMonthStart(supabase, facilityId, supplierId, inputTypeId);
+  const months = earliest ? monthsFromIsoThroughNow(earliest) : getCurrentFiscalYearMonthsThroughNow();
   const periodStarts = months.map((m) => m.start);
 
   const [{ data: existingExact }, { data: existingGreen }] = await Promise.all([
@@ -126,11 +181,11 @@ export async function seedIngestionPendingNonMeteredLineMonths(
     }
   }
 
-  if (toInsert.length === 0) return 0;
+  if (toInsert.length === 0) return { created: 0, skipped: months.length };
 
   const { error } = await supabase.from('non_metered_records').insert(toInsert);
   if (error) throw new Error(error.message);
-  return toInsert.length;
+  return { created: toInsert.length, skipped: months.length - toInsert.length };
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getCurrentFiscalYearMonthsThroughNow } from '@/lib/non-metered-pending-seed';
+import { getCurrentFiscalYearMonthsThroughNow, monthsFromIsoThroughNow } from '@/lib/non-metered-pending-seed';
 import { upsertNonMeteredLines, resolveNonMeteredLineIdMap, nonMeteredLineKey } from '@/lib/non-metered-lines';
 
 export type GroupPendingMember = { facility_id: string; input_type_id: string };
@@ -20,38 +20,35 @@ export async function seedNonMeteredFacilityGroupPending(
   }
 
   const allFacilityIds = members.map((m) => m.facility_id);
-  const months = getCurrentFiscalYearMonthsThroughNow();
-  const periodStarts = months.map((m) => m.start);
 
-  const [{ data: existingExact }, { data: existingGreen }] = await Promise.all([
-    supabase
-      .from('non_metered_records')
-      .select('facility_id, input_type_id, period_start_date')
-      .in('facility_id', allFacilityIds)
-      .eq('supplier_id', supplierId)
-      .in('period_start_date', periodStarts),
-    supabase
-      .from('non_metered_records')
-      .select('facility_id, period_start_date')
-      .in('facility_id', allFacilityIds)
-      .eq('supplier_id', supplierId)
-      .in('period_start_date', periodStarts)
-      .in('status', ['IMPORTED', 'MANUAL', 'CONFIRMED', 'DEACTIVATED']),
-  ]);
+  // Fetch every record for the member facilities + supplier once. From this we
+  // derive (a) each member's earliest record month → per-member pending range,
+  // and (b) the exact/green occupancy sets used to skip filled months.
+  const { data: allRecords, error: fetchErr } = await supabase
+    .from('non_metered_records')
+    .select('facility_id, input_type_id, period_start_date, status')
+    .in('facility_id', allFacilityIds)
+    .eq('supplier_id', supplierId);
 
-  const existingByCategoryKey = new Set<string>(
-    (existingExact ?? []).map(
-      (r: { facility_id: string; input_type_id: string; period_start_date: string }) =>
-        `${r.facility_id}__${r.input_type_id}__${r.period_start_date}`
-    )
-  );
+  if (fetchErr) throw new Error(fetchErr.message);
 
-  const greenSet = new Set<string>(
-    (existingGreen ?? []).map(
-      (r: { facility_id: string; period_start_date: string }) =>
-        `${r.facility_id}__${r.period_start_date}`
-    )
-  );
+  const GREEN_STATUSES = new Set(['IMPORTED', 'MANUAL', 'CONFIRMED', 'DEACTIVATED']);
+  const existingByCategoryKey = new Set<string>();
+  const greenSet = new Set<string>();
+  const earliestByMember = new Map<string, string>(); // `${facility_id}__${input_type_id}` -> 'YYYY-MM-DD'
+
+  for (const r of allRecords ?? []) {
+    const fac = String(r.facility_id);
+    const it = String(r.input_type_id);
+    const ps = String(r.period_start_date).slice(0, 10);
+    existingByCategoryKey.add(`${fac}__${it}__${ps}`);
+    if (GREEN_STATUSES.has(String(r.status))) greenSet.add(`${fac}__${ps}`);
+    const key = `${fac}__${it}`;
+    const prev = earliestByMember.get(key);
+    if (!prev || ps < prev) earliestByMember.set(key, ps);
+  }
+
+  const fallbackMonths = getCurrentFiscalYearMonthsThroughNow();
 
   await upsertNonMeteredLines(
     supabase,
@@ -72,6 +69,7 @@ export async function seedNonMeteredFacilityGroupPending(
   );
 
   const toInsert = [];
+  let totalSlots = 0;
   for (const member of members) {
     const catId = member.input_type_id;
     const lineKey = nonMeteredLineKey(member.facility_id, supplierId, catId);
@@ -79,6 +77,9 @@ export async function seedNonMeteredFacilityGroupPending(
     if (!lineId) {
       throw new Error(`Non-metered line not found for member ${member.facility_id} / ${catId}`);
     }
+    const earliest = earliestByMember.get(`${member.facility_id}__${catId}`);
+    const months = earliest ? monthsFromIsoThroughNow(earliest) : fallbackMonths;
+    totalSlots += months.length;
     for (const month of months) {
       const catKey = `${member.facility_id}__${catId}__${month.start}`;
       const greenKey = `${member.facility_id}__${month.start}`;
@@ -102,7 +103,6 @@ export async function seedNonMeteredFacilityGroupPending(
     if (insertError) throw insertError;
   }
 
-  const totalSlots = members.length * months.length;
   return {
     created: toInsert.length,
     skipped: totalSlots - toInsert.length,

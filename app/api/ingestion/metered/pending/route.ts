@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import type { IdentifierType } from '@/types';
-import { getCurrentFiscalYearMonthsThroughNow } from '@/lib/non-metered-pending-seed';
-import { meterMonthBlocksNewPending, resolveMeterForIngestion } from '@/lib/ingestion-metered';
+import { getCurrentFiscalYearMonthsThroughNow, monthsFromIsoThroughNow } from '@/lib/non-metered-pending-seed';
+import { meterMonthBlocksNewPending, resolveMeterForIngestion, earliestMeterMonthStart } from '@/lib/ingestion-metered';
 import { checkApiKey } from '@/lib/ingestion-auth';
 import { logIngestionFromResponse } from '@/lib/ingestion-events';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -22,7 +22,9 @@ const IDENTIFIER_TYPES: readonly IdentifierType[] = [
 ] as const;
 
 // POST /api/ingestion/metered/pending
-// Seeds actual_invoices with status PENDING (full calendar month) for FY Jul → current month.
+// Seeds actual_invoices with status PENDING (full calendar month) from the meter's
+// earliest existing record through the current month (falls back to the current
+// fiscal year through now for meters with no records yet).
 // Body: client_name, supplier_name, utility_name, facility_name, identifier_type, lookup1 [, lookup2]
 async function handleMeteredPending(
   supabase: SupabaseClient,
@@ -60,7 +62,8 @@ async function handleMeteredPending(
     return NextResponse.json({ error: resolved.error }, { status: resolved.status });
   }
 
-  const months = getCurrentFiscalYearMonthsThroughNow();
+  const earliest = await earliestMeterMonthStart(supabase, resolved.meterId);
+  const months = earliest ? monthsFromIsoThroughNow(earliest) : getCurrentFiscalYearMonthsThroughNow();
   const toInsert: Array<{
     meter_id: string;
     period_start_date: string;
