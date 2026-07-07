@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
+import { resolveMeterForIngestion } from '@/lib/ingestion-metered';
 import { checkApiKey } from '@/lib/ingestion-auth';
 import { logIngestionFromResponse } from '@/lib/ingestion-events';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { IdentifierType } from '@/types';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -13,6 +15,11 @@ interface GroupMember {
     facility_id: string | number;
     input_type_id: string | null;
   } | null;
+}
+
+interface MeterRow {
+  id: string;
+  input_type: { name: string } | { name: string }[] | null;
 }
 
 // POST /api/ingestion/revert-pending
@@ -35,11 +42,31 @@ interface GroupMember {
 // Line mode:
 //   { mode: "line", client_name, supplier_name, input_type [, facility_name] }
 //   Targets a single standalone non_metered_lines row (not in a group).
+//
+// Metered mode:
+//   { mode: "metered", client_name, supplier_name [, utility_name, facility_name, identifier_type, lookup1, lookup2] }
+//   Deletes PENDING rows in actual_invoices for the matched meters. With
+//   identifier_type + lookup1, targets one specific meter; otherwise sweeps every
+//   meter for this client+supplier (narrowable by utility_name / facility_name).
+//   Mirrors the scope resolution of the metered pending seeder. CONFIRMED / GREEN
+//   invoices are left untouched — confirmed months already had their PENDING
+//   consumed by /unified-confirm, so this only clears the unconfirmed leftovers.
 async function handleRevertPending(
   supabase: SupabaseClient,
   body: Record<string, unknown>
 ): Promise<NextResponse> {
-  const { mode, client_name, supplier_name, category, input_type, facility_name } = body;
+  const {
+    mode,
+    client_name,
+    supplier_name,
+    category,
+    input_type,
+    facility_name,
+    utility_name,
+    identifier_type,
+    lookup1,
+    lookup2,
+  } = body;
 
   if (!client_name || !supplier_name) {
     return NextResponse.json(
@@ -88,10 +115,125 @@ async function handleRevertPending(
     });
   }
 
+  // ── METERED MODE ─────────────────────────────────────────────────────────────
+  if (mode === 'metered') {
+    const utilityTrimmed = typeof utility_name === 'string' ? utility_name.trim() : '';
+    const facilityTrimmed = typeof facility_name === 'string' ? facility_name.trim() : '';
+
+    const [{ data: client }, { data: supplier }] = await Promise.all([
+      supabase.from('clients').select('id').ilike('name', String(client_name)).single(),
+      supabase.from('suppliers').select('id').ilike('name', String(supplier_name)).single(),
+    ]);
+
+    if (!client) return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
+    if (!supplier) return NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 });
+
+    // Specific meter by identifier — mirrors the pending endpoint's metered path.
+    if (identifier_type && lookup1) {
+      const resolved = await resolveMeterForIngestion(supabase, {
+        clientName: String(client_name),
+        facilityName: facilityTrimmed,
+        supplierName: String(supplier_name),
+        utilityName: utilityTrimmed,
+        identifierType: identifier_type as IdentifierType,
+        lookup1: String(lookup1),
+        lookup2: lookup2 != null ? String(lookup2) : null,
+      });
+
+      if (!resolved.ok) {
+        return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+      }
+
+      const { data: deleted, error: delErr } = await supabase
+        .from('actual_invoices')
+        .delete()
+        .eq('meter_id', resolved.meterId)
+        .eq('status', 'PENDING')
+        .select('id');
+
+      if (delErr) throw new Error(delErr.message);
+
+      return NextResponse.json({
+        mode: 'metered',
+        meter_id: resolved.meterId,
+        reverted: deleted?.length ?? 0,
+      });
+    }
+
+    // Bulk: every meter for this client+supplier, optionally narrowed.
+    const { data: facilities } = await supabase
+      .from('facilities')
+      .select('id, name')
+      .eq('client_id', client.id);
+
+    let candidateFacilities = facilities ?? [];
+    if (facilityTrimmed) {
+      const lower = facilityTrimmed.toLowerCase();
+      candidateFacilities = candidateFacilities.filter(
+        (f: { id: string; name: string }) => f.name.toLowerCase() === lower
+      );
+      if (candidateFacilities.length === 0) {
+        return NextResponse.json(
+          { error: `Facility "${facilityTrimmed}" not found for this client` },
+          { status: 404 }
+        );
+      }
+    }
+
+    const facilityIds = candidateFacilities.map((f: { id: string }) => f.id);
+    if (facilityIds.length === 0) {
+      return NextResponse.json({ mode: 'metered', meters: 0, reverted: 0 });
+    }
+
+    const { data: meters, error: metersErr } = await supabase
+      .from('meters')
+      .select('id, input_type:input_types(name)')
+      .in('facility_id', facilityIds)
+      .eq('supplier_id', supplier.id);
+
+    if (metersErr) throw new Error(metersErr.message);
+
+    let candidateMeters = meters ?? [];
+    if (utilityTrimmed) {
+      const lower = utilityTrimmed.toLowerCase();
+      candidateMeters = candidateMeters.filter((m: MeterRow) => {
+        const name = (Array.isArray(m.input_type) ? m.input_type[0] : m.input_type)?.name;
+        return typeof name === 'string' && name.toLowerCase() === lower;
+      });
+    }
+
+    if (candidateMeters.length === 0) {
+      return NextResponse.json({ mode: 'metered', meters: 0, reverted: 0 });
+    }
+
+    const meterIds = candidateMeters.map((m: MeterRow) => String(m.id));
+
+    // Chunk the delete to stay within PostgREST URL-length limits on .in() filters.
+    const DELETE_CHUNK = 500;
+    let totalReverted = 0;
+    for (let i = 0; i < meterIds.length; i += DELETE_CHUNK) {
+      const chunk = meterIds.slice(i, i + DELETE_CHUNK);
+      const { data: deleted, error: delErr } = await supabase
+        .from('actual_invoices')
+        .delete()
+        .in('meter_id', chunk)
+        .eq('status', 'PENDING')
+        .select('id');
+      if (delErr) throw new Error(delErr.message);
+      totalReverted += deleted?.length ?? 0;
+    }
+
+    return NextResponse.json({
+      mode: 'metered',
+      meters: candidateMeters.length,
+      reverted: totalReverted,
+    });
+  }
+
   // ── GROUP MODE ───────────────────────────────────────────────────────────────
   if (!category) {
     return NextResponse.json(
-      { error: 'category is required for group mode (or pass mode: "line" for standalone lines)' },
+      { error: 'category is required for group mode (or pass mode: "line" / mode: "metered")' },
       { status: 400 }
     );
   }
@@ -159,7 +301,9 @@ async function handleRevertPending(
 }
 
 function scopeKindForRevertPending(body: Record<string, unknown>): string | null {
-  return body.mode === 'line' ? 'line' : 'group';
+  if (body.mode === 'line') return 'line';
+  if (body.mode === 'metered') return 'metered';
+  return 'group';
 }
 
 export async function POST(request: Request) {

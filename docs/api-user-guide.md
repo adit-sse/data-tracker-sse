@@ -39,13 +39,15 @@ These routes **do not** use browser session cookies. A wrong or missing key retu
 ### Group invoice workflow (invoices arrive per-facility)
 
 ```
-1. POST /api/ingestion/pending        ← seed amber PENDING months (once per supplier cycle)
+1. POST /api/ingestion/pending         ← seed amber PENDING months (once per supplier cycle)
       ↓  (for each invoice as it arrives)
-2. POST /api/ingestion/confirm        ← mark that facility+period green (CONFIRMED)
+2. POST /api/ingestion/confirm         ← mark that facility+period green (CONFIRMED)
       ↓  (after ALL invoices for the period are in)
-3. POST /api/ingestion/inferred-empty ← mark any remaining PENDING in confirmed months as INFERRED_EMPTY
+3. POST /api/ingestion/inferred-empty  ← mark any remaining PENDING in confirmed months as INFERRED_EMPTY (non-metered only)
+      ↓  (very last step)
+4. POST /api/ingestion/revert-pending  ← delete any still-PENDING records → back to "no data" (group / line / metered)
       ↓  (if a parse fails for any invoice)
-   POST /api/ingestion/error          ← mark that period red (ERROR)
+   POST /api/ingestion/error           ← mark that period red (ERROR)
 ```
 
 **Key rule:** `confirm` only touches the facilities you send. It never deletes or modifies records for other facilities or other months. This means you can call it one invoice at a time safely.
@@ -229,6 +231,86 @@ curl -sS -X POST "${BASE_URL}/api/ingestion/inferred-empty" \
 
 ---
 
+## `POST /api/ingestion/revert-pending`
+
+The **very last** step of a confirm cycle. Deletes every record still `PENDING` for the scope, reverting those months to **"no data"** (a month with no record renders as gray "No data" in the UI). `CONFIRMED`, `INFERRED_EMPTY`, and other GREEN statuses are left untouched.
+
+- **Non-metered (group/line):** run **after** `inferred-empty` for the same scope. `inferred-empty` converts PENDING → INFERRED_EMPTY for months that got a confirmed record; `revert-pending` then deletes whatever PENDING is left (e.g. months where nothing was confirmed).
+- **Metered:** run on its own at the end of the metered cycle — there is no inferred-empty step for metered. Confirm already consumed the PENDING for confirmed months, so this only clears the unconfirmed leftovers (e.g. you seeded Jan–Jun and only confirmed March). Overlaps with unified-confirm's optional `prune_orphan_pending` flag, but also sweeps meters not in the last confirm batch.
+
+### Group mode body
+
+```bash
+curl -sS -X POST "${BASE_URL}/api/ingestion/revert-pending" \
+  -H "Authorization: Bearer ${INGESTION_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "Your Client Name",
+    "supplier_name": "Your Supplier Name",
+    "category": "Transport Fuels"
+  }'
+```
+
+**Response:** `{ "mode": "group", "reverted": n }`
+
+### Line mode body
+
+For standalone lines (not in a group).
+
+```bash
+curl -sS -X POST "${BASE_URL}/api/ingestion/revert-pending" \
+  -H "Authorization: Bearer ${INGESTION_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "line",
+    "client_name": "Your Client Name",
+    "supplier_name": "Your Supplier Name",
+    "input_type": "kL",
+    "facility_name": "Site A"
+  }'
+```
+
+**Response:** `{ "mode": "line", "reverted": n }`
+
+### Metered mode body
+
+Bulk — every meter for this client+supplier (optionally narrowed by `utility_name` and/or `facility_name`):
+
+```bash
+curl -sS -X POST "${BASE_URL}/api/ingestion/revert-pending" \
+  -H "Authorization: Bearer ${INGESTION_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "metered",
+    "client_name": "Your Client Name",
+    "supplier_name": "Your Supplier Name",
+    "utility_name": "Electricity"
+  }'
+```
+
+**Response (bulk):** `{ "mode": "metered", "meters": n, "reverted": n }`
+
+Specific meter (`identifier_type` + `lookup1`, optional `lookup2`):
+
+```bash
+curl -sS -X POST "${BASE_URL}/api/ingestion/revert-pending" \
+  -H "Authorization: Bearer ${INGESTION_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "metered",
+    "client_name": "Your Client Name",
+    "supplier_name": "Your Supplier Name",
+    "facility_name": "Site A",
+    "utility_name": "Electricity",
+    "identifier_type": "NMI",
+    "lookup1": "12345678901"
+  }'
+```
+
+**Response (specific):** `{ "mode": "metered", "meter_id": "...", "reverted": n }`
+
+---
+
 ## `POST /api/ingestion/error`
 
 Sets `PENDING` → `ERROR` for the **calendar month** taken from the start date of `date_range`.
@@ -337,4 +419,4 @@ curl -sS -X POST "${BASE_URL}/api/ingestion/metered/error" \
 - **[api-facilities-utilities-guide.md](./api-facilities-utilities-guide.md)** — facility groups, categories, and app setup.
 - **[ingestion-test-subject.md](./ingestion-test-subject.md)** — isolated sandbox client + seed script.
 
-**Implementation:** `app/api/ingestion/pending/route.ts`, `confirm/route.ts`, `inferred-empty/route.ts`, `error/route.ts`, `lib/ingestion-line.ts`, `lib/ingestion-pending-scope1.ts`, `lib/ingestion-group-pending.ts`, `lib/ingestion-utility-category.ts`.
+**Implementation:** `app/api/ingestion/pending/route.ts`, `confirm/route.ts`, `unified-confirm/route.ts`, `inferred-empty/route.ts`, `revert-pending/route.ts`, `error/route.ts`, `lib/ingestion-line.ts`, `lib/ingestion-pending-scope1.ts`, `lib/ingestion-group-pending.ts`, `lib/ingestion-utility-category.ts`.

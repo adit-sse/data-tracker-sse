@@ -13,12 +13,14 @@
 Pending — Unified          ← seed PENDING months once per supplier cycle (all scopes)
         ↓  (for each invoice as it arrives)
 Confirm — Unified          ← turn PENDING → CONFIRMED for all row types in one call
-        ↓  (after ALL invoices for a period are submitted — non-metered only)
+        ↓  (after ALL invoices for a period are submitted)
 Pending Mode — GET         ← optional: read which group categories + standalone lines exist (drive inferred-empty)
         ↓
 NM Inferred Empty          ← mark remaining non-metered PENDING as INFERRED_EMPTY (in confirmed months)
-        ↓  (very last step — after inferred-empty for the group/line)
-NM Revert Pending          ← delete any still-PENDING non-metered records → back to "no data"
+        ↓  (very last step)
+Revert Pending             ← delete any still-PENDING records → back to "no data"
+                              • non-metered (group/line): run AFTER inferred-empty for that scope
+                              • metered: run on its own — metered has no inferred-empty step
         ↓  (if a parse fails)
 Error — NM / Metered       ← mark that period as ERROR
 ```
@@ -29,7 +31,9 @@ Error — NM / Metered       ← mark that period as ERROR
 - Confirm only touches what you send. Other facilities, months, and scopes are always left as-is.
 - **Pending Mode — GET** is read-only configuration for this client+supplier. Use it **before** pending to branch group vs line bodies, or **after** all confirms to loop **NM Inferred Empty — Group** (each `facility_groups[].category_name`). It also returns `standalone_non_metered_line_count` (not per-line details — use **NM Inferred Empty — Line** when you already know each standalone line).
 - Inferred Empty is non-metered only — metered months have no "inferred" concept.
-- **NM Revert Pending** is the **very last** step. Run it only **after** inferred-empty has run for the same group/line: inferred-empty converts PENDING → INFERRED_EMPTY for months that got a confirmed record, and revert-pending then deletes whatever PENDING is left (e.g. months where nothing was confirmed), returning those months to "no data". It never touches CONFIRMED or INFERRED_EMPTY records. Non-metered only.
+- **Revert Pending** is the **very last** step. It deletes any record still `PENDING` for the scope, returning those months to "no data" (a month with no record renders as gray "No data"). It never touches `CONFIRMED`, `INFERRED_EMPTY`, or other GREEN statuses.
+  - **Non-metered (group/line):** run it **after** inferred-empty for the same scope. Inferred-empty converts PENDING → INFERRED_EMPTY for months that got a confirmed record; revert-pending then deletes whatever PENDING is left (e.g. months where nothing was confirmed).
+  - **Metered:** run it on its own at the end of the metered confirm cycle — there is no inferred-empty step for metered. Confirm already consumes the PENDING for confirmed months, so revert-pending only clears the unconfirmed leftover months (e.g. you seeded Jan–Jun and only confirmed March). This overlaps with unified-confirm's optional `prune_orphan_pending` flag; use either, but the endpoint also sweeps meters that weren't in the last confirm batch.
 
 ---
 
@@ -62,6 +66,7 @@ The unified confirm classifies each row independently before processing:
 | NM Inferred Empty — Line | `POST /api/ingestion/inferred-empty` | Same, for standalone lines |
 | NM Revert Pending — Group | `POST /api/ingestion/revert-pending` | Very last step — delete any still-PENDING group records (back to "no data") |
 | NM Revert Pending — Line | `POST /api/ingestion/revert-pending` | Same, for standalone lines |
+| Metered Revert Pending | `POST /api/ingestion/revert-pending` | Very last step — delete any still-PENDING metered invoices (back to "no data"); bulk or specific meter |
 | NM Error — Group | `POST /api/ingestion/error` | Mark a non-metered group invoice month as ERROR |
 | NM Error — Line | `POST /api/ingestion/error` | Mark a non-metered line invoice month as ERROR |
 | Metered Error | `POST /api/ingestion/metered/error` | Mark a metered month as ERROR |
@@ -508,6 +513,78 @@ Same as 4b, but for a single standalone non-metered line. Run it **after** **NM 
       "typeVersion": 4.4,
       "position": [720, 600],
       "name": "NM Revert Pending — Line"
+    }
+  ],
+  "connections": {},
+  "pinData": {}
+}
+```
+
+---
+
+## 4d · Metered Revert Pending *(new)*
+
+The **very last** step of a metered confirm cycle. Deletes every `actual_invoices` row still `PENDING` for the matched meters, returning those months to **"no data"**. `CONFIRMED` / `IMPORTED` / `MANUAL_ENTRY` / `DEACTIVATED` rows are left untouched — confirmed months already had their `PENDING` consumed by **Confirm — Unified**, so this only clears the unconfirmed leftover months (e.g. you seeded Jan–Jun and only confirmed March).
+
+There is **no inferred-empty step for metered** — run this on its own at the end of the metered cycle. This overlaps with unified-confirm's optional `prune_orphan_pending` flag, but the endpoint also sweeps meters that weren't in the last confirm batch.
+
+**Bulk (all meters for client+supplier):** `{ "mode": "metered", "client_name", "supplier_name" }` — optionally narrow with `utility_name` (input type name) and/or `facility_name`.
+**Response (bulk):** `{ "mode": "metered", "meters": n, "reverted": n }`
+
+```json
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/revert-pending",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_INGESTION_API_KEY" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"mode\": \"metered\",\n  \"client_name\": \"Your Client Name\",\n  \"supplier_name\": \"Your Supplier Name\",\n  \"utility_name\": \"Electricity\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [960, 600],
+      "name": "Metered Revert Pending"
+    }
+  ],
+  "connections": {},
+  "pinData": {}
+}
+```
+
+**Specific meter:** add `identifier_type` + `lookup1` (and optional `lookup2`) to target one meter.
+**Response (specific):** `{ "mode": "metered", "meter_id": "...", "reverted": n }`
+
+```json
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/revert-pending",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_INGESTION_API_KEY" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"mode\": \"metered\",\n  \"client_name\": \"Your Client Name\",\n  \"supplier_name\": \"Your Supplier Name\",\n  \"facility_name\": \"Site A\",\n  \"utility_name\": \"Electricity\",\n  \"identifier_type\": \"NMI\",\n  \"lookup1\": \"12345678901\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1200, 600],
+      "name": "Metered Revert Pending (specific meter)"
     }
   ],
   "connections": {},
