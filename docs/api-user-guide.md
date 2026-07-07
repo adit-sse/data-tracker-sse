@@ -351,6 +351,49 @@ curl -sS -X POST "${BASE_URL}/api/ingestion/error" \
 
 ---
 
+## `POST /api/ingestion/unified-error`
+
+One endpoint for **any** error source. When an ingestion step (confirm / inferred-empty / revert-pending) fails, flip that month's `PENDING` row → `ERROR`. Auto-detects scope the same way `unified-confirm` does, so a single call handles metered, non-metered group, and non-metered line — including errors that happen before the workflow's group/line branch.
+
+Only `PENDING` rows are flipped. `CONFIRMED` / `INFERRED_EMPTY` / other GREEN statuses are untouched. The optional `reason` is recorded on the `ingestion_events` log.
+
+**Body:** the original NGERS row context + optional `reason`:
+
+| Field | Required | Notes |
+|---|---|---|
+| `Company` | ✅ | client name |
+| `Provider` | ✅ | supplier name |
+| `Date Range` | ✅ | `DD/MM/YYYY - DD/MM/YYYY` (month taken from start) |
+| `Category` | group / metered | NGERS category; empty for standalone lines |
+| `Input Type` | line | input type name; required when no `Category` and no meter identifier |
+| `Facility` | optional | facility name |
+| `NMI` / `MIRN` / `Account Number` / `Meter Number` | metered | one of, for metered scope |
+| `reason` | optional | recorded on the event log |
+
+**Detection:** meter identifier present → metered (`actual_invoices`); non-empty `Category` → non-metered group (`facility_groups`); neither → non-metered line (`non_metered_lines`).
+
+```bash
+curl -sS -X POST "${BASE_URL}/api/ingestion/unified-error" \
+  -H "Authorization: Bearer ${INGESTION_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "Company": "Your Client Name",
+    "Provider": "Your Supplier Name",
+    "Facility": "Site A",
+    "Category": "Electricity",
+    "Input Type": "kWh",
+    "Date Range": "01/03/2026 - 31/03/2026",
+    "NMI": "12345678901",
+    "reason": "upstream confirm failed"
+  }'
+```
+
+**Response:** `{ "scope": "metered" | "group" | "line", "updated": n, "period_start_date": "YYYY-MM-01", "meter_id"?: "...", "group_id"?: ... }`
+
+The legacy `POST /api/ingestion/error` (non-metered group/line) and `POST /api/ingestion/metered/error` endpoints still work and can be called directly.
+
+---
+
 ## Metered utilities (`actual_invoices`)
 
 Same `INGESTION_API_KEY` auth. Targets metered utilities only. The meter must already exist in the tracker.
@@ -419,4 +462,4 @@ curl -sS -X POST "${BASE_URL}/api/ingestion/metered/error" \
 - **[api-facilities-utilities-guide.md](./api-facilities-utilities-guide.md)** — facility groups, categories, and app setup.
 - **[ingestion-test-subject.md](./ingestion-test-subject.md)** — isolated sandbox client + seed script.
 
-**Implementation:** `app/api/ingestion/pending/route.ts`, `confirm/route.ts`, `unified-confirm/route.ts`, `inferred-empty/route.ts`, `revert-pending/route.ts`, `error/route.ts`, `lib/ingestion-line.ts`, `lib/ingestion-pending-scope1.ts`, `lib/ingestion-group-pending.ts`, `lib/ingestion-utility-category.ts`.
+**Implementation:** `app/api/ingestion/pending/route.ts`, `confirm/route.ts`, `unified-confirm/route.ts`, `inferred-empty/route.ts`, `revert-pending/route.ts`, `error/route.ts`, `unified-error/route.ts`, `lib/ingestion-line.ts`, `lib/ingestion-pending-scope1.ts`, `lib/ingestion-group-pending.ts`, `lib/ingestion-utility-category.ts`, `lib/ingestion-error.ts`.

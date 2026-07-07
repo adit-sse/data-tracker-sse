@@ -21,8 +21,9 @@ NM Inferred Empty          ← mark remaining non-metered PENDING as INFERRED_EM
 Revert Pending             ← delete any still-PENDING records → back to "no data"
                               • non-metered (group/line): run AFTER inferred-empty for that scope
                               • metered: run on its own — metered has no inferred-empty step
-        ↓  (if a parse fails)
-Error — NM / Metered       ← mark that period as ERROR
+        ↓  (if a parse fails / a step errors)
+Set Line Item to ERROR   ← POST /api/ingestion/unified-error — flips that month's PENDING → ERROR
+                              (auto-detects metered / non-metered group / line from the row)
 ```
 
 **Key rules:**
@@ -67,9 +68,10 @@ The unified confirm classifies each row independently before processing:
 | NM Revert Pending — Group | `POST /api/ingestion/revert-pending` | Very last step — delete any still-PENDING group records (back to "no data") |
 | NM Revert Pending — Line | `POST /api/ingestion/revert-pending` | Same, for standalone lines |
 | Metered Revert Pending | `POST /api/ingestion/revert-pending` | Very last step — delete any still-PENDING metered invoices (back to "no data"); bulk or specific meter |
-| NM Error — Group | `POST /api/ingestion/error` | Mark a non-metered group invoice month as ERROR |
-| NM Error — Line | `POST /api/ingestion/error` | Mark a non-metered line invoice month as ERROR |
-| Metered Error | `POST /api/ingestion/metered/error` | Mark a metered month as ERROR |
+| NM Error — Group | `POST /api/ingestion/error` | Mark a non-metered group invoice month as ERROR (legacy) |
+| NM Error — Line | `POST /api/ingestion/error` | Mark a non-metered line invoice month as ERROR (legacy) |
+| Metered Error | `POST /api/ingestion/metered/error` | Mark a metered month as ERROR (legacy) |
+| **Set Line Item to ERROR** ⭐ NEW | `POST /api/ingestion/unified-error` | One node for any error source — auto-detects metered / non-metered group / line and flips that month's PENDING → ERROR |
 
 ---
 
@@ -698,6 +700,54 @@ Sets metered `PENDING` → `ERROR` for the calendar month derived from `date_ran
   "pinData": {}
 }
 ```
+
+---
+
+## 8 · Set Line Item to ERROR ⭐ NEW
+
+One node for **any** error source. When a confirm / inferred-empty / revert-pending call fails, flip that month's `PENDING` row → `ERROR`. Auto-detects scope the same way **Confirm — Unified** does, so it works even for errors that happen *before* the workflow's group/line branch:
+
+- `NMI` / `MIRN` / `Account Number` / `Meter Number` present → metered (`actual_invoices`)
+- no meter identifier + non-empty `Category` → non-metered group (`facility_groups`)
+- no meter identifier + no `Category` → non-metered line (`non_metered_lines`)
+
+Only `PENDING` rows are flipped. `CONFIRMED` / `INFERRED_EMPTY` / other GREEN statuses are untouched. The optional `reason` is recorded on the `ingestion_events` log.
+
+**Body:** the original NGERS row context + `reason` (built from the row that failed, e.g. `{{ $('If').first().json.Company }}` and `{{ $json.error.message }}` for the reason).
+
+**Response:** `{ "scope": "metered" | "group" | "line", "updated": n, "period_start_date": "YYYY-MM-01", "meter_id"?: "...", "group_id"?: ... }`
+
+```json
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://data-tracker-sse-production-185f.up.railway.app/api/ingestion/unified-error",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_INGESTION_API_KEY" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"Company\": \"Your Client Name\",\n  \"Provider\": \"Your Supplier Name\",\n  \"Facility\": \"Site A\",\n  \"Category\": \"Electricity\",\n  \"Input Type\": \"kWh\",\n  \"Date Range\": \"01/03/2026 - 31/03/2026\",\n  \"NMI\": \"12345678901\",\n  \"reason\": \"upstream confirm failed: ...\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [720, 900],
+      "name": "Set Line Item to ERROR",
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "connections": {},
+  "pinData": {}
+}
+```
+
+**Wiring:** fan-out each error output to this node **and** your error-logging node (e.g. Google Sheets) in parallel — don't chain it in front of the logger, or the logger loses the original `$json.error`. This node's `onError: continueErrorOutput` means if the error API itself fails, the item is just dropped and logging is unaffected.
 
 ---
 
