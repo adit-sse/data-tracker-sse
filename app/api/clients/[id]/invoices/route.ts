@@ -64,7 +64,7 @@ export async function POST(
         meter_id,
         period_start_date,
         period_end_date,
-        status: 'MANUAL_ENTRY'
+        status: 'CONFIRMED'
       }])
       .select()
       .single();

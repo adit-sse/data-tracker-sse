@@ -12,7 +12,7 @@ export async function PATCH(
   try {
     const supabase = createSupabaseServerClient();
     const body = await request.json();
-    const allowed = ['status', 'consumption', 'unit', 'amount', 'invoice_number', 'invoice_date', 'sub_category', 'input_type', 'framework', 'version', 'customer'];
+    const allowed = ['status'];
 
     const updates: Record<string, unknown> = {};
     for (const key of allowed) {

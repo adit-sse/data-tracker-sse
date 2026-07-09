@@ -14,6 +14,7 @@ import { autoCreateNonMeteredGroups } from '@/lib/upload/auto-groups';
 import { runInferenceForBatch } from '@/lib/upload/inference';
 import type { UploadContext } from '@/lib/upload/resolver';
 import type { NonMeteredPayload, PendingInvoice } from '@/lib/upload/types';
+import { upsertPendingMonthSlots, upsertDeactivatedMonthSlot } from '@/lib/meter-month-slots';
 
 const BATCH_CHUNK_SIZE = 200;
 
@@ -81,7 +82,7 @@ export async function batchInsertInvoices(
   // Remove DEACTIVATED placeholders for the same meter+period as incoming real rows.
   // IDs were collected during the deduplication fetch above — no extra round-trip needed.
   const nonDeactivated = newInvoices.filter(
-    (inv) => (inv.status || 'IMPORTED').toUpperCase() !== 'DEACTIVATED',
+    (inv) => (inv.status || 'CONFIRMED').toUpperCase() !== 'DEACTIVATED',
   );
   const deactivatedIdsToDelete = nonDeactivated
     .map((inv) =>
@@ -113,6 +114,20 @@ export async function batchInsertInvoices(
       count += data?.length ?? 0;
     }
   }
+
+  // Upsert month slots for every inserted row.
+  // DEACTIVATED segments → DEACTIVATED slot (meter off this month).
+  // CONFIRMED segments → PENDING slot (creates if absent; never downgrades ERROR/DEACTIVATED).
+  await Promise.all(
+    newInvoices.map((inv) => {
+      const status = (inv.status || 'CONFIRMED').toUpperCase();
+      if (status === 'DEACTIVATED') {
+        return upsertDeactivatedMonthSlot(supabase, inv.meter_id, inv.period_start_date, inv.period_end_date);
+      }
+      return upsertPendingMonthSlots(supabase, inv.meter_id, inv.period_start_date, inv.period_end_date);
+    })
+  );
+
   return count;
 }
 
@@ -125,10 +140,9 @@ function nonMeteredUpsertConflictKey(rec: NonMeteredPayload): string {
 }
 
 function nonMeteredPayloadPriority(rec: NonMeteredPayload): number {
-  const s = (rec.status || 'IMPORTED').toUpperCase();
+  const s = (rec.status || 'CONFIRMED').toUpperCase();
   const order: Record<string, number> = {
-    IMPORTED: 100, MANUAL: 95, CONFIRMED: 90, DEACTIVATED: 50,
-    PENDING: 40, INFERRED_EMPTY: 30, ERROR: 10,
+    CONFIRMED: 90, DEACTIVATED: 50, PENDING: 40, INFERRED_EMPTY: 30, ERROR: 10,
   };
   return order[s] ?? 20;
 }
@@ -215,7 +229,7 @@ export async function processNonMeteredBatch(
           input_type_id: rec.categoryId,
           period_start_date: rec.periodStart,
           period_end_date: rec.periodEnd,
-          status: rec.status || 'IMPORTED',
+          status: rec.status || 'CONFIRMED',
           inferred_from_id: null,
         };
       })
@@ -251,7 +265,7 @@ export async function processNonMeteredBatch(
   await autoCreateNonMeteredGroups(ctx, deduped, errors);
 
   const inferenceSeeds = upsertedIds.filter((r) =>
-    ['IMPORTED', 'MANUAL', 'CONFIRMED'].includes(r.status || ''),
+    r.status === 'CONFIRMED',
   );
   await runInferenceForBatch(ctx.supabase, inferenceSeeds, errors);
 

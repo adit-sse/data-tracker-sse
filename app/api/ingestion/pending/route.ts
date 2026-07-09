@@ -8,11 +8,7 @@ import {
 } from '@/lib/non-metered-pending-seed';
 import { seedNonMeteredFacilityGroupPending, type GroupPendingMember } from '@/lib/ingestion-group-pending';
 import { seedAllScope1NonMeteredPending } from '@/lib/ingestion-pending-scope1';
-import {
-  meterMonthBlocksNewPending,
-  bulkFetchMeterInvoicesForMonths,
-  meterMonthBlocksNewPendingFromCache,
-} from '@/lib/ingestion-metered';
+import { upsertPendingMonthSlots } from '@/lib/meter-month-slots';
 import { checkApiKey } from '@/lib/ingestion-auth';
 import { logIngestionFromResponse } from '@/lib/ingestion-events';
 import type { IdentifierType } from '@/types';
@@ -109,60 +105,22 @@ async function seedMeteredPending(
   if (candidateMeters.length === 0) return { ok: true, meters: 0, created: 0, skipped: 0 };
 
   const months = getCurrentFiscalYearMonthsThroughNow();
-  let totalCreated = 0;
-  let totalSkipped = 0;
-
   if (months.length === 0) {
     return { ok: true, meters: candidateMeters.length, created: 0, skipped: 0 };
   }
 
-  // Bulk pre-fetch all invoices for all candidate meters in one pass, then compute
-  // blocking in memory — replaces ~(meters × months) sequential DB round-trips.
-  const meterIdList = candidateMeters.map((m: any) => String(m.id));
   const rangeStart = months[0].start;
   const rangeEnd = months[months.length - 1].end;
-  const invoiceCache = await bulkFetchMeterInvoicesForMonths(
-    supabase,
-    meterIdList,
-    rangeStart,
-    rangeEnd
+
+  // Upsert a PENDING slot per meter × month. ignoreDuplicates means existing
+  // ERROR/DEACTIVATED slots are untouched; only absent slots get created.
+  await Promise.all(
+    candidateMeters.map((meter: any) =>
+      upsertPendingMonthSlots(supabase, String(meter.id), rangeStart, rangeEnd)
+    )
   );
 
-  const allToInsert: Array<{
-    meter_id: string;
-    period_start_date: string;
-    period_end_date: string;
-    status: string;
-    created_at: string;
-  }> = [];
-
-  for (const meter of candidateMeters) {
-    const cachedRows = invoiceCache.get(String(meter.id)) ?? [];
-    for (const month of months) {
-      if (meterMonthBlocksNewPendingFromCache(cachedRows, month.start, month.end)) {
-        totalSkipped++;
-        continue;
-      }
-      allToInsert.push({
-        meter_id: meter.id,
-        period_start_date: month.start,
-        period_end_date: month.end,
-        status: 'PENDING',
-        created_at: pendingReceivedAt,
-      });
-    }
-  }
-
-  // Single batched insert across all meters (chunked to stay within PostgREST limits)
-  const INSERT_CHUNK = 500;
-  for (let i = 0; i < allToInsert.length; i += INSERT_CHUNK) {
-    const chunk = allToInsert.slice(i, i + INSERT_CHUNK);
-    const { error: insertErr } = await supabase.from('actual_invoices').insert(chunk);
-    if (insertErr) throw new Error(insertErr.message);
-    totalCreated += chunk.length;
-  }
-
-  return { ok: true, meters: candidateMeters.length, created: totalCreated, skipped: totalSkipped };
+  return { ok: true, meters: candidateMeters.length, created: candidateMeters.length * months.length, skipped: 0 };
 }
 
 // POST /api/ingestion/pending
@@ -275,37 +233,16 @@ async function handlePending(
       }
 
       const months = getCurrentFiscalYearMonthsThroughNow();
-      const toInsert: Array<{
-        meter_id: string;
-        period_start_date: string;
-        period_end_date: string;
-        status: string;
-        created_at: string;
-      }> = [];
-
-      for (const month of months) {
-        if (await meterMonthBlocksNewPending(supabase, resolved.meterId, month.start, month.end)) {
-          continue;
-        }
-        toInsert.push({
-          meter_id: resolved.meterId,
-          period_start_date: month.start,
-          period_end_date: month.end,
-          status: 'PENDING',
-          created_at: pendingReceivedAt,
-        });
-      }
-
-      if (toInsert.length > 0) {
-        const { error: insertError } = await supabase.from('actual_invoices').insert(toInsert);
-        if (insertError) throw insertError;
+      if (months.length > 0) {
+        const { upsertPendingMonthSlots: upsertSlots } = await import('@/lib/meter-month-slots');
+        await upsertSlots(supabase, resolved.meterId, months[0].start, months[months.length - 1].end);
       }
 
       return NextResponse.json({
         mode: 'metered',
         meter_id: resolved.meterId,
-        created: toInsert.length,
-        skipped: months.length - toInsert.length,
+        created: months.length,
+        skipped: 0,
       });
     }
 

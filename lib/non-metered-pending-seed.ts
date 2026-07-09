@@ -45,7 +45,7 @@ export function getFullCurrentFiscalYearMonthPeriods(): Array<{ start: string; e
   });
 }
 
-const GREEN_STATUSES = ['IMPORTED', 'MANUAL', 'CONFIRMED', 'DEACTIVATED'] as const;
+const GREEN_STATUSES = ['CONFIRMED', 'DEACTIVATED'] as const;
 
 /**
  * Email/API workflow: insert PENDING for months Jul → current month when the slot is empty.
@@ -154,15 +154,7 @@ export async function upsertTemplateScope3CoverageMonths(
     input_type_id: inputTypeId,
     period_start_date: month.start,
     period_end_date: month.end,
-    invoice_number: null as string | null,
-    invoice_date: null as string | null,
-    consumption: null as number | null,
-    unit: null as string | null,
-    amount: null as number | null,
-    framework: null as string | null,
-    version: null as string | null,
-    customer: null as string | null,
-    status: 'IMPORTED',
+    status: 'CONFIRMED',
     inferred_from_id: null as null,
   }));
 

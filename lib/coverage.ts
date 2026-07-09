@@ -10,7 +10,7 @@ import {
   differenceInCalendarDays,
   isValid
 } from 'date-fns';
-import type { ActualInvoice, MonthlyCoverage, DateGap } from '@/types';
+import type { ActualInvoice, MeterMonthSlot, MonthlyCoverage, DateGap } from '@/types';
 
 /**
  * Generate 12 months for a fiscal year (July to June)
@@ -43,17 +43,26 @@ function isPendingOrErrorInvoiceStatus(status: string | null | undefined): boole
 /**
  * Calculate coverage for a meter across all months in the fiscal year.
  * Invoices with status DEACTIVATED count as "no API data expected" for those days, not as gaps.
+ * When slots are provided, hasPending and isDeactivatedMonth are derived from the slot status
+ * rather than from PENDING/DEACTIVATED rows in actual_invoices.
  */
 export function calculateMonthlyCoverage(
-  invoices: ActualInvoice[], 
-  fiscalYear: number
+  invoices: ActualInvoice[],
+  fiscalYear: number,
+  slots?: MeterMonthSlot[]
 ): MonthlyCoverage[] {
   const months = generateFiscalYearMonths(fiscalYear);
-  
+
+  const slotsByMonth = slots
+    ? new Map(slots.map((s) => [s.month_start, s]))
+    : null;
+
   return months.map(monthDate => {
     const monthStart = startOfMonth(monthDate);
     const monthEnd = endOfMonth(monthDate);
     const daysInMonth = getDaysInMonth(monthDate);
+    const monthKey = format(monthStart, 'yyyy-MM-dd');
+    const slot = slotsByMonth?.get(monthKey) ?? null;
     
     /** Per calendar day: active invoice data wins over deactivated-only. */
     const dayState = new Map<string, 'active' | 'deactivated'>();
@@ -112,9 +121,14 @@ export function calculateMonthlyCoverage(
     const resolvedForGaps = Array.from(dayState.keys());
     const gaps = findGaps(resolvedForGaps, monthStart, monthEnd);
 
-    const hasPending = monthlyInvoices.some(
-      inv => (inv.status || '').trim().toUpperCase() === 'PENDING'
-    );
+    // Prefer slot-based state when available; fall back to segment-derived for backward compat.
+    const hasPending = slot
+      ? slot.status === 'PENDING' || slot.status === 'ERROR'
+      : monthlyInvoices.some(inv => (inv.status || '').trim().toUpperCase() === 'PENDING');
+
+    const resolvedIsDeactivatedMonth = slot
+      ? slot.status === 'DEACTIVATED'
+      : isDeactivatedMonth;
 
     return {
       month: format(monthDate, 'MMM yy'),
@@ -123,7 +137,7 @@ export function calculateMonthlyCoverage(
       daysCovered,
       percentage,
       daysDeactivated: daysDeactivated > 0 ? daysDeactivated : undefined,
-      isDeactivatedMonth: isDeactivatedMonth || undefined,
+      isDeactivatedMonth: resolvedIsDeactivatedMonth || undefined,
       effectiveDaysInMonth: daysDeactivated > 0 ? effectiveDaysInMonth : undefined,
       hasPending: hasPending || undefined,
       gaps: gaps.length > 0 ? gaps : undefined,

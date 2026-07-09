@@ -662,7 +662,7 @@ function NonMeteredCell({ cell, onClick }: NonMeteredCellProps) {
   const aged = isAgedRecord(cell.record?.created_at);
 
   const getBgColor = () => {
-    if (cell.status === 'IMPORTED' || cell.status === 'MANUAL' || cell.status === 'CONFIRMED')
+    if (cell.status === 'CONFIRMED')
       return aged ? 'bg-green-600 border-green-700' : 'bg-green-500 border-green-600';
     if (cell.status === 'DEACTIVATED')
       return 'bg-slate-500 border-slate-600';
@@ -676,7 +676,7 @@ function NonMeteredCell({ cell, onClick }: NonMeteredCellProps) {
   };
 
   const getLabel = () => {
-    if (cell.status === 'IMPORTED' || cell.status === 'MANUAL' || cell.status === 'CONFIRMED') return '✓';
+    if (cell.status === 'CONFIRMED') return '✓';
     if (cell.status === 'DEACTIVATED') return 'Off';
     if (cell.status === 'INFERRED_EMPTY') return '0';
     if (cell.status === 'PENDING') return '…';
@@ -706,8 +706,6 @@ function NonMeteredCell({ cell, onClick }: NonMeteredCellProps) {
         detail: ts ? `Uploaded: ${ts}` : undefined,
       };
     }
-    if (cell.status === 'IMPORTED') return { title: `Invoice received${ageSuffix}` };
-    if (cell.status === 'MANUAL') return { title: `Marked as received${ageSuffix}` };
     if (cell.status === 'INFERRED_EMPTY') return { title: `Inferred empty — click to mark as received${ageSuffix}` };
     if (cell.status === 'ERROR') return { title: `Ingestion error — manual fix needed${ageSuffix}` };
     if (cell.status === 'DEACTIVATED') return { title: 'Deactivated — no API data expected' };

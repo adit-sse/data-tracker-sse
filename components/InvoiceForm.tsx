@@ -14,17 +14,8 @@ interface InvoiceFormProps {
 export interface InvoiceFormData {
   id?: string;
   meter_id: string;
-  invoice_number?: string;
-  invoice_date?: string;
   period_start_date: string;
   period_end_date: string;
-  consumption?: number;
-  amount?: number;
-  framework?: string;
-  version?: string;
-  input_type?: string;
-  emissions_factor?: number;
-  customer?: string;
 }
 
 interface Facility {
@@ -76,17 +67,8 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel, initialData,
   
   const [formData, setFormData] = useState<InvoiceFormData>({
     meter_id: '',
-    invoice_number: '',
-    invoice_date: '',
     period_start_date: getCurrentMonthStart(),
     period_end_date: getCurrentMonthEnd(),
-    consumption: undefined,
-    amount: undefined,
-    framework: '',
-    version: '',
-    input_type: '',
-    emissions_factor: undefined,
-    customer: ''
   });
 
   // If initialData is provided (e.g., quick-add from coverage pill), prefill form when meters are loaded
@@ -238,17 +220,8 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel, initialData,
       if (!initialData?.id) {
         setFormData({
           meter_id: '',
-          invoice_number: '',
-          invoice_date: '',
           period_start_date: getCurrentMonthStart(),
           period_end_date: getCurrentMonthEnd(),
-          consumption: undefined,
-          amount: undefined,
-          framework: '',
-          version: '',
-          input_type: '',
-          emissions_factor: undefined,
-          customer: ''
         });
         setSelectedFacilityId('');
       }
@@ -331,148 +304,6 @@ export default function InvoiceForm({ clientId, onSubmit, onCancel, initialData,
         />
       </div>
       
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label htmlFor="invoice_number" className="block text-sm font-medium text-gray-700 mb-1">
-            Invoice Number
-          </label>
-          <input
-            type="text"
-            id="invoice_number"
-            value={formData.invoice_number}
-            onChange={(e) => setFormData({ ...formData, invoice_number: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="INV-2024-001"
-            disabled={isSubmitting}
-          />
-        </div>
-        
-        <DatePicker
-          value={formData.invoice_date || ''}
-          onChange={(date) => setFormData({ ...formData, invoice_date: date })}
-          label="Invoice Date"
-          disabled={isSubmitting}
-        />
-      </div>
-      
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label htmlFor="consumption" className="block text-sm font-medium text-gray-700 mb-1">
-            Consumption
-          </label>
-          <input
-            type="number"
-            step="0.01"
-            id="consumption"
-            value={formData.consumption || ''}
-            onChange={(e) => setFormData({ ...formData, consumption: e.target.value ? parseFloat(e.target.value) : undefined })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="1250.5"
-            disabled={isSubmitting}
-          />
-        </div>
-        
-        <div>
-          <label htmlFor="amount" className="block text-sm font-medium text-gray-700 mb-1">
-            Amount ($)
-          </label>
-          <input
-            type="number"
-            step="0.01"
-            id="amount"
-            value={formData.amount || ''}
-            onChange={(e) => setFormData({ ...formData, amount: e.target.value ? parseFloat(e.target.value) : undefined })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="425.75"
-            disabled={isSubmitting}
-          />
-        </div>
-      </div>
-      
-      <div>
-        <label htmlFor="customer" className="block text-sm font-medium text-gray-700 mb-1">
-          Customer Name
-        </label>
-        <input
-          type="text"
-          id="customer"
-          value={formData.customer}
-          onChange={(e) => setFormData({ ...formData, customer: e.target.value })}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Company Pty Ltd"
-          disabled={isSubmitting}
-        />
-      </div>
-      
-      <details className="border border-gray-200 rounded-md p-4">
-        <summary className="cursor-pointer font-medium text-gray-700">Additional Fields (Optional)</summary>
-        <div className="mt-4 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="framework" className="block text-sm font-medium text-gray-700 mb-1">
-                Framework
-              </label>
-              <input
-                type="text"
-                id="framework"
-                value={formData.framework}
-                onChange={(e) => setFormData({ ...formData, framework: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="NGER"
-                disabled={isSubmitting}
-              />
-            </div>
-            
-            <div>
-              <label htmlFor="version" className="block text-sm font-medium text-gray-700 mb-1">
-                Version
-              </label>
-              <input
-                type="text"
-                id="version"
-                value={formData.version}
-                onChange={(e) => setFormData({ ...formData, version: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="2024"
-                disabled={isSubmitting}
-              />
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="input_type" className="block text-sm font-medium text-gray-700 mb-1">
-                Input Type
-              </label>
-              <input
-                type="text"
-                id="input_type"
-                value={formData.input_type}
-                onChange={(e) => setFormData({ ...formData, input_type: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="WA - SWIS"
-                disabled={isSubmitting}
-              />
-            </div>
-            
-            <div>
-              <label htmlFor="emissions_factor" className="block text-sm font-medium text-gray-700 mb-1">
-                Emissions Factor (tCO2-e)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                id="emissions_factor"
-                value={formData.emissions_factor || ''}
-                onChange={(e) => setFormData({ ...formData, emissions_factor: e.target.value ? parseFloat(e.target.value) : undefined })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="0.65"
-                disabled={isSubmitting}
-              />
-            </div>
-          </div>
-        </div>
-      </details>
       
       <div className="flex gap-3 pt-2">
         <button

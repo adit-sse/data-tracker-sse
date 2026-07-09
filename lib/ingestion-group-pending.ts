@@ -36,7 +36,7 @@ export async function seedNonMeteredFacilityGroupPending(
       .in('facility_id', allFacilityIds)
       .eq('supplier_id', supplierId)
       .in('period_start_date', periodStarts)
-      .in('status', ['IMPORTED', 'MANUAL', 'CONFIRMED', 'DEACTIVATED']),
+      .in('status', ['CONFIRMED', 'DEACTIVATED']),
   ]);
 
   const existingByCategoryKey = new Set<string>(

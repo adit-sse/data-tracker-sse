@@ -4,6 +4,9 @@ export const revalidate = 0;
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { calculateMonthlyCoverage } from '@/lib/coverage';
+import { fetchSlotsByMeter } from '@/lib/meter-month-slots';
+import { generateFiscalYearMonths } from '@/lib/coverage';
+import { format, startOfMonth, endOfMonth } from 'date-fns';
 
 // GET /api/clients/[id]/coverage - Get full coverage data for fiscal year
 export async function GET(
@@ -58,30 +61,43 @@ export async function GET(
     const meterIds = meters?.map(m => m.id) || [];
     
     let invoices: any[] = [];
-    
+
+    // Compute the month window for this fiscal year (for slot scoping).
+    const fyMonths = generateFiscalYearMonths(fiscalYear);
+    const fyStart = format(startOfMonth(fyMonths[0]), 'yyyy-MM-dd');
+    const fyEnd = format(startOfMonth(fyMonths[fyMonths.length - 1]), 'yyyy-MM-dd');
+
+    let slotsByMeter = new Map<string, any[]>();
+
     if (meterIds.length > 0) {
-      // Fetch all chunks in parallel to avoid sequential round-trips for large meter counts.
+      // Fetch invoices and slots in parallel.
       const chunkSize = 200;
       const chunks: (typeof meterIds)[] = [];
       for (let i = 0; i < meterIds.length; i += chunkSize) {
         chunks.push(meterIds.slice(i, i + chunkSize));
       }
-      const chunkResults = await Promise.all(
-        chunks.map((chunk) =>
-          supabase
-            .from('actual_invoices')
-            .select('*')
-            .in('meter_id', chunk)
-            .limit(10000)
-        )
-      );
+      const [chunkResults, fetchedSlots] = await Promise.all([
+        Promise.all(
+          chunks.map((chunk) =>
+            supabase
+              .from('actual_invoices')
+              .select('id, meter_id, period_start_date, period_end_date, status, confirmed_at')
+              .in('meter_id', chunk)
+              .limit(10000)
+          )
+        ),
+        fetchSlotsByMeter(supabase, meterIds, fyStart, fyEnd).catch((e) => {
+          console.error('[coverage] slot fetch failed, degrading gracefully:', e?.message);
+          return new Map<string, any[]>();
+        }),
+      ]);
       for (const { data: invoicesData, error: invoicesError } of chunkResults) {
         if (invoicesError) throw invoicesError;
         invoices.push(...(invoicesData || []));
       }
+      slotsByMeter = fetchedSlots;
     }
 
-    
     // Group invoices by meter
     const invoicesByMeter = (invoices || []).reduce((acc, invoice) => {
       if (!acc[invoice.meter_id]) {
@@ -90,13 +106,15 @@ export async function GET(
       acc[invoice.meter_id].push(invoice);
       return acc;
     }, {} as Record<string, any[]>);
-    
-    // Calculate coverage for each meter
+
+    // Calculate coverage for each meter, passing slots so hasPending/isDeactivated
+    // are derived from slot status rather than from placeholder rows in actual_invoices.
     const metersWithCoverage = (meters || []).map(meter => ({
       meter,
       coverage: calculateMonthlyCoverage(
         invoicesByMeter[meter.id] || [],
-        fiscalYear
+        fiscalYear,
+        slotsByMeter.get(meter.id) ?? []
       )
     }));
     
