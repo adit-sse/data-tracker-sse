@@ -2,9 +2,10 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import type { IdentifierType } from '@/types';
 import { getCurrentFiscalYearMonthsThroughNow, monthsFromIsoThroughNow } from '@/lib/non-metered-pending-seed';
-import { meterMonthBlocksNewPending, resolveMeterForIngestion, earliestMeterMonthStart } from '@/lib/ingestion-metered';
+import { resolveMeterForIngestion, earliestMeterMonthStart } from '@/lib/ingestion-metered';
 import { checkApiKey } from '@/lib/ingestion-auth';
 import { logIngestionFromResponse } from '@/lib/ingestion-events';
+import { upsertPendingMonthSlots } from '@/lib/meter-month-slots';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
@@ -62,37 +63,27 @@ async function handleMeteredPending(
     return NextResponse.json({ error: resolved.error }, { status: resolved.status });
   }
 
+  // Seed from the meter's earliest existing record through now, falling back to
+  // the current fiscal year for meters with no records yet (behaviour from #56).
+  // Month slots then replace the old per-month insert loop.
   const earliest = await earliestMeterMonthStart(supabase, resolved.meterId);
   const months = earliest ? monthsFromIsoThroughNow(earliest) : getCurrentFiscalYearMonthsThroughNow();
-  const toInsert: Array<{
-    meter_id: string;
-    period_start_date: string;
-    period_end_date: string;
-    status: string;
-    created_at: string;
-  }> = [];
-
-  for (const month of months) {
-    if (await meterMonthBlocksNewPending(supabase, resolved.meterId, month.start, month.end)) {
-      continue;
-    }
-    toInsert.push({
-      meter_id: resolved.meterId,
-      period_start_date: month.start,
-      period_end_date: month.end,
-      status: 'PENDING',
-      created_at: pendingReceivedAt,
-    });
+  if (months.length === 0) {
+    return NextResponse.json({ created: 0, skipped: 0, meter_id: resolved.meterId });
   }
 
-  if (toInsert.length > 0) {
-    const { error: insertError } = await supabase.from('actual_invoices').insert(toInsert);
-    if (insertError) throw insertError;
-  }
+  // Upsert a PENDING slot for every FY month. ignoreDuplicates means existing
+  // ERROR/DEACTIVATED slots are left untouched; only missing slots get created.
+  await upsertPendingMonthSlots(
+    supabase,
+    resolved.meterId,
+    months[0].start,
+    months[months.length - 1].end
+  );
 
   return NextResponse.json({
-    created: toInsert.length,
-    skipped: months.length - toInsert.length,
+    created: months.length,
+    skipped: 0,
     meter_id: resolved.meterId,
   });
 }

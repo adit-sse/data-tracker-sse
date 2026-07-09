@@ -16,7 +16,7 @@ export async function POST(request: Request) {
       input_type_id,
       period_start_date,
       period_end_date,
-      status = 'MANUAL',
+      status = 'CONFIRMED',
     } = body;
 
     if (!facility_id || !input_type_id || !period_start_date || !period_end_date) {

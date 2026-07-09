@@ -103,10 +103,17 @@ export interface ActualInvoice {
   period_start_date: string;  // ISO date string
   period_end_date: string;    // ISO date string
   status?: string;
-  created_at?: string;
   confirmed_at?: string;
   // Joined data
   meter?: Meter;
+}
+
+export interface MeterMonthSlot {
+  id: string;
+  meter_id: string;
+  month_start: string; // YYYY-MM-01
+  status: 'PENDING' | 'ERROR' | 'DEACTIVATED';
+  created_at?: string;
 }
 
 // UI types
@@ -263,9 +270,7 @@ export interface NonMeteredLine {
 // -------------------------------------------------------
 
 export type NonMeteredStatus =
-  | 'IMPORTED'
   | 'INFERRED_EMPTY'
-  | 'MANUAL'
   | 'PENDING'
   | 'ERROR'
   | 'CONFIRMED'

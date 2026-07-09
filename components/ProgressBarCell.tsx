@@ -32,7 +32,7 @@ export default function ProgressBarCell({ coverage, onClick, disabled }: Progres
 
   const pendingInvoice = invoices?.find(inv => (inv.status ?? '').toUpperCase() === 'PENDING');
   const confirmedInvoice = invoices?.find(
-    inv => (inv.status ?? '').toUpperCase() === 'CONFIRMED' || (inv.status ?? '').toUpperCase() === 'IMPORTED'
+    inv => (inv.status ?? '').toUpperCase() === 'CONFIRMED'
   );
   const receivedAt = formatTimestamp(pendingInvoice?.created_at);
   const uploadedAt = formatTimestamp(confirmedInvoice?.confirmed_at);

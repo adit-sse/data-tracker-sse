@@ -6,6 +6,7 @@ import { parseNgersDateRange, monthStartIso } from '@/lib/ingestion-dates';
 import type { IdentifierType } from '@/types';
 import { resolveMeterForIngestion } from '@/lib/ingestion-metered';
 import { checkApiKey } from '@/lib/ingestion-auth';
+import { upsertErrorMonthSlot } from '@/lib/meter-month-slots';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -84,34 +85,12 @@ async function handleMeteredError(
       return NextResponse.json({ error: resolved.error }, { status: resolved.status });
     }
 
-    const { data: pendingRows, error: fetchError } = await supabase
-      .from('actual_invoices')
-      .select('id')
-      .eq('meter_id', resolved.meterId)
-      .eq('period_start_date', periodStart)
-      .eq('status', 'PENDING');
-
-    if (fetchError) throw fetchError;
-
-    const ids = (pendingRows ?? []).map((r: { id: string }) => r.id);
-    if (ids.length === 0) {
-      return NextResponse.json({
-        mode: 'metered',
-        updated: 0,
-        message: `No PENDING invoices for ${periodStart}. Run /api/ingestion/metered/pending first, or this month was already resolved.`,
-      });
-    }
-
-    const { error: updateError } = await supabase
-      .from('actual_invoices')
-      .update({ status: 'ERROR' })
-      .in('id', ids);
-
-    if (updateError) throw updateError;
+    // Upsert the slot to ERROR (creates the slot if absent, overwrites PENDING with ERROR).
+    await upsertErrorMonthSlot(supabase, resolved.meterId, periodStart);
 
     return NextResponse.json({
       mode: 'metered',
-      updated: ids.length,
+      updated: 1,
       period_start_date: periodStart,
       meter_id: resolved.meterId,
     });

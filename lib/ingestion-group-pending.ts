@@ -32,7 +32,7 @@ export async function seedNonMeteredFacilityGroupPending(
 
   if (fetchErr) throw new Error(fetchErr.message);
 
-  const GREEN_STATUSES = new Set(['IMPORTED', 'MANUAL', 'CONFIRMED', 'DEACTIVATED']);
+  const GREEN_STATUSES = new Set(['CONFIRMED', 'DEACTIVATED']);
   const existingByCategoryKey = new Set<string>();
   const greenSet = new Set<string>();
   const earliestByMember = new Map<string, string>(); // `${facility_id}__${input_type_id}` -> 'YYYY-MM-DD'

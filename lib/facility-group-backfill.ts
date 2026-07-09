@@ -55,7 +55,7 @@ export async function runGroupBackfill(
     const slice = slices.get(key)!;
     slice.presentFacilityIds.add(String(rec.facility_id));
     // Prefer a real record as the reference
-    if (rec.status === 'IMPORTED' || rec.status === 'MANUAL') {
+    if (rec.status === 'CONFIRMED') {
       slice.referenceId = String(rec.id);
     }
   }

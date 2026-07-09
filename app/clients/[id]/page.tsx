@@ -1118,21 +1118,19 @@ function NonMeteredRecordModal({
   const [actionError, setActionError] = useState<string | null>(null);
 
   const statusLabel: Record<string, string> = {
-    IMPORTED: 'Imported',
     INFERRED_EMPTY: 'Inferred Empty',
-    MANUAL: 'Marked as Received',
     PENDING: 'Pending',
     CONFIRMED: 'Confirmed',
     ERROR: 'Error',
+    DEACTIVATED: 'Deactivated',
   };
 
   const statusColor: Record<string, string> = {
-    IMPORTED: 'bg-green-100 text-green-700',
     INFERRED_EMPTY: 'bg-slate-100 text-slate-700',
-    MANUAL: 'bg-green-100 text-green-700',
     PENDING: 'bg-amber-100 text-amber-700',
     CONFIRMED: 'bg-green-100 text-green-700',
     ERROR: 'bg-red-100 text-red-700',
+    DEACTIVATED: 'bg-slate-100 text-slate-700',
   };
 
   const handleMarkReceived = async () => {
@@ -1142,7 +1140,7 @@ function NonMeteredRecordModal({
       const res = await fetch(`/api/non-metered-records/${record.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'MANUAL' }),
+        body: JSON.stringify({ status: 'CONFIRMED' }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -1308,7 +1306,7 @@ function NmMarkEmptyModal({
   const periodEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0)
     .toISOString().split('T')[0];
 
-  const handleMark = async (status: 'MANUAL' | 'INFERRED_EMPTY') => {
+  const handleMark = async (status: 'CONFIRMED' | 'INFERRED_EMPTY') => {
     setSaving(true);
     setError(null);
     try {
@@ -1366,7 +1364,7 @@ function NmMarkEmptyModal({
 
         <div className="flex flex-col gap-2">
           <button
-            onClick={() => handleMark('MANUAL')}
+            onClick={() => handleMark('CONFIRMED')}
             disabled={saving}
             className="w-full bg-green-600 text-white px-4 py-2.5 rounded-lg hover:bg-green-700 font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >

@@ -82,7 +82,7 @@ export async function processRow(
         reportingCategoryId: null,
         periodStart: dateRange.startDate,
         periodEnd: dateRange.endDate,
-        status: 'IMPORTED',
+        status: 'CONFIRMED',
       },
     };
   }
@@ -107,6 +107,6 @@ export async function processRow(
     meter_id: meterId,
     period_start_date: dateRange.startDate,
     period_end_date: dateRange.endDate,
-    status: 'IMPORTED',
+    status: 'CONFIRMED',
   });
 }

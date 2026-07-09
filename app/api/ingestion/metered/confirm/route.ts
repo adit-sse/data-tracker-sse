@@ -65,10 +65,9 @@ export async function POST(request: Request) {
       return res;
     }
 
-    const pruneOrphanPending = Boolean((body as { prune_orphan_pending?: unknown }).prune_orphan_pending);
     const confirmedAt = new Date().toISOString();
 
-    const result = await processMeteredRows(supabase, rows, confirmedAt, pruneOrphanPending);
+    const result = await processMeteredRows(supabase, rows, confirmedAt);
 
     const res = result.ok
       ? NextResponse.json({
