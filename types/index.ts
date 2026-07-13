@@ -104,6 +104,7 @@ export interface ActualInvoice {
   period_end_date: string;    // ISO date string
   status?: string;
   confirmed_at?: string;
+  created_at?: string;
   // Joined data
   meter?: Meter;
 }

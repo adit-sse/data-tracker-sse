@@ -81,7 +81,7 @@ export async function GET(
           chunks.map((chunk) =>
             supabase
               .from('actual_invoices')
-              .select('id, meter_id, period_start_date, period_end_date, status, confirmed_at')
+              .select('id, meter_id, period_start_date, period_end_date, status, confirmed_at, created_at')
               .in('meter_id', chunk)
               .limit(10000)
           )
