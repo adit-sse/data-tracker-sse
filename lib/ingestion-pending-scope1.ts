@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import {
   seedIngestionPendingNonMeteredLineMonths,
 } from '@/lib/non-metered-pending-seed';
@@ -43,17 +44,11 @@ export async function seedAllScope1NonMeteredPending(
     }
   | { ok: false; error: string; status: number }
 > {
-  const [{ data: client }, { data: supplier }] = await Promise.all([
-    supabase.from('clients').select('id').ilike('name', clientName).single(),
-    supabase.from('suppliers').select('id').ilike('name', supplierName).single(),
-  ]);
-
-  if (!client) {
-    return { ok: false, error: `Client "${clientName}" not found`, status: 404 };
+  const resolved = await lookupClientAndSupplier(supabase, clientName, supplierName);
+  if (!resolved.ok) {
+    return { ok: false, error: resolved.error, status: resolved.status };
   }
-  if (!supplier) {
-    return { ok: false, error: `Supplier "${supplierName}" not found`, status: 404 };
-  }
+  const { client, supplier } = resolved;
 
   const { data: facilities, error: facErr } = await supabase
     .from('facilities')

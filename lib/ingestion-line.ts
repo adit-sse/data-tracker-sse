@@ -1,5 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ensureClientWideFacility, isClientWideFacilityName } from '@/lib/client-wide-facility';
+import {
+  lookupClientByName,
+  lookupFacilityByName,
+  lookupSupplierByName,
+} from '@/lib/name-lookup';
 import { findOrCreateUtilityCategoryForIngestion } from '@/lib/ingestion-utility-category';
 
 /** Resolve client, supplier, utility category, and facility (under client) for standalone line ingestion. */
@@ -20,11 +25,19 @@ export async function resolveIngestionLine(
     }
   | { ok: false; error: string; status: number }
 > {
-  const [{ data: client }, { data: supplier }] = await Promise.all([
-    supabase.from('clients').select('id').ilike('name', clientName).single(),
-    supabase.from('suppliers').select('id').ilike('name', supplierName).single(),
+  const [clientLookup, supplierLookup] = await Promise.all([
+    lookupClientByName(supabase, clientName),
+    lookupSupplierByName(supabase, supplierName),
   ]);
 
+  if (clientLookup.error) {
+    return { ok: false, error: clientLookup.error, status: 500 };
+  }
+  if (supplierLookup.error) {
+    return { ok: false, error: supplierLookup.error, status: 500 };
+  }
+  const client = clientLookup.data;
+  const supplier = supplierLookup.data;
   if (!client) return { ok: false, error: `Client "${clientName}" not found`, status: 404 };
   if (!supplier) return { ok: false, error: `Supplier "${supplierName}" not found`, status: 404 };
 
@@ -52,14 +65,12 @@ export async function resolveIngestionLine(
       };
     }
 
-    const { data: facility, error: facErr } = await supabase
-      .from('facilities')
-      .select('id, name')
-      .eq('client_id', client.id)
-      .ilike('name', facTrimmed)
-      .single();
-
-    if (facErr || !facility) {
+    const facilityLookup = await lookupFacilityByName(supabase, facTrimmed, client.id);
+    if (facilityLookup.error) {
+      return { ok: false, error: facilityLookup.error, status: 500 };
+    }
+    const facility = facilityLookup.data;
+    if (!facility) {
       return {
         ok: false,
         error: `Facility "${facilityName}" not found for client "${clientName}"`,
@@ -178,17 +189,11 @@ export async function resolveNonMeteredCoverageWithoutFacilityGroup(
     return { ok: false, error: 'Row is missing Facility', status: 422 };
   }
 
-  const { data: facility, error: facErr } = await supabase
-    .from('facilities')
-    .select('id')
-    .eq('client_id', params.clientId)
-    .ilike('name', facTrimmed)
-    .limit(1)
-    .maybeSingle();
-
-  if (facErr) {
-    return { ok: false, error: facErr.message, status: 500 };
+  const facilityLookup = await lookupFacilityByName(supabase, facTrimmed, params.clientId);
+  if (facilityLookup.error) {
+    return { ok: false, error: facilityLookup.error, status: 500 };
   }
+  const facility = facilityLookup.data;
   if (!facility) {
     return {
       ok: false,

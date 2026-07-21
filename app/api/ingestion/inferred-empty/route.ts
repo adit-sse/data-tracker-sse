@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { checkApiKey } from '@/lib/ingestion-auth';
@@ -113,14 +114,15 @@ async function handleInferredEmpty(
     );
   }
 
-  const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
-    supabase.from('clients').select('id').ilike('name', String(client_name)).single(),
-    supabase.from('suppliers').select('id').ilike('name', String(supplier_name)).single(),
+  const [clientSupplier, { data: groupCategory }] = await Promise.all([
+    lookupClientAndSupplier(supabase, String(client_name), String(supplier_name)),
     supabase.from('categories').select('id').ilike('name', String(category)).single(),
   ]);
 
-  if (!client) return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
-  if (!supplier) return NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 });
+  if (!clientSupplier.ok) {
+    return NextResponse.json({ error: clientSupplier.error }, { status: clientSupplier.status });
+  }
+  const { client, supplier } = clientSupplier;
   if (!groupCategory) return NextResponse.json({ error: `Category "${category}" not found` }, { status: 404 });
 
   const { data: group } = await supabase
