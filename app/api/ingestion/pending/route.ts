@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { findCategoryForIngestion } from '@/lib/ingestion-utility-category';
@@ -332,13 +333,16 @@ async function handlePending(
     // ── Bulk mode: run non-metered AND metered paths in parallel ─────────────
     //
     // Resolve client + supplier IDs first (both paths need them).
-    const [{ data: client }, { data: supplier }] = await Promise.all([
-      supabase.from('clients').select('id').ilike('name', String(client_name)).single(),
-      supabase.from('suppliers').select('id').ilike('name', String(supplier_name)).single(),
-    ]);
+    const resolved = await lookupClientAndSupplier(
+      supabase,
+      String(client_name),
+      String(supplier_name)
+    );
 
-    if (!client) return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
-    if (!supplier) return NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 });
+    if (!resolved.ok) {
+      return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+    }
+    const { client, supplier } = resolved;
 
     // ── Non-metered path ─────────────────────────────────────────────────────
     let nonMeteredResult: {

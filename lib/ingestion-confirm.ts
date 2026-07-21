@@ -12,6 +12,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
+import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { findInputTypeForIngestion } from '@/lib/ingestion-utility-category';
 import { parseNgersDateRange, monthStartIso } from '@/lib/ingestion-dates';
 import {
@@ -152,14 +153,15 @@ export async function processNonMeteredGroupRows(
       };
     }
 
-    const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
-      supabase.from('clients').select('id').ilike('name', Company).single(),
-      supabase.from('suppliers').select('id').ilike('name', Provider).single(),
+    const [clientSupplier, { data: groupCategory }] = await Promise.all([
+      lookupClientAndSupplier(supabase, Company, Provider),
       supabase.from('categories').select('id').ilike('name', Category).single(),
     ]);
 
-    if (!client) return { ok: false, error: `Client "${Company}" not found`, status: 404 };
-    if (!supplier) return { ok: false, error: `Supplier "${Provider}" not found`, status: 404 };
+    if (!clientSupplier.ok) {
+      return { ok: false, error: clientSupplier.error, status: clientSupplier.status };
+    }
+    const { client, supplier } = clientSupplier;
     if (!groupCategory) return { ok: false, error: `Category "${Category}" not found`, status: 404 };
 
     let targetInputTypeId: string;

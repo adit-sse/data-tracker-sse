@@ -11,6 +11,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { IdentifierType } from '@/types';
+import { lookupFacilityByName, lookupSupplierByName } from '@/lib/name-lookup';
 import { keywordMatches } from '@/lib/utility-category-classification';
 
 // ---------------------------------------------------------------------------
@@ -169,39 +170,14 @@ export async function cachedFindOrCreateFacility(
   const cached = ctx.facilityCache.get(key);
   if (cached) return cached;
 
-  const { data: matches } = await ctx.supabase
-    .from('facilities')
-    .select('id, address, created_at')
-    .eq('client_id', ctx.clientId)
-    .ilike('name', displayName);
-
-  const list = matches || [];
-  let chosen: { id: string } | null = null;
-
-  if (list.length === 1) {
-    chosen = list[0];
-  } else if (list.length > 1) {
-    const addrNorm = (address || '').trim().toLowerCase();
-    if (addrNorm) {
-      const byAddr = list.find((f) => (f.address || '').trim().toLowerCase() === addrNorm);
-      if (byAddr) chosen = byAddr;
-      if (!chosen) {
-        const partial = list.find((f) => (f.address || '').toLowerCase().includes(addrNorm));
-        if (partial) chosen = partial;
-      }
-    }
-    if (!chosen) {
-      list.sort(
-        (a, b) =>
-          new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime(),
-      );
-      chosen = list[0];
-    }
+  const facilityLookup = await lookupFacilityByName(ctx.supabase, displayName, ctx.clientId);
+  if (facilityLookup.error) {
+    throw new Error(`Failed to look up facility: ${facilityLookup.error}`);
   }
 
-  if (chosen) {
-    ctx.facilityCache.set(key, chosen.id);
-    return chosen.id;
+  if (facilityLookup.data) {
+    ctx.facilityCache.set(key, facilityLookup.data.id);
+    return facilityLookup.data.id;
   }
 
   const { data: created, error } = await ctx.supabase
@@ -212,16 +188,10 @@ export async function cachedFindOrCreateFacility(
 
   if (error) {
     if (error.code === '23505' || error.message?.toLowerCase().includes('duplicate')) {
-      const { data: retry } = await ctx.supabase
-        .from('facilities')
-        .select('id')
-        .eq('client_id', ctx.clientId)
-        .ilike('name', displayName)
-        .limit(2);
-      const found = retry?.[0];
-      if (found) {
-        ctx.facilityCache.set(key, found.id);
-        return found.id;
+      const retry = await lookupFacilityByName(ctx.supabase, displayName, ctx.clientId);
+      if (retry.data) {
+        ctx.facilityCache.set(key, retry.data.id);
+        return retry.data.id;
       }
     }
     throw new Error(`Failed to create facility: ${error.message}`);
@@ -236,15 +206,13 @@ export async function cachedFindOrCreateSupplier(ctx: UploadContext, name: strin
   const cached = ctx.supplierCache.get(key);
   if (cached) return cached;
 
-  const { data: existing } = await ctx.supabase
-    .from('suppliers')
-    .select('id')
-    .ilike('name', name)
-    .limit(1);
-
-  if (existing && existing.length > 0) {
-    ctx.supplierCache.set(key, existing[0].id);
-    return existing[0].id;
+  const supplierLookup = await lookupSupplierByName(ctx.supabase, name);
+  if (supplierLookup.error) {
+    throw new Error(`Failed to look up supplier: ${supplierLookup.error}`);
+  }
+  if (supplierLookup.data) {
+    ctx.supplierCache.set(key, supplierLookup.data.id);
+    return supplierLookup.data.id;
   }
 
   const { data: created, error } = await ctx.supabase
@@ -255,14 +223,10 @@ export async function cachedFindOrCreateSupplier(ctx: UploadContext, name: strin
 
   if (error) {
     if (error.code === '23505' || error.message?.toLowerCase().includes('duplicate')) {
-      const { data: retry } = await ctx.supabase
-        .from('suppliers')
-        .select('id')
-        .ilike('name', name)
-        .limit(1);
-      if (retry && retry.length > 0) {
-        ctx.supplierCache.set(key, retry[0].id);
-        return retry[0].id;
+      const retry = await lookupSupplierByName(ctx.supabase, name);
+      if (retry.data) {
+        ctx.supplierCache.set(key, retry.data.id);
+        return retry.data.id;
       }
     }
     throw new Error(`Failed to create supplier: ${error.message}`);

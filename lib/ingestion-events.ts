@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { lookupClientByName } from '@/lib/name-lookup';
 import type { NextResponse } from 'next/server';
 
 /**
@@ -131,9 +132,10 @@ async function resolveClientIdByName(
 ): Promise<number | null> {
   if (!name) return null;
   try {
-    const { data } = await supabase.from('clients').select('id').ilike('name', name).maybeSingle();
-    const id = (data as { id?: number } | null)?.id;
-    return typeof id === 'number' ? id : null;
+    const lookup = await lookupClientByName(supabase, name);
+    if (lookup.error || !lookup.data) return null;
+    const id = Number(lookup.data.id);
+    return Number.isFinite(id) ? id : null;
   } catch {
     return null;
   }

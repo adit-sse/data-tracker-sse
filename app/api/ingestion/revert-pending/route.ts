@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { resolveMeterForIngestion } from '@/lib/ingestion-metered';
@@ -120,13 +121,16 @@ async function handleRevertPending(
     const utilityTrimmed = typeof utility_name === 'string' ? utility_name.trim() : '';
     const facilityTrimmed = typeof facility_name === 'string' ? facility_name.trim() : '';
 
-    const [{ data: client }, { data: supplier }] = await Promise.all([
-      supabase.from('clients').select('id').ilike('name', String(client_name)).single(),
-      supabase.from('suppliers').select('id').ilike('name', String(supplier_name)).single(),
-    ]);
+    const resolved = await lookupClientAndSupplier(
+      supabase,
+      String(client_name),
+      String(supplier_name)
+    );
 
-    if (!client) return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
-    if (!supplier) return NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 });
+    if (!resolved.ok) {
+      return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+    }
+    const { client, supplier } = resolved;
 
     // Specific meter by identifier — mirrors the pending endpoint's metered path.
     if (identifier_type && lookup1) {
@@ -238,14 +242,15 @@ async function handleRevertPending(
     );
   }
 
-  const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
-    supabase.from('clients').select('id').ilike('name', String(client_name)).single(),
-    supabase.from('suppliers').select('id').ilike('name', String(supplier_name)).single(),
+  const [clientSupplier, { data: groupCategory }] = await Promise.all([
+    lookupClientAndSupplier(supabase, String(client_name), String(supplier_name)),
     supabase.from('categories').select('id').ilike('name', String(category)).single(),
   ]);
 
-  if (!client) return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
-  if (!supplier) return NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 });
+  if (!clientSupplier.ok) {
+    return NextResponse.json({ error: clientSupplier.error }, { status: clientSupplier.status });
+  }
+  const { client, supplier } = clientSupplier;
   if (!groupCategory) return NextResponse.json({ error: `Category "${category}" not found` }, { status: 404 });
 
   const { data: group } = await supabase

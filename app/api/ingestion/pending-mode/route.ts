@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { checkApiKey } from '@/lib/ingestion-auth';
 
@@ -48,17 +49,12 @@ export async function GET(request: Request) {
   try {
     const supabase = createSupabaseServiceRoleClient();
 
-    const [{ data: client }, { data: supplier }] = await Promise.all([
-      supabase.from('clients').select('id, name').ilike('name', client_name).single(),
-      supabase.from('suppliers').select('id, name').ilike('name', supplier_name).single(),
-    ]);
+    const resolved = await lookupClientAndSupplier(supabase, client_name, supplier_name);
 
-    if (!client) {
-      return NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 });
+    if (!resolved.ok) {
+      return NextResponse.json({ error: resolved.error }, { status: resolved.status });
     }
-    if (!supplier) {
-      return NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 });
-    }
+    const { client, supplier } = resolved;
 
     const { data: facilities, error: facErr } = await supabase
       .from('facilities')

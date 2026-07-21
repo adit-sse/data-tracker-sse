@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { logIngestionErrorReport } from '@/lib/ingestion-events';
@@ -116,14 +117,15 @@ async function handleError(supabase: SupabaseClient, body: Record<string, unknow
     }
 
     // ----- Facility group -----
-    const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
-      supabase.from('clients').select('id').ilike('name', client_name).single(),
-      supabase.from('suppliers').select('id').ilike('name', supplier_name).single(),
+    const [clientSupplier, { data: groupCategory }] = await Promise.all([
+      lookupClientAndSupplier(supabase, client_name, supplier_name),
       supabase.from('categories').select('id').ilike('name', utility_name).single(),
     ]);
 
-    if (!client) return ok(NextResponse.json({ error: `Client "${client_name}" not found` }, { status: 404 }));
-    if (!supplier) return ok(NextResponse.json({ error: `Supplier "${supplier_name}" not found` }, { status: 404 }));
+    if (!clientSupplier.ok) {
+      return ok(NextResponse.json({ error: clientSupplier.error }, { status: clientSupplier.status }));
+    }
+    const { client, supplier } = clientSupplier;
     if (!groupCategory) {
       return ok(NextResponse.json({ error: `Category "${utility_name}" not found` }, { status: 404 }));
     }

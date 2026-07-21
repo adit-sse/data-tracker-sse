@@ -14,6 +14,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
+import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { resolveMeterForIngestion } from '@/lib/ingestion-metered';
 import { parseNgersDateRange, monthStartIso } from '@/lib/ingestion-dates';
 import type { IdentifierType } from '@/types';
@@ -195,14 +196,15 @@ export async function markNonMeteredError(
   }
 
   // ── Facility group ───────────────────────────────────────────────────────────
-  const [{ data: client }, { data: supplier }, { data: groupCategory }] = await Promise.all([
-    supabase.from('clients').select('id').ilike('name', t.client_name).single(),
-    supabase.from('suppliers').select('id').ilike('name', t.supplier_name).single(),
+  const [clientSupplier, { data: groupCategory }] = await Promise.all([
+    lookupClientAndSupplier(supabase, t.client_name, t.supplier_name),
     supabase.from('categories').select('id').ilike('name', t.utility_name).single(),
   ]);
 
-  if (!client) return { ok: false, error: `Client "${t.client_name}" not found`, status: 404 };
-  if (!supplier) return { ok: false, error: `Supplier "${t.supplier_name}" not found`, status: 404 };
+  if (!clientSupplier.ok) {
+    return { ok: false, error: clientSupplier.error, status: clientSupplier.status };
+  }
+  const { client, supplier } = clientSupplier;
   if (!groupCategory) {
     return { ok: false, error: `Category "${t.utility_name}" not found`, status: 404 };
   }
