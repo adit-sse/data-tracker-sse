@@ -14,6 +14,7 @@ import type { IdentifierType } from '@/types';
 import { lookupFacilityByName, lookupSupplierByName } from '@/lib/name-lookup';
 import { keywordMatches } from '@/lib/utility-category-classification';
 import { idKey, sameId } from '@/lib/row-id';
+import { identifierLookupCandidates } from '@/lib/nmi';
 
 // ---------------------------------------------------------------------------
 // Context
@@ -346,13 +347,18 @@ export async function cachedFindOrCreateMeter(
   const cachedLoose = ctx.meterCache.get(looseCacheKey);
   if (cachedLoose) return cachedLoose;
 
+  // A NMI may be stored with or without its trailing checksum digit. Match every
+  // form the value could take, otherwise the miss below creates a second meter
+  // for a site that already has one. See lib/nmi.ts.
+  const lookupCandidates = identifierLookupCandidates(opts.identifierType, opts.lookup1);
+
   const { data: exactRows } = await ctx.supabase
     .from('meters')
     .select('id, identifier_type')
     .eq('facility_id', opts.facilityId)
     .eq('input_type_id', opts.categoryId)
     .eq('identifier_type', opts.identifierType)
-    .eq('lookup1', opts.lookup1)
+    .in('lookup1', lookupCandidates)
     .limit(1);
 
   const exact = exactRows?.[0];
@@ -369,7 +375,7 @@ export async function cachedFindOrCreateMeter(
     .select('id, identifier_type')
     .eq('facility_id', opts.facilityId)
     .eq('input_type_id', opts.categoryId)
-    .eq('lookup1', opts.lookup1)
+    .in('lookup1', lookupCandidates)
     .limit(1);
 
   const anyType = anyTypeRows?.[0];
@@ -398,7 +404,7 @@ export async function cachedFindOrCreateMeter(
       const { data: byLookup1 } = await ctx.supabase
         .from('meters')
         .select('id, facility_id, input_type_id, identifier_type, lookup1')
-        .eq('lookup1', opts.lookup1)
+        .in('lookup1', lookupCandidates)
         .limit(1);
       const found = byLookup1?.[0];
       if (found) {

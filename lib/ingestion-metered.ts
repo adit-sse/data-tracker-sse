@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { IdentifierType } from '@/types';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { idKey, sameId, type RowId } from '@/lib/row-id';
+import { identifierLookupCandidates } from '@/lib/nmi';
 
 /** Invoice rows that already “cover” a month — do not seed metered PENDING over these. */
 export const METERED_GREEN_INVOICE_STATUSES = [
@@ -143,16 +144,39 @@ export async function resolveMeterForIngestion(
     return { ok: false, error: 'lookup1 / identifier is required', status: 400 };
   }
 
+  // A NMI is stored either with or without its trailing checksum digit, and
+  // source data uses both forms for the same meter. Match on every form the
+  // value could legitimately take. Other identifier types resolve to just
+  // themselves — see lib/nmi.ts.
+  const lookupCandidates = identifierLookupCandidates(params.identifierType, lookup1);
+
   let query = supabase
     .from('meters')
     .select('id, supplier_id, identifier_type, lookup1')
     .eq('facility_id', facilityId)
     .eq('input_type_id', line.categoryId)
-    .eq('lookup1', lookup1);
+    .in('lookup1', lookupCandidates);
 
   const { data: exactRows } = await query
     .eq('identifier_type', params.identifierType)
-    .limit(1);
+    .limit(2);
+
+  // Both the checksummed and un-checksummed form exist as separate meters —
+  // one physical site recorded twice. Say so rather than picking one, since
+  // silently choosing would split its consumption across the two.
+  if ((exactRows?.length ?? 0) > 1) {
+    const dupes = (exactRows ?? []) as MeterMatch[];
+    const supplierNames = await supplierNamesByIds(supabase, dupes.map((m) => m.supplier_id));
+    return {
+      ok: false,
+      error:
+        `Two meters at facility "${line.facilityName}" hold the same NMI in different forms ` +
+        `(with and without its checksum digit): ` +
+        `${dupes.map((m, i) => `[${i + 1}] ${describeMeter(m, supplierNames)}`).join('; ')}. ` +
+        'These are one meter recorded twice — delete the duplicate, keeping whichever has the invoice history.',
+      status: 409,
+    };
+  }
 
   let meter = exactRows?.[0] as MeterMatch | undefined;
 
@@ -162,7 +186,7 @@ export async function resolveMeterForIngestion(
       .select('id, supplier_id, identifier_type, lookup1')
       .eq('facility_id', facilityId)
       .eq('input_type_id', line.categoryId)
-      .eq('lookup1', lookup1)
+      .in('lookup1', lookupCandidates)
       .limit(6);
 
     if ((looseRows?.length ?? 0) > 1) {
