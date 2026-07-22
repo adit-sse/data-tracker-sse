@@ -60,9 +60,22 @@ export function parseMeterIdentifierFromNgersRow(
   return { ok: false, error: 'Row needs NMI, MIRN, Account Number, or Meter Number' };
 }
 
+/**
+ * Row ids come back from PostgREST as numbers for integer columns, but the
+ * lib/name-lookup RPC helpers stringify theirs (`String(row.id)`). Compare and
+ * key on ids only through these helpers — a raw `===` mixes the two and is
+ * always false.
+ */
+type RowId = string | number | null;
+
+const idKey = (id: RowId): string => (id === null ? '' : String(id));
+
+const sameId = (a: RowId, b: RowId): boolean =>
+  a !== null && b !== null && idKey(a) === idKey(b);
+
 type MeterMatch = {
-  id: string;
-  supplier_id: string | null;
+  id: string | number;
+  supplier_id: RowId;
   identifier_type: string | null;
   lookup1: string | null;
 };
@@ -70,22 +83,22 @@ type MeterMatch = {
 /** Supplier names by id, for error messages only. One query for any number of ids. */
 async function supplierNamesByIds(
   supabase: SupabaseClient,
-  supplierIds: (string | null)[]
+  supplierIds: RowId[]
 ): Promise<Map<string, string>> {
-  const ids = Array.from(new Set(supplierIds.filter((id): id is string => Boolean(id))));
+  const ids = Array.from(new Set(supplierIds.filter((id) => id !== null).map(idKey)));
   if (ids.length === 0) return new Map();
   const { data } = await supabase.from('suppliers').select('id, name').in('id', ids);
   const byId = new Map<string, string>();
-  for (const row of (data ?? []) as { id: string; name: string | null }[]) {
-    if (row.name?.trim()) byId.set(String(row.id), row.name.trim());
+  for (const row of (data ?? []) as { id: RowId; name: string | null }[]) {
+    if (row.name?.trim()) byId.set(idKey(row.id), row.name.trim());
   }
   return byId;
 }
 
 /** Render a supplier id as a name for error text, falling back to the raw id. */
-function supplierLabel(supplierId: string | null, byId: Map<string, string>): string {
-  if (!supplierId) return '(none)';
-  return byId.get(supplierId) ?? `(unknown supplier id ${supplierId})`;
+function supplierLabel(supplierId: RowId, byId: Map<string, string>): string {
+  if (supplierId === null) return '(none)';
+  return byId.get(idKey(supplierId)) ?? `(unknown supplier id ${supplierId})`;
 }
 
 /** One-line description of a meter row for error text. */
@@ -196,7 +209,7 @@ export async function resolveMeterForIngestion(
     };
   }
 
-  if (meter.supplier_id && meter.supplier_id !== line.supplierId) {
+  if (meter.supplier_id !== null && !sameId(meter.supplier_id, line.supplierId)) {
     const supplierNames = await supplierNamesByIds(supabase, [meter.supplier_id]);
     return {
       ok: false,
@@ -235,7 +248,7 @@ export async function resolveMeterForIngestion(
     }
   }
 
-  return { ok: true, meterId: meter.id };
+  return { ok: true, meterId: idKey(meter.id) };
 }
 
 /**
