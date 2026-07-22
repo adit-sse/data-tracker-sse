@@ -15,26 +15,10 @@ export async function POST(
     const body = await request.json();
     const {
       meter_id,
-      invoice_number,
-      invoice_date,
       period_start_date,
       period_end_date,
-      consumption,
-      amount,
-      framework,
-      version,
-      input_type,
-      emissions_factor,
-      customer
     } = body;
 
-    // Normalize optional fields: convert empty strings/undefined to null, but preserve numeric 0
-    const invoiceNumberTrimmed = invoice_number?.toString().trim() || null;
-    const invoiceDateValue = invoice_date ? invoice_date.toString() : null;
-    const consumptionValue = consumption == null ? null : consumption; // allows 0
-    const amountValue = amount == null ? null : amount; // allows 0
-    const customerValue = customer?.toString().trim() || null;
-    
     if (!meter_id || !period_start_date || !period_end_date) {
       return NextResponse.json(
         { error: 'Missing required fields: meter_id, period_start_date, period_end_date' },
@@ -53,30 +37,7 @@ export async function POST(
       );
     }
 
-    // Prevent duplicate invoices:
-    // 1) If an invoice number is provided (non-empty after trimming), check duplicate by invoice number for the meter
-    if (invoiceNumberTrimmed) {
-      const { data: existingByNumber, error: existingByNumberError } = await supabase
-        .from('actual_invoices')
-        .select('id')
-        .eq('meter_id', meter_id)
-        .eq('invoice_number', invoiceNumberTrimmed)
-        .limit(1)
-        .maybeSingle();
-
-      if (existingByNumberError) {
-        throw existingByNumberError;
-      }
-
-      if (existingByNumber) {
-        return NextResponse.json(
-          { error: 'An invoice with that invoice number already exists for this meter' },
-          { status: 409 }
-        );
-      }
-    }
-
-    // 2) Always prevent exact period duplicates for the same meter (applies regardless of invoice number)
+    // Prevent exact period duplicates for the same meter
     const { data: existingByPeriod, error: existingByPeriodError } = await supabase
       .from('actual_invoices')
       .select('id')
@@ -101,18 +62,9 @@ export async function POST(
       .from('actual_invoices')
       .insert([{
         meter_id,
-        invoice_number: invoiceNumberTrimmed,
-        invoice_date: invoiceDateValue,
         period_start_date,
         period_end_date,
-        consumption: consumptionValue,
-        amount: amountValue,
-        framework: framework?.trim() || null,
-        version: version?.trim() || null,
-        input_type: input_type?.trim() || null,
-        emissions_factor: emissions_factor ?? null,
-        customer: customerValue,
-        status: 'MANUAL_ENTRY'
+        status: 'CONFIRMED'
       }])
       .select()
       .single();

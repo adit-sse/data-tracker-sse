@@ -162,7 +162,7 @@ export async function processMeterSetupRow(
     };
 
     const payloads: NonMeteredPayload[] = [
-      ...dataPeriods.map((period) => ({ ...base, periodStart: period.start, periodEnd: period.end, status: 'IMPORTED' })),
+      ...dataPeriods.map((period) => ({ ...base, periodStart: period.start, periodEnd: period.end, status: 'CONFIRMED' })),
       ...deactivatedPeriods
         .filter((period) => !dataMonthStarts.has(period.start))
         .map((period) => ({ ...base, periodStart: period.start, periodEnd: period.end, status: 'DEACTIVATED' })),
@@ -199,35 +199,17 @@ export async function processMeterSetupRow(
   for (const period of dataPeriods) {
     pendingInvoices.push({
       meter_id: meterId,
-      invoice_number: null,
-      invoice_date: null,
       period_start_date: period.start,
       period_end_date: period.end,
-      consumption: null,
-      amount: null,
-      framework: null,
-      version: null,
-      input_type: null,
-      emissions_factor: null,
-      customer: null,
-      status: 'IMPORTED',
+      status: 'CONFIRMED',
     });
   }
   for (const period of deactivatedPeriods) {
     if (dataMonthStarts.has(period.start)) continue;
     pendingInvoices.push({
       meter_id: meterId,
-      invoice_number: null,
-      invoice_date: null,
       period_start_date: period.start,
       period_end_date: period.end,
-      consumption: null,
-      amount: null,
-      framework: null,
-      version: null,
-      input_type: null,
-      emissions_factor: null,
-      customer: null,
       status: 'DEACTIVATED',
     });
   }

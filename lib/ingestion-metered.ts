@@ -5,8 +5,6 @@ import { idKey, sameId, type RowId } from '@/lib/row-id';
 
 /** Invoice rows that already “cover” a month — do not seed metered PENDING over these. */
 export const METERED_GREEN_INVOICE_STATUSES = [
-  'IMPORTED',
-  'MANUAL_ENTRY',
   'CONFIRMED',
   'DEACTIVATED',
 ] as const;
@@ -439,32 +437,3 @@ export async function bulkFetchMeterInvoicesForMonths(
   return cache;
 }
 
-/** Extracts invoice metadata fields from a NGERS metered row for use in actual_invoices upserts. */
-export function metaFromRow(row: NgersMeterRow) {
-  return {
-    invoice_number:
-      typeof row['Invoice Number'] === 'string' && row['Invoice Number'].trim()
-        ? String(row['Invoice Number']).trim()
-        : null,
-    invoice_date:
-      typeof row['Invoice Date'] === 'string' && row['Invoice Date'].trim()
-        ? String(row['Invoice Date']).trim()
-        : null,
-    framework:
-      typeof row.Framework === 'string' && row.Framework.trim()
-        ? String(row.Framework).trim()
-        : null,
-    version:
-      typeof row.Version === 'string' && row.Version.trim()
-        ? String(row.Version).trim()
-        : null,
-    input_type:
-      typeof row['Input Type'] === 'string' && row['Input Type'].trim()
-        ? String(row['Input Type']).trim()
-        : null,
-    customer:
-      typeof row.Customer === 'string' && row.Customer.trim()
-        ? String(row.Customer).trim()
-        : null,
-  };
-}

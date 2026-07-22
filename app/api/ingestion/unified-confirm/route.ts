@@ -50,7 +50,6 @@ function classifyRow(row: UnifiedRow): RowType {
 async function handleUnifiedConfirm(supabase: SupabaseClient, raw: unknown): Promise<NextResponse> {
   try {
     let rows: UnifiedRow[];
-    let pruneOrphanPending = false;
 
     if (Array.isArray(raw)) {
       if (raw.length === 0) {
@@ -67,7 +66,6 @@ async function handleUnifiedConfirm(supabase: SupabaseClient, raw: unknown): Pro
       ((raw as { rows: unknown[] }).rows as unknown[]).length > 0
     ) {
       rows = (raw as { rows: UnifiedRow[] }).rows;
-      pruneOrphanPending = Boolean((raw as { prune_orphan_pending?: unknown }).prune_orphan_pending);
     } else {
       return NextResponse.json(
         {
@@ -99,7 +97,7 @@ async function handleUnifiedConfirm(supabase: SupabaseClient, raw: unknown): Pro
         ? processNonMeteredLineRows(supabase, nmLineRows, confirmedAt)
         : Promise.resolve({ ok: true as const, confirmed: 0 }),
       meteredRows.length > 0
-        ? processMeteredRows(supabase, meteredRows, confirmedAt, pruneOrphanPending)
+        ? processMeteredRows(supabase, meteredRows, confirmedAt)
         : Promise.resolve({
             ok: true as const,
             confirmed: 0,

@@ -73,7 +73,7 @@ export async function GET(
     // and match them to lines when building coverage cells.
     const { data: records, error: recordsError } = await supabase
       .from('non_metered_records')
-      .select('*')
+      .select('id, facility_id, supplier_id, input_type_id, period_start_date, period_end_date, status, inferred_from_id, created_at, confirmed_at')
       .in('facility_id', facilityIds)
       .lte('period_start_date', fyEnd)
       .gte('period_end_date', fyStart);
@@ -135,12 +135,7 @@ export async function GET(
         }
 
         // Prefer real data, then deactivated (explicitly marked off), then inferred/pending
-        const real = overlapping.find(
-          (r: any) =>
-            r.status === 'IMPORTED' ||
-            r.status === 'MANUAL' ||
-            r.status === 'CONFIRMED',
-        );
+        const real = overlapping.find((r: any) => r.status === 'CONFIRMED');
         const deactivated = overlapping.find((r: any) => r.status === 'DEACTIVATED');
         const best = real ?? deactivated ?? overlapping[0];
 

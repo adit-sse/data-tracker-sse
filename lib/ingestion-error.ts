@@ -6,7 +6,7 @@
  * only PENDING placeholders get marked ERROR.
  *
  * Exports:
- *   markMeteredError      — actual_invoices path (one specific meter)
+ *   markMeteredError      — meter_month_slots path (one specific meter)
  *   markNonMeteredError   — non_metered_records path (facility group or standalone line)
  *
  * Routes are thin adapters: parse request → call these → map result to NextResponse.
@@ -17,6 +17,7 @@ import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { resolveMeterForIngestion } from '@/lib/ingestion-metered';
 import { parseNgersDateRange, monthStartIso } from '@/lib/ingestion-dates';
+import { upsertErrorMonthSlot } from '@/lib/meter-month-slots';
 import type { IdentifierType } from '@/types';
 
 export type ErrorScope = 'metered' | 'group' | 'line';
@@ -105,26 +106,13 @@ export async function markMeteredError(
   });
   if (!resolved.ok) return { ok: false, error: resolved.error, status: resolved.status };
 
-  const { data: pendingRows, error: fetchError } = await supabase
-    .from('actual_invoices')
-    .select('id')
-    .eq('meter_id', resolved.meterId)
-    .eq('period_start_date', periodStart)
-    .eq('status', 'PENDING');
-  if (fetchError) throw new Error(fetchError.message);
+  // Metered workflow state lives in meter_month_slots (migration 018);
+  // actual_invoices holds real records only. Upserting rather than updating an
+  // existing PENDING row means an error is still recorded for a month that was
+  // never seeded, instead of silently reporting zero updates.
+  await upsertErrorMonthSlot(supabase, resolved.meterId, periodStart);
 
-  const ids = pendingIds(pendingRows);
-  if (ids.length === 0) {
-    return { ok: true, scope: 'metered', updated: 0, periodStart, meterId: resolved.meterId };
-  }
-
-  const { error: updateError } = await supabase
-    .from('actual_invoices')
-    .update({ status: 'ERROR' })
-    .in('id', ids);
-  if (updateError) throw new Error(updateError.message);
-
-  return { ok: true, scope: 'metered', updated: ids.length, periodStart, meterId: resolved.meterId };
+  return { ok: true, scope: 'metered', updated: 1, periodStart, meterId: resolved.meterId };
 }
 
 /** Mark PENDING non_metered_records as ERROR for a facility group or standalone line. */

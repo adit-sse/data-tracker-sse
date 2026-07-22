@@ -10,12 +10,7 @@ import {
 } from '@/lib/non-metered-pending-seed';
 import { seedNonMeteredFacilityGroupPending, type GroupPendingMember } from '@/lib/ingestion-group-pending';
 import { seedAllScope1NonMeteredPending } from '@/lib/ingestion-pending-scope1';
-import {
-  meterMonthBlocksNewPending,
-  bulkFetchMeterInvoicesForMonths,
-  meterMonthBlocksNewPendingFromCache,
-  earliestMeterMonthStart,
-} from '@/lib/ingestion-metered';
+import { upsertPendingMonthSlots } from '@/lib/meter-month-slots';
 import { checkApiKey } from '@/lib/ingestion-auth';
 import { logIngestionFromResponse } from '@/lib/ingestion-events';
 import type { IdentifierType } from '@/types';
@@ -118,74 +113,44 @@ async function seedMeteredPending(
 
   const meterIdList = candidateMeters.map((m: any) => String(m.id));
 
-  // Bound the bulk invoice fetch by the earliest record across all candidate
-  // meters so each meter's own earliest (→ its pending start) is in the cache.
-  const { data: earliestRow } = await supabase
+  // Each meter's pending range starts at its earliest real record (behaviour
+  // from #56), falling back to current-FY-through-now for meters with none.
+  // One bulk query, reduced client-side — no per-meter round trip.
+  // PENDING/ERROR no longer live in actual_invoices (migration 019), so this
+  // now reflects genuine data start rather than prior seeding.
+  const { data: recordRows } = await supabase
     .from('actual_invoices')
-    .select('period_start_date')
-    .in('meter_id', meterIdList)
-    .order('period_start_date', { ascending: true })
-    .limit(1);
-  const globalEarliest =
-    typeof earliestRow?.[0]?.period_start_date === 'string'
-      ? String(earliestRow[0].period_start_date).slice(0, 10)
-      : null;
+    .select('meter_id, period_start_date')
+    .in('meter_id', meterIdList);
 
-  const rangeStart = globalEarliest ?? fallbackMonths[0].start;
-  const rangeEnd = fallbackMonths[fallbackMonths.length - 1].end;
-  const invoiceCache = await bulkFetchMeterInvoicesForMonths(
-    supabase,
-    meterIdList,
-    rangeStart,
-    rangeEnd
+  const earliestByMeter = new Map<string, string>();
+  for (const r of recordRows ?? []) {
+    const id = String(r.meter_id);
+    const ps = String(r.period_start_date).slice(0, 10);
+    const prev = earliestByMeter.get(id);
+    if (!prev || ps < prev) earliestByMeter.set(id, ps);
+  }
+
+  // Upsert a PENDING slot per meter × month over that meter's own range.
+  // ignoreDuplicates means existing ERROR/DEACTIVATED slots are untouched;
+  // only absent slots get created.
+  let totalCreated = 0;
+  await Promise.all(
+    candidateMeters.map((meter: any) => {
+      const earliest = earliestByMeter.get(String(meter.id));
+      const months = earliest ? monthsFromIsoThroughNow(earliest) : fallbackMonths;
+      if (months.length === 0) return Promise.resolve();
+      totalCreated += months.length;
+      return upsertPendingMonthSlots(
+        supabase,
+        String(meter.id),
+        months[0].start,
+        months[months.length - 1].end
+      );
+    })
   );
 
-  const allToInsert: Array<{
-    meter_id: string;
-    period_start_date: string;
-    period_end_date: string;
-    status: string;
-  }> = [];
-
-  let totalCreated = 0;
-  let totalSkipped = 0;
-
-  for (const meter of candidateMeters) {
-    const cachedRows = invoiceCache.get(String(meter.id)) ?? [];
-
-    // Per-meter earliest from the cache; fall back to current-FY-through-now
-    // for meters with no records yet.
-    let earliest: string | null = null;
-    for (const r of cachedRows) {
-      const ps = String(r.period_start_date).slice(0, 10);
-      if (!earliest || ps < earliest) earliest = ps;
-    }
-    const months = earliest ? monthsFromIsoThroughNow(earliest) : fallbackMonths;
-
-    for (const month of months) {
-      if (meterMonthBlocksNewPendingFromCache(cachedRows, month.start, month.end)) {
-        totalSkipped++;
-        continue;
-      }
-      allToInsert.push({
-        meter_id: meter.id,
-        period_start_date: month.start,
-        period_end_date: month.end,
-        status: 'PENDING',
-      });
-    }
-  }
-
-  // Single batched insert across all meters (chunked to stay within PostgREST limits)
-  const INSERT_CHUNK = 500;
-  for (let i = 0; i < allToInsert.length; i += INSERT_CHUNK) {
-    const chunk = allToInsert.slice(i, i + INSERT_CHUNK);
-    const { error: insertErr } = await supabase.from('actual_invoices').insert(chunk);
-    if (insertErr) throw new Error(insertErr.message);
-    totalCreated += chunk.length;
-  }
-
-  return { ok: true, meters: candidateMeters.length, created: totalCreated, skipped: totalSkipped };
+  return { ok: true, meters: candidateMeters.length, created: totalCreated, skipped: 0 };
 }
 
 // POST /api/ingestion/pending
@@ -281,7 +246,7 @@ async function handlePending(
 
     // ── Mode: specific meter (identifier_type + lookup1 provided) ────────────
     if (identifier_type && lookup1) {
-      const { resolveMeterForIngestion } = await import('@/lib/ingestion-metered');
+      const { resolveMeterForIngestion, earliestMeterMonthStart } = await import('@/lib/ingestion-metered');
       const resolved = await resolveMeterForIngestion(supabase, {
         clientName: String(client_name),
         facilityName: facilityTrimmed,
@@ -296,37 +261,24 @@ async function handlePending(
         return NextResponse.json({ error: resolved.error }, { status: resolved.status });
       }
 
+      // Seed from this meter's earliest real record (behaviour from #56),
+      // falling back to current-FY-through-now when it has none.
       const earliest = await earliestMeterMonthStart(supabase, resolved.meterId);
       const months = earliest ? monthsFromIsoThroughNow(earliest) : getCurrentFiscalYearMonthsThroughNow();
-      const toInsert: Array<{
-        meter_id: string;
-        period_start_date: string;
-        period_end_date: string;
-        status: string;
-      }> = [];
-
-      for (const month of months) {
-        if (await meterMonthBlocksNewPending(supabase, resolved.meterId, month.start, month.end)) {
-          continue;
-        }
-        toInsert.push({
-          meter_id: resolved.meterId,
-          period_start_date: month.start,
-          period_end_date: month.end,
-          status: 'PENDING',
-        });
-      }
-
-      if (toInsert.length > 0) {
-        const { error: insertError } = await supabase.from('actual_invoices').insert(toInsert);
-        if (insertError) throw insertError;
+      if (months.length > 0) {
+        await upsertPendingMonthSlots(
+          supabase,
+          resolved.meterId,
+          months[0].start,
+          months[months.length - 1].end
+        );
       }
 
       return NextResponse.json({
         mode: 'metered',
         meter_id: resolved.meterId,
-        created: toInsert.length,
-        skipped: months.length - toInsert.length,
+        created: months.length,
+        skipped: 0,
       });
     }
 

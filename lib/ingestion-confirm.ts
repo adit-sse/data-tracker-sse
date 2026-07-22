@@ -14,16 +14,15 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { findInputTypeForIngestion } from '@/lib/ingestion-utility-category';
-import { parseNgersDateRange, monthStartIso } from '@/lib/ingestion-dates';
+import { parseNgersDateRange } from '@/lib/ingestion-dates';
 import {
   parseMeterIdentifierFromNgersRow,
   resolveMeterForIngestion,
-  metaFromRow,
   METERED_GREEN_INVOICE_STATUSES,
   type NgersMeterRow,
 } from '@/lib/ingestion-metered';
-import { eachMonthStartIsoOverlapping, syncMeteredGapPendingForMonths } from '@/lib/metered-gap-pending';
-import { getCurrentFiscalYearMonthsThroughNow } from '@/lib/non-metered-pending-seed';
+import { eachMonthStartIsoOverlapping } from '@/lib/metered-gap-pending';
+import { upsertPendingMonthSlots } from '@/lib/meter-month-slots';
 import {
   ensureLineInFacilityGroup,
   ensureLineInMatchingFacilityGroups,
@@ -46,9 +45,6 @@ type ProcessorOk<T extends object> = T & { ok: true };
 type ProcessorError = { ok: false; error: string; status: number };
 export type ProcessorResult<T extends object> = ProcessorOk<T> | ProcessorError;
 
-function periodKey(d: string | null | undefined): string {
-  return d ? String(d).slice(0, 10) : '';
-}
 
 // ── Atomic non-metered DB operation ──────────────────────────────────────────
 
@@ -341,8 +337,7 @@ export async function processNonMeteredLineRows(
 export async function processMeteredRows(
   supabase: SupabaseClient,
   rows: NgersMeterRow[],
-  confirmedAt: string,
-  pruneOrphanPending: boolean
+  confirmedAt: string
 ): Promise<
   ProcessorResult<{
     confirmed: number;
@@ -402,7 +397,6 @@ export async function processMeteredRows(
     const { meterId } = resolved;
 
     const confirmedPeriods = new Map<string, { start: string; end: string }>();
-    const periodTotals = new Map<string, { consumption: number; amount: number }>();
     const monthKeysConfirmed = new Set<string>();
 
     for (const row of groupRows) {
@@ -421,16 +415,9 @@ export async function processMeteredRows(
       for (const m of eachMonthStartIsoOverlapping(parsed.start, parsed.end)) {
         monthKeysConfirmed.add(m);
       }
-      const prev = periodTotals.get(parsed.start) ?? { consumption: 0, amount: 0 };
-      periodTotals.set(parsed.start, {
-        consumption: prev.consumption + (Number(row.Consumption) || 0),
-        amount: prev.amount + (Number(row['Amount ($)']) || 0),
-      });
     }
 
     if (confirmedPeriods.size === 0) continue;
-
-    const meta = metaFromRow(first);
 
     // Pre-fetch all PENDING and GREEN invoices for this meter covering the full range
     // of confirmed periods in one parallel query pair — replaces per-period selects.
@@ -480,7 +467,6 @@ export async function processMeteredRows(
     const newConfirmedRows: Array<Record<string, unknown>> = [];
 
     for (const [periodStartKey, period] of Array.from(confirmedPeriods.entries())) {
-      const totals = periodTotals.get(periodStartKey) ?? { consumption: 0, amount: 0 };
       const pendings = pendingByPeriod.get(periodStartKey) ?? [];
 
       if (pendings.length > 0) {
@@ -492,16 +478,8 @@ export async function processMeteredRows(
           .update({
             period_start_date: period.start,
             period_end_date: period.end,
-            consumption: totals.consumption,
-            amount: totals.amount,
             status: 'CONFIRMED',
             confirmed_at: confirmedAt,
-            invoice_number: meta.invoice_number,
-            invoice_date: meta.invoice_date,
-            framework: meta.framework,
-            version: meta.version,
-            input_type: meta.input_type,
-            customer: meta.customer,
           })
           .eq('id', keepId);
 
@@ -525,16 +503,8 @@ export async function processMeteredRows(
           meter_id: meterId,
           period_start_date: period.start,
           period_end_date: period.end,
-          consumption: totals.consumption,
-          amount: totals.amount,
           status: 'CONFIRMED',
           confirmed_at: confirmedAt,
-          invoice_number: meta.invoice_number,
-          invoice_date: meta.invoice_date,
-          framework: meta.framework,
-          version: meta.version,
-          input_type: meta.input_type,
-          customer: meta.customer,
         });
         totalConfirmed++;
       }
@@ -553,32 +523,16 @@ export async function processMeteredRows(
       if (insErr) throw new Error(insErr.message);
     }
 
-    const gapSync = await syncMeteredGapPendingForMonths(
-      supabase,
-      meterId,
-      monthKeysConfirmed
-    );
-    totalDeletedPending += gapSync.deleted;
-    totalGapPendingInserted += gapSync.inserted;
-
-    if (pruneOrphanPending) {
-      const fyMonthStarts = new Set(getCurrentFiscalYearMonthsThroughNow().map((m) => m.start));
-      const { data: pendingNow, error: pnErr } = await supabase
-        .from('actual_invoices')
-        .select('id, period_start_date')
-        .eq('meter_id', meterId)
-        .eq('status', 'PENDING');
-      if (pnErr) throw new Error(pnErr.message);
-      const orphaned = (pendingNow ?? []).filter((r) => {
-        const pendingMonthStart = monthStartIso(periodKey(r.period_start_date));
-        return !monthKeysConfirmed.has(pendingMonthStart) && fyMonthStarts.has(pendingMonthStart);
-      });
-      if (orphaned.length > 0) {
-        const orphanIds = orphaned.map((r) => r.id);
-        const { error: delErr } = await supabase.from('actual_invoices').delete().in('id', orphanIds);
-        if (delErr) throw new Error(delErr.message);
-        totalDeletedPending += orphanIds.length;
-      }
+    // Upsert a PENDING slot for every month touched by this confirmation.
+    // ignoreDuplicates=true means existing ERROR/DEACTIVATED slots are left as-is.
+    const sortedMonths = Array.from(monthKeysConfirmed).sort();
+    if (sortedMonths.length > 0) {
+      await upsertPendingMonthSlots(
+        supabase,
+        meterId,
+        sortedMonths[0],
+        sortedMonths[sortedMonths.length - 1]
+      );
     }
   }
 
