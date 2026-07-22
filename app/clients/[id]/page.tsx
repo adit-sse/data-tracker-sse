@@ -540,6 +540,7 @@ export default function ClientDetailPage() {
                 <>
                   <CoverageSummary metersWithCoverage={scope2Meters} />
                   <CoverageTable
+                    clientId={clientId}
                     metersWithCoverage={scope2Meters}
                     fiscalYear={fiscalYear}
                     onQuickAddInvoice={({ meterId, facilityId, period_start_date, period_end_date, invoices }) => {
@@ -561,6 +562,7 @@ export default function ClientDetailPage() {
                 <>
                   <CoverageSummary metersWithCoverage={scope1MeteredMeters} />
                   <CoverageTable
+                    clientId={clientId}
                     metersWithCoverage={scope1MeteredMeters}
                     fiscalYear={fiscalYear}
                     showCategoryColumn

@@ -3,6 +3,7 @@ export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { IDENTIFIER_TYPES } from '@/types';
 
 // PATCH /api/meters/[id] - Update a meter
 export async function PATCH(
@@ -37,10 +38,25 @@ export async function PATCH(
       updateData.category_id = category_id || null;
     }
     if (identifier_type !== undefined) {
+      // Whitelisted here so a bad value is a 400 rather than a CHECK-constraint 500.
+      if (!IDENTIFIER_TYPES.some((t) => t.value === identifier_type)) {
+        return NextResponse.json(
+          { error: `Invalid identifier type "${identifier_type}"` },
+          { status: 400 }
+        );
+      }
       updateData.identifier_type = identifier_type;
     }
     if (lookup1 !== undefined) {
-      updateData.lookup1 = lookup1?.trim();
+      // POST rejects a blank identifier; PATCH must too, or an edit can clear it.
+      const trimmed = typeof lookup1 === 'string' ? lookup1.trim() : String(lookup1 ?? '').trim();
+      if (!trimmed) {
+        return NextResponse.json(
+          { error: 'Identifier cannot be empty' },
+          { status: 400 }
+        );
+      }
+      updateData.lookup1 = trimmed;
     }
     if (lookup2 !== undefined) {
       updateData.lookup2 = lookup2?.trim() || null;
@@ -75,7 +91,21 @@ export async function PATCH(
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      // meters is UNIQUE (facility_id, input_type_id, identifier_type, lookup1),
+      // so editing facility, input type, or identifier can collide with an existing meter.
+      if (error.code === '23505') {
+        return NextResponse.json(
+          {
+            error:
+              'Another meter on this facility already uses that input type and identifier. ' +
+              'Change the identifier, or edit the existing meter instead.',
+          },
+          { status: 409 }
+        );
+      }
+      throw error;
+    }
 
     return NextResponse.json(data);
   } catch (error) {
