@@ -13,6 +13,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { IdentifierType } from '@/types';
 import { lookupFacilityByName, lookupSupplierByName } from '@/lib/name-lookup';
 import { keywordMatches } from '@/lib/utility-category-classification';
+import { idKey, sameId } from '@/lib/row-id';
 
 // ---------------------------------------------------------------------------
 // Context
@@ -74,12 +75,12 @@ export async function initContext(supabase: SupabaseClient, clientId: string): P
   for (const f of facilityRows) {
     const k = `${f.name.trim().toLowerCase()}__${(f.address || '').trim().toLowerCase()}`;
     if (facilityKeyCounts.get(k) === 1) {
-      ctx.facilityCache.set(k, f.id);
+      ctx.facilityCache.set(k, idKey(f.id));
     }
   }
 
   for (const s of suppliersRes.data || []) {
-    ctx.supplierCache.set(s.name.trim().toLowerCase(), s.id);
+    ctx.supplierCache.set(s.name.trim().toLowerCase(), idKey(s.id));
   }
 
   for (const c of inputTypesRes.data || []) {
@@ -176,8 +177,9 @@ export async function cachedFindOrCreateFacility(
   }
 
   if (facilityLookup.data) {
-    ctx.facilityCache.set(key, facilityLookup.data.id);
-    return facilityLookup.data.id;
+    const facilityId = idKey(facilityLookup.data.id);
+    ctx.facilityCache.set(key, facilityId);
+    return facilityId;
   }
 
   const { data: created, error } = await ctx.supabase
@@ -190,15 +192,17 @@ export async function cachedFindOrCreateFacility(
     if (error.code === '23505' || error.message?.toLowerCase().includes('duplicate')) {
       const retry = await lookupFacilityByName(ctx.supabase, displayName, ctx.clientId);
       if (retry.data) {
-        ctx.facilityCache.set(key, retry.data.id);
-        return retry.data.id;
+        const retryId = idKey(retry.data.id);
+        ctx.facilityCache.set(key, retryId);
+        return retryId;
       }
     }
     throw new Error(`Failed to create facility: ${error.message}`);
   }
 
-  ctx.facilityCache.set(key, created.id);
-  return created.id;
+  const createdId = idKey(created.id);
+  ctx.facilityCache.set(key, createdId);
+  return createdId;
 }
 
 export async function cachedFindOrCreateSupplier(ctx: UploadContext, name: string): Promise<string> {
@@ -211,8 +215,9 @@ export async function cachedFindOrCreateSupplier(ctx: UploadContext, name: strin
     throw new Error(`Failed to look up supplier: ${supplierLookup.error}`);
   }
   if (supplierLookup.data) {
-    ctx.supplierCache.set(key, supplierLookup.data.id);
-    return supplierLookup.data.id;
+    const supplierId = idKey(supplierLookup.data.id);
+    ctx.supplierCache.set(key, supplierId);
+    return supplierId;
   }
 
   const { data: created, error } = await ctx.supabase
@@ -225,15 +230,17 @@ export async function cachedFindOrCreateSupplier(ctx: UploadContext, name: strin
     if (error.code === '23505' || error.message?.toLowerCase().includes('duplicate')) {
       const retry = await lookupSupplierByName(ctx.supabase, name);
       if (retry.data) {
-        ctx.supplierCache.set(key, retry.data.id);
-        return retry.data.id;
+        const retrySupplierId = idKey(retry.data.id);
+        ctx.supplierCache.set(key, retrySupplierId);
+        return retrySupplierId;
       }
     }
     throw new Error(`Failed to create supplier: ${error.message}`);
   }
 
-  ctx.supplierCache.set(key, created.id);
-  return created.id;
+  const createdSupplierId = idKey(created.id);
+  ctx.supplierCache.set(key, createdSupplierId);
+  return createdSupplierId;
 }
 
 /**
@@ -395,7 +402,7 @@ export async function cachedFindOrCreateMeter(
         .limit(1);
       const found = byLookup1?.[0];
       if (found) {
-        const sameFacility = found.facility_id === opts.facilityId;
+        const sameFacility = sameId(found.facility_id, opts.facilityId);
         const sameType = found.identifier_type === opts.identifierType;
         console.warn(
           '[upload] meter conflict: lookup1=%s inferred_type=%s stored_type=%s same_facility=%s facility_id=%s',
@@ -404,7 +411,7 @@ export async function cachedFindOrCreateMeter(
         if (sameFacility) {
           rememberMeter(ctx, found.facility_id, found.input_type_id, opts.lookup1, found.id,
             found.identifier_type as IdentifierType, opts.identifierType);
-          return found.id;
+          return idKey(found.id);
         }
         throw new Error(
           `Meter identifier "${opts.lookup1}" (${opts.identifierType}) already exists for a different facility` +
@@ -421,5 +428,5 @@ export async function cachedFindOrCreateMeter(
   }
 
   rememberMeter(ctx, opts.facilityId, opts.categoryId, opts.lookup1, newMeter.id, opts.identifierType);
-  return newMeter.id;
+  return idKey(newMeter.id);
 }

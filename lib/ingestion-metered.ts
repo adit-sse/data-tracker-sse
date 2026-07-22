@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { IdentifierType } from '@/types';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
+import { idKey, sameId, type RowId } from '@/lib/row-id';
 
 /** Invoice rows that already “cover” a month — do not seed metered PENDING over these. */
 export const METERED_GREEN_INVOICE_STATUSES = [
@@ -59,19 +60,6 @@ export function parseMeterIdentifierFromNgersRow(
   }
   return { ok: false, error: 'Row needs NMI, MIRN, Account Number, or Meter Number' };
 }
-
-/**
- * Row ids come back from PostgREST as numbers for integer columns, but the
- * lib/name-lookup RPC helpers stringify theirs (`String(row.id)`). Compare and
- * key on ids only through these helpers — a raw `===` mixes the two and is
- * always false.
- */
-type RowId = string | number | null;
-
-const idKey = (id: RowId): string => (id === null ? '' : String(id));
-
-const sameId = (a: RowId, b: RowId): boolean =>
-  a !== null && b !== null && idKey(a) === idKey(b);
 
 type MeterMatch = {
   id: string | number;

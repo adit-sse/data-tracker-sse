@@ -7,12 +7,19 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { idKey, type RowId } from '@/lib/row-id';
 
+/**
+ * `id` is always the normalised string form (see lib/row-id), while the same
+ * column read directly through PostgREST yields a number for integer keys.
+ * Compare these ids with `sameId` and key them with `idKey` — a raw `===`
+ * against a value that did not come through here is always false.
+ */
 export type NameMatch = { id: string; name: string };
 
 type LookupResult = { data: NameMatch | null; error: string | null };
 
-type RpcNameRow = { id: number; name: string };
+type RpcNameRow = { id: RowId; name: string };
 
 async function firstRpcRow(
   supabase: SupabaseClient,
@@ -23,7 +30,7 @@ async function firstRpcRow(
   if (error) return { data: null, error: error.message };
   const row = ((data ?? []) as RpcNameRow[])[0];
   return {
-    data: row ? { id: String(row.id), name: row.name } : null,
+    data: row ? { id: idKey(row.id), name: row.name } : null,
     error: null,
   };
 }
