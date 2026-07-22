@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import ProgressBarCell from './ProgressBarCell';
 import PickerModal from './PickerModal';
-import type { InputType } from '@/types';
-import type { MeterWithCoverage, ActualInvoice } from '@/types';
+import MeterIdentifierEditor from './MeterIdentifierEditor';
+import { formatIdentifierType, type InputType } from '@/types';
+import type { MeterWithCoverage, ActualInvoice, Facility, Supplier } from '@/types';
 
 import { format, endOfMonth, startOfMonth, isAfter, parseISO, isValid } from 'date-fns';
 
@@ -24,10 +25,18 @@ function isInactiveForwardMonth(monthDate: Date | string, explicitlyInactive: bo
 interface CoverageTableProps {
   metersWithCoverage: MeterWithCoverage[];
   fiscalYear: number;
+  /** Required to load the facility list for inline facility editing. */
+  clientId: string;
   onQuickAddInvoice?: (opts: { meterId: string; facilityId?: string; period_start_date: string; period_end_date: string; invoices?: ActualInvoice[] }) => void;
   onMeterUpdated?: () => void;
   showCategoryColumn?: boolean;
 }
+
+/** Which inline editor is open, and for which meter. */
+type EditingCell = {
+  meterId: string;
+  field: 'facility' | 'supplier' | 'input_type' | 'identifier';
+};
 
 type SortColumn =
   | 'default'
@@ -38,7 +47,7 @@ type SortColumn =
   | 'identifier'
   | 'status';
 
-export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickAddInvoice, onMeterUpdated, showCategoryColumn = false }: CoverageTableProps) {
+export default function CoverageTable({ metersWithCoverage, fiscalYear, clientId, onQuickAddInvoice, onMeterUpdated, showCategoryColumn = false }: CoverageTableProps) {
   const [filterUtility, setFilterUtility] = useState<string>('ALL');
   const [filterSupplier, setFilterSupplier] = useState<string>('ALL');
   const [filterFacility, setFilterFacility] = useState<string>('ALL');
@@ -47,48 +56,106 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
   const [sortAscending, setSortAscending] = useState(true);
   const [togglingIsActive, setTogglingIsActive] = useState<string | null>(null);
 
+  // Option lists for the pickers, each loaded on first use.
   const [inputTypes, setInputTypes] = useState<InputType[]>([]);
-  const [pickerMeterId, setPickerMeterId] = useState<string | null>(null);
-  const [updatingInputType, setUpdatingInputType] = useState<string | null>(null);
+  const [facilityOptions, setFacilityOptions] = useState<Facility[]>([]);
+  const [supplierOptions, setSupplierOptions] = useState<Supplier[]>([]);
+  const [loadingOptions, setLoadingOptions] = useState(false);
 
-  useEffect(() => {
-    fetch('/api/input-types')
-      .then((r) => r.ok ? r.json() : [])
-      .then(setInputTypes)
-      .catch(() => {});
-  }, []);
+  const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
+  const [savingMeterId, setSavingMeterId] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
 
-  const handleInputTypeChange = async (meterId: string, inputTypeId: string) => {
-    setUpdatingInputType(meterId);
+  /**
+   * Fetch an option list once, reusing it on later edits. Returns false if the
+   * fetch failed, so startEdit can decline to open an unpopulated picker.
+   */
+  const loadOptions = useCallback(
+    async (field: EditingCell['field']): Promise<boolean> => {
+      const alreadyLoaded =
+        (field === 'input_type' && inputTypes.length > 0) ||
+        (field === 'facility' && facilityOptions.length > 0) ||
+        (field === 'supplier' && supplierOptions.length > 0) ||
+        field === 'identifier';
+      if (alreadyLoaded) return true;
+
+      const url =
+        field === 'input_type' ? '/api/input-types'
+        : field === 'facility' ? `/api/clients/${clientId}/facilities`
+        : '/api/suppliers';
+
+      setLoadingOptions(true);
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Failed to load options');
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : [];
+        if (field === 'input_type') setInputTypes(list);
+        else if (field === 'facility') setFacilityOptions(list);
+        else setSupplierOptions(list);
+        return true;
+      } catch {
+        setEditError('Could not load the list of options. Please try again.');
+        return false;
+      } finally {
+        setLoadingOptions(false);
+      }
+    },
+    [clientId, inputTypes.length, facilityOptions.length, supplierOptions.length]
+  );
+
+  const startEdit = async (meterId: string, field: EditingCell['field']) => {
+    setEditError(null);
+    // Don't open a picker we could not populate — an empty list looks like "no options exist".
+    if (!(await loadOptions(field))) return;
+    setEditingCell({ meterId, field });
+  };
+
+  /**
+   * Single write path for every inline meter edit. Owns the pending flag, the
+   * !res.ok check, and error surfacing — without the last of these a duplicate
+   * identifier silently reverts with no explanation.
+   */
+  const patchMeter = async (meterId: string, body: Record<string, unknown>) => {
+    setSavingMeterId(meterId);
+    setEditError(null);
     try {
       const res = await fetch(`/api/meters/${meterId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input_type_id: inputTypeId }),
+        body: JSON.stringify(body),
       });
-      if (res.ok) onMeterUpdated?.();
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setEditError(data.error || 'Failed to update meter.');
+        return;
+      }
+      onMeterUpdated?.();
     } catch (err) {
-      console.error('Error updating input type:', err);
+      console.error('Error updating meter:', err);
+      setEditError('Could not reach the server. Please try again.');
     } finally {
-      setUpdatingInputType(null);
+      setSavingMeterId(null);
     }
   };
 
   const toggleIsActive = async (meterId: string, currentIsActive: boolean) => {
     setTogglingIsActive(meterId);
     try {
-      const res = await fetch(`/api/meters/${meterId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_active: !currentIsActive })
-      });
-      if (res.ok) onMeterUpdated?.();
-    } catch (err) {
-      console.error('Error toggling is_active:', err);
+      await patchMeter(meterId, { is_active: !currentIsActive });
     } finally {
       setTogglingIsActive(null);
     }
   };
+
+  /** The meter the open editor belongs to, for seeding its current value. */
+  const editingMeter = useMemo(
+    () =>
+      editingCell
+        ? metersWithCoverage.find((m) => String(m.meter.id) === editingCell.meterId)?.meter
+        : undefined,
+    [editingCell, metersWithCoverage]
+  );
 
   const getDisplayStatus = (meter: MeterWithCoverage['meter']) => {
     if (meter.is_active === false) return { label: 'Inactive', color: 'bg-gray-100 text-gray-500' };
@@ -97,20 +164,6 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
     return status.isActive
       ? { label: 'Active', color: 'bg-green-100 text-green-700' }
       : { label: 'Inactive', color: 'bg-gray-100 text-gray-500' };
-  };
-
-  const formatIdentifierType = (type: string): string => {
-    const typeMap: Record<string, string> = {
-      'NMI': 'NMI',
-      'MIRN': 'MIRN',
-      'ACCOUNT_NUMBER': 'Account Number',
-      'METER_NUMBER': 'Meter Number',
-      'REGISTRATION_PLATE': 'Rego Plate',
-      'CARD_NUMBER': 'Card Number',
-      'FACILITY_LEVEL': 'Facility Level',
-      'DESCRIPTION': 'Description'
-    };
-    return typeMap[type] || type;
   };
 
   const getMeterServiceStatus = (meter: MeterWithCoverage['meter']): { label: string; isActive: boolean } => {
@@ -198,6 +251,21 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
   
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      {editError && (
+        <div className="px-4 py-3 bg-red-50 border-b border-red-200 flex items-start justify-between gap-3">
+          <p className="text-sm text-red-700">{editError}</p>
+          <button
+            onClick={() => setEditError(null)}
+            className="text-red-400 hover:text-red-600 transition-colors flex-shrink-0"
+            aria-label="Dismiss error"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       {/* Filter Controls */}
       <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
         <div className="flex flex-wrap items-center gap-3">
@@ -344,18 +412,29 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
           </div>
         ) : sortedMeters.map(({ meter, coverage }) => {
           const status = getMeterServiceStatus(meter);
+          const isSaving = savingMeterId === String(meter.id);
           return (
             <div key={meter.id} className="flex border-b border-gray-200 last:border-b-0 hover:bg-gray-50/50">
               {/* Meter info columns */}
               <div className="w-[150px] min-w-[150px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
-                <div className="font-semibold text-gray-900 text-sm text-center" title={meter.facility?.name}>
-                  {meter.facility?.name || 'Unknown'}
-                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); startEdit(String(meter.id), 'facility'); }}
+                  disabled={isSaving}
+                  title="Click to change facility"
+                  className="font-semibold text-gray-900 text-sm text-center px-2 py-1 rounded hover:bg-blue-50 hover:text-blue-700 transition-colors disabled:opacity-50 w-full truncate"
+                >
+                  {isSaving ? '…' : (meter.facility?.name || 'Unknown')}
+                </button>
               </div>
               <div className="w-[130px] min-w-[130px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
-                <div className="text-sm text-gray-700 text-center" title={meter.supplier?.name}>
-                  {meter.supplier?.name || '—'}
-                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); startEdit(String(meter.id), 'supplier'); }}
+                  disabled={isSaving}
+                  title="Click to change supplier"
+                  className="text-sm text-gray-700 text-center px-2 py-1 rounded hover:bg-blue-50 hover:text-blue-700 transition-colors disabled:opacity-50 w-full truncate"
+                >
+                  {isSaving ? '…' : (meter.supplier?.name || '—')}
+                </button>
               </div>
               {showCategoryColumn && (
                 <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
@@ -366,35 +445,34 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
               )}
               <div className="w-[110px] min-w-[110px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
                 <button
-                  onClick={(e) => { e.stopPropagation(); setPickerMeterId(String(meter.id)); }}
-                  disabled={updatingInputType === String(meter.id)}
+                  onClick={(e) => { e.stopPropagation(); startEdit(String(meter.id), 'input_type'); }}
+                  disabled={isSaving}
                   title="Click to change input type"
                   className="text-sm text-gray-600 text-center px-2 py-1 rounded hover:bg-blue-50 hover:text-blue-700 transition-colors disabled:opacity-50 w-full"
                 >
-                  {updatingInputType === String(meter.id) ? '…' : (meter.input_type?.name || 'N/A')}
+                  {isSaving ? '…' : (meter.input_type?.name || 'N/A')}
                 </button>
-                {pickerMeterId === String(meter.id) && (
-                  <PickerModal
-                    title="Select Input Type"
-                    items={inputTypes.map((it) => ({
-                      id: it.id,
-                      name: it.name,
-                      group: it.scope ? `Scope ${it.scope}` : undefined,
-                    }))}
-                    value={meter.input_type?.id ?? ''}
-                    onSelect={(id) => handleInputTypeChange(String(meter.id), id)}
-                    onClose={() => setPickerMeterId(null)}
-                    searchPlaceholder="Search input types…"
-                  />
-                )}
               </div>
-              <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 text-center">
-                <div className="text-xs text-gray-400 mb-0.5">
-                  {formatIdentifierType(meter.identifier_type)}
-                </div>
-                <div className="text-sm text-gray-700 font-medium truncate" title={meter.lookup1}>
-                  {meter.lookup1 || '—'}
-                </div>
+              <div className="w-[160px] min-w-[160px] px-3 py-3 border-r border-gray-200 flex items-center justify-center">
+                <button
+                  onClick={(e) => { e.stopPropagation(); startEdit(String(meter.id), 'identifier'); }}
+                  disabled={isSaving}
+                  title="Click to change identifier"
+                  className="w-full px-2 py-1 rounded hover:bg-blue-50 transition-colors disabled:opacity-50 group"
+                >
+                  {isSaving ? (
+                    <div className="text-sm text-gray-700">…</div>
+                  ) : (
+                    <>
+                      <div className="text-xs text-gray-400 mb-0.5 group-hover:text-blue-600">
+                        {formatIdentifierType(meter.identifier_type)}
+                      </div>
+                      <div className="text-sm text-gray-700 font-medium truncate group-hover:text-blue-700" title={meter.lookup1}>
+                        {meter.lookup1 || '—'}
+                      </div>
+                    </>
+                  )}
+                </button>
               </div>
               <div className="w-[80px] min-w-[80px] px-2 py-3 border-r border-gray-200 flex items-center justify-center">
                 <button
@@ -503,6 +581,56 @@ export default function CoverageTable({ metersWithCoverage, fiscalYear, onQuickA
           <span className="text-xs text-gray-400 ml-1">Light = recent · Dark = &gt;30 days old</span>
         </div>
       </div>
+
+      {/* Inline editors — mounted once for the open cell rather than once per row. */}
+      {editingCell && editingMeter && !loadingOptions && (
+        <>
+          {editingCell.field === 'facility' && (
+            <PickerModal
+              title="Select Facility"
+              items={facilityOptions.map((f) => ({ id: String(f.id), name: f.name }))}
+              value={editingMeter.facility?.id ? String(editingMeter.facility.id) : ''}
+              onSelect={(id) => patchMeter(editingCell.meterId, { facility_id: id })}
+              onClose={() => setEditingCell(null)}
+              searchPlaceholder="Search facilities…"
+            />
+          )}
+          {editingCell.field === 'supplier' && (
+            <PickerModal
+              title="Select Supplier"
+              items={supplierOptions.map((s) => ({ id: String(s.id), name: s.name }))}
+              value={editingMeter.supplier?.id ? String(editingMeter.supplier.id) : ''}
+              onSelect={(id) => patchMeter(editingCell.meterId, { supplier_id: id || null })}
+              onClose={() => setEditingCell(null)}
+              searchPlaceholder="Search suppliers…"
+              allowClear
+              clearLabel="No supplier"
+            />
+          )}
+          {editingCell.field === 'input_type' && (
+            <PickerModal
+              title="Select Input Type"
+              items={inputTypes.map((it) => ({
+                id: String(it.id),
+                name: it.name,
+                group: it.scope ? `Scope ${it.scope}` : undefined,
+              }))}
+              value={editingMeter.input_type?.id ? String(editingMeter.input_type.id) : ''}
+              onSelect={(id) => patchMeter(editingCell.meterId, { input_type_id: id })}
+              onClose={() => setEditingCell(null)}
+              searchPlaceholder="Search input types…"
+            />
+          )}
+          {editingCell.field === 'identifier' && (
+            <MeterIdentifierEditor
+              identifierType={editingMeter.identifier_type}
+              lookup1={editingMeter.lookup1 ?? ''}
+              onSave={(next) => patchMeter(editingCell.meterId, next)}
+              onClose={() => setEditingCell(null)}
+            />
+          )}
+        </>
+      )}
     </div>
   );
 }

@@ -51,6 +51,29 @@ export type IdentifierType =
   | 'FACILITY_LEVEL'
   | 'DESCRIPTION';
 
+/**
+ * Every identifier_type the DB accepts, with its display label.
+ *
+ * Mirrors the CHECK constraint on meters.identifier_type (see
+ * supabase-migration-mirn.sql). Selectable lists must render all of these —
+ * omitting one means a meter using it silently changes type when edited.
+ */
+export const IDENTIFIER_TYPES: ReadonlyArray<{ value: IdentifierType; label: string }> = [
+  { value: 'NMI', label: 'NMI' },
+  { value: 'MIRN', label: 'MIRN' },
+  { value: 'ACCOUNT_NUMBER', label: 'Account Number' },
+  { value: 'METER_NUMBER', label: 'Meter Number' },
+  { value: 'REGISTRATION_PLATE', label: 'Rego Plate' },
+  { value: 'CARD_NUMBER', label: 'Card Number' },
+  { value: 'FACILITY_LEVEL', label: 'Facility Level' },
+  { value: 'DESCRIPTION', label: 'Description' },
+];
+
+/** Display label for an identifier_type, falling back to the raw value. */
+export function formatIdentifierType(type: string): string {
+  return IDENTIFIER_TYPES.find((t) => t.value === type)?.label ?? type;
+}
+
 export interface Meter {
   id: string;
   facility_id: string;

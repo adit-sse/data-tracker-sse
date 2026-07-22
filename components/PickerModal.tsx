@@ -17,6 +17,9 @@ interface PickerModalProps {
   onClose: () => void;
   searchPlaceholder?: string;
   emptyMessage?: string;
+  /** Offer a "none" choice, for nullable fields such as a meter's supplier. */
+  allowClear?: boolean;
+  clearLabel?: string;
 }
 
 export default function PickerModal({
@@ -27,6 +30,8 @@ export default function PickerModal({
   onClose,
   searchPlaceholder = 'Search…',
   emptyMessage = 'No items match your search.',
+  allowClear = false,
+  clearLabel = 'None',
 }: PickerModalProps) {
   const [search, setSearch] = useState('');
   const [pendingId, setPendingId] = useState(value);
@@ -49,13 +54,13 @@ export default function PickerModal({
     : items;
 
   const pendingItem = items.find((it) => it.id === pendingId);
-  const hasChanged = pendingId !== value && !!pendingId;
+  // With allowClear, '' is a legitimate selection (meaning "none"), not "nothing chosen".
+  const hasChanged = pendingId !== value && (allowClear || !!pendingId);
 
   const handleSave = () => {
-    if (pendingId) {
-      onSelect(pendingId);
-      onClose();
-    }
+    if (!hasChanged) return;
+    onSelect(pendingId);
+    onClose();
   };
 
   const renderCard = (it: PickerItem) => {
@@ -173,6 +178,18 @@ export default function PickerModal({
 
         {/* Body */}
         <div className="overflow-y-auto px-5 pt-1 pb-3 flex-1">
+          {allowClear && (
+            <button
+              onClick={() => setPendingId('')}
+              className={`w-full text-left px-3 py-2.5 mt-2 rounded-lg border text-sm transition-all ${
+                pendingId === ''
+                  ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-400'
+                  : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
+              }`}
+            >
+              <span className="block font-medium text-gray-500 italic leading-snug">{clearLabel}</span>
+            </button>
+          )}
           {renderBody()}
         </div>
 
@@ -181,6 +198,8 @@ export default function PickerModal({
           <span className="text-sm text-gray-500 truncate">
             {pendingItem ? (
               <>Selected: <span className="font-medium text-gray-800">{pendingItem.name}</span></>
+            ) : allowClear && pendingId === '' ? (
+              <>Selected: <span className="font-medium text-gray-800 italic">{clearLabel}</span></>
             ) : (
               <span className="text-gray-400">No selection</span>
             )}
