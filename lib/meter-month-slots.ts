@@ -84,6 +84,39 @@ export async function upsertErrorMonthSlot(
 }
 
 /**
+ * Delete PENDING slots for the given meters, returning how many were removed.
+ *
+ * ERROR and DEACTIVATED slots are deliberately left alone — reverting undoes
+ * seeding, not a recorded outcome. Mirrors the previous behaviour of deleting
+ * only status='PENDING' rows from actual_invoices.
+ */
+export async function deletePendingMonthSlots(
+  supabase: SupabaseClient,
+  meterIds: string[]
+): Promise<number> {
+  if (meterIds.length === 0) return 0;
+
+  // Chunked to stay within PostgREST URL-length limits on .in() filters.
+  const CHUNK = 500;
+  let total = 0;
+
+  for (let i = 0; i < meterIds.length; i += CHUNK) {
+    const chunk = meterIds.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from('meter_month_slots')
+      .delete()
+      .in('meter_id', chunk)
+      .eq('status', 'PENDING')
+      .select('id');
+
+    if (error) throw new Error(error.message);
+    total += data?.length ?? 0;
+  }
+
+  return total;
+}
+
+/**
  * Fetch all slots for a set of meters, optionally scoped to a date window.
  * Returns rows indexed by meter_id.
  */

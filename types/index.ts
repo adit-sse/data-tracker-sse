@@ -371,7 +371,8 @@ export interface IngestionEventTriage extends IngestionEventTriageEmbed {
 // -------------------------------------------------------
 
 export interface StuckPendingRecord {
-  id: number;
+  /** non_metered_records.id (integer) or meter_month_slots.id (uuid). */
+  id: number | string;
   kind: 'non-metered' | 'metered';
   client_id: number;
   client_name: string;

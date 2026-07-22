@@ -3,6 +3,7 @@ import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
 import { resolveIngestionLine } from '@/lib/ingestion-line';
 import { resolveMeterForIngestion } from '@/lib/ingestion-metered';
+import { deletePendingMonthSlots } from '@/lib/meter-month-slots';
 import { checkApiKey } from '@/lib/ingestion-auth';
 import { logIngestionFromResponse } from '@/lib/ingestion-events';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -148,19 +149,12 @@ async function handleRevertPending(
         return NextResponse.json({ error: resolved.error }, { status: resolved.status });
       }
 
-      const { data: deleted, error: delErr } = await supabase
-        .from('actual_invoices')
-        .delete()
-        .eq('meter_id', resolved.meterId)
-        .eq('status', 'PENDING')
-        .select('id');
-
-      if (delErr) throw new Error(delErr.message);
+      const reverted = await deletePendingMonthSlots(supabase, [resolved.meterId]);
 
       return NextResponse.json({
         mode: 'metered',
         meter_id: resolved.meterId,
-        reverted: deleted?.length ?? 0,
+        reverted,
       });
     }
 
@@ -212,20 +206,7 @@ async function handleRevertPending(
 
     const meterIds = candidateMeters.map((m: MeterRow) => String(m.id));
 
-    // Chunk the delete to stay within PostgREST URL-length limits on .in() filters.
-    const DELETE_CHUNK = 500;
-    let totalReverted = 0;
-    for (let i = 0; i < meterIds.length; i += DELETE_CHUNK) {
-      const chunk = meterIds.slice(i, i + DELETE_CHUNK);
-      const { data: deleted, error: delErr } = await supabase
-        .from('actual_invoices')
-        .delete()
-        .in('meter_id', chunk)
-        .eq('status', 'PENDING')
-        .select('id');
-      if (delErr) throw new Error(delErr.message);
-      totalReverted += deleted?.length ?? 0;
-    }
+    const totalReverted = await deletePendingMonthSlots(supabase, meterIds);
 
     return NextResponse.json({
       mode: 'metered',

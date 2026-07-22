@@ -45,8 +45,9 @@ type NonMeteredRow = {
 };
 
 type MeteredRow = {
-  id: number;
-  period_start_date: string | null;
+  id: string;
+  month_start: string | null;
+  created_at: string | null;
   meter: Joined<{
     facility: Joined<{
       id: number;
@@ -120,7 +121,10 @@ function mapMeteredRow(row: MeteredRow): StuckPendingRecord | null {
   const client = joinedOne(facility?.client);
   if (!meter || !facility || !client) return null;
 
-  const createdAt = row.period_start_date;
+  // Slots carry a real created_at. This previously fell back to period_start_date,
+  // so age_hours measured the month being covered rather than how long the row
+  // had actually been stuck.
+  const createdAt = row.created_at ?? row.month_start;
   if (!createdAt) return null;
 
   return {
@@ -131,7 +135,7 @@ function mapMeteredRow(row: MeteredRow): StuckPendingRecord | null {
     facility_name: facility.name ?? null,
     supplier_name: joinedOne(meter.supplier)?.name ?? null,
     utility_name: joinedOne(meter.input_type)?.name ?? null,
-    period_start: periodStart(row.period_start_date),
+    period_start: periodStart(row.month_start),
     created_at: createdAt,
     age_hours: ageHoursFrom(createdAt),
   };
@@ -141,7 +145,7 @@ function mapMeteredRow(row: MeteredRow): StuckPendingRecord | null {
 //   ?clientId=<id>       (optional — narrow to one client)
 //   ?minAgeHours=<n>     (optional — only rows at least this many hours old; default 0)
 //
-// Returns all PENDING rows from non_metered_records and actual_invoices that the
+// Returns all PENDING rows from non_metered_records and meter_month_slots that the
 // caller can access (RLS-scoped), oldest first.
 export async function GET(request: Request) {
   try {
@@ -175,11 +179,12 @@ export async function GET(request: Request) {
         .eq('status', 'PENDING')
         .order('created_at', { ascending: true }),
       supabase
-        .from('actual_invoices')
+        .from('meter_month_slots')
         .select(
           `
           id,
-          period_start_date,
+          month_start,
+          created_at,
           meter:meters(
             facility:facilities(id, name, client_id, client:clients(id, name)),
             supplier:suppliers(name),
@@ -188,7 +193,7 @@ export async function GET(request: Request) {
         `
         )
         .eq('status', 'PENDING')
-        .order('period_start_date', { ascending: true }),
+        .order('month_start', { ascending: true }),
       supabase
         .from('facility_group_members')
         .select(
