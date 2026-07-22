@@ -49,11 +49,70 @@ export function lookupSupplierByName(
   return firstRpcRow(supabase, 'get_supplier_by_name', { input_name: name });
 }
 
-export function lookupFacilityByName(
+type AliasRow = {
+  facility:
+    | { id: RowId; name: string; client_id: RowId }
+    | { id: RowId; name: string; client_id: RowId }[]
+    | null;
+};
+
+/**
+ * Resolve a facility via facility_aliases — alternative names a client's source
+ * data uses for a site (see migration 023).
+ *
+ * Returns an error rather than a match when two of the client's facilities share
+ * an alias: picking one silently would misfile consumption with no symptom.
+ */
+async function lookupFacilityByAlias(
   supabase: SupabaseClient,
   name: string,
   clientId: string | number
 ): Promise<LookupResult> {
+  const alias = typeof name === 'string' ? name.trim() : '';
+  if (!alias) return { data: null, error: null };
+
+  const { data, error } = await supabase
+    .from('facility_aliases')
+    .select('facility:facilities!inner(id, name, client_id)')
+    .ilike('alias', alias)
+    .eq('facility.client_id', Number(clientId))
+    .limit(3);
+
+  // A missing table (alias migration not applied yet) must not break resolution.
+  if (error) return { data: null, error: null };
+
+  const matches = ((data ?? []) as AliasRow[])
+    .map((r) => (Array.isArray(r.facility) ? r.facility[0] : r.facility))
+    .filter((f): f is { id: RowId; name: string; client_id: RowId } => Boolean(f));
+
+  if (matches.length === 0) return { data: null, error: null };
+
+  const distinctIds = new Set(matches.map((f) => idKey(f.id)));
+  if (distinctIds.size > 1) {
+    return {
+      data: null,
+      error:
+        `Alias "${alias}" maps to more than one facility for this client ` +
+        `(${matches.map((f) => `"${f.name}"`).join(', ')}). ` +
+        'Remove the duplicate in facility_aliases.',
+    };
+  }
+
+  return { data: { id: idKey(matches[0].id), name: matches[0].name }, error: null };
+}
+
+export async function lookupFacilityByName(
+  supabase: SupabaseClient,
+  name: string,
+  clientId: string | number
+): Promise<LookupResult> {
+  // Aliases are checked first deliberately. They are an explicit, hand-curated
+  // mapping, whereas get_facility_by_name falls back to trigram similarity — and
+  // an address is exactly the kind of input that can fuzzily match the wrong
+  // facility name. Curated beats inferred.
+  const byAlias = await lookupFacilityByAlias(supabase, name, clientId);
+  if (byAlias.error || byAlias.data) return byAlias;
+
   return firstRpcRow(supabase, 'get_facility_by_name', {
     input_name: name,
     input_client_id: Number(clientId),
