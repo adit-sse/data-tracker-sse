@@ -11,6 +11,7 @@ import {
 import { seedNonMeteredFacilityGroupPending, type GroupPendingMember } from '@/lib/ingestion-group-pending';
 import { seedAllScope1NonMeteredPending } from '@/lib/ingestion-pending-scope1';
 import { upsertPendingMonthSlots } from '@/lib/meter-month-slots';
+import { identifierLookupCandidates } from '@/lib/nmi';
 import { checkApiKey } from '@/lib/ingestion-auth';
 import { logIngestionFromResponse } from '@/lib/ingestion-events';
 import type { IdentifierType } from '@/types';
@@ -75,9 +76,11 @@ async function seedMeteredPending(
     .eq('supplier_id', supplierId);
 
   if (filters.identifierType && filters.lookup1) {
+    // Match a NMI stored with or without its checksum digit (lib/nmi.ts),
+    // otherwise seeding silently skips a meter held in the other form.
     metersQuery = metersQuery
       .eq('identifier_type', filters.identifierType)
-      .eq('lookup1', filters.lookup1);
+      .in('lookup1', identifierLookupCandidates(filters.identifierType, filters.lookup1));
   }
 
   const { data: meters, error: metersErr } = await metersQuery;
