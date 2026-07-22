@@ -31,7 +31,6 @@ async function handleMeteredPending(
   supabase: SupabaseClient,
   body: Record<string, unknown>
 ): Promise<NextResponse> {
-  const pendingReceivedAt = new Date().toISOString();
   const { client_name, supplier_name, utility_name, facility_name, identifier_type, lookup1, lookup2 } =
     body;
 
@@ -72,8 +71,8 @@ async function handleMeteredPending(
     return NextResponse.json({ created: 0, skipped: 0, meter_id: resolved.meterId });
   }
 
-  // Upsert a PENDING slot for every FY month. ignoreDuplicates means existing
-  // ERROR/DEACTIVATED slots are left untouched; only missing slots get created.
+  // Upsert a PENDING slot for every month in that range. ignoreDuplicates means
+  // existing ERROR/DEACTIVATED slots are left untouched; only missing slots get created.
   await upsertPendingMonthSlots(
     supabase,
     resolved.meterId,
