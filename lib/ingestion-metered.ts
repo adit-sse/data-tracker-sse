@@ -60,6 +60,42 @@ export function parseMeterIdentifierFromNgersRow(
   return { ok: false, error: 'Row needs NMI, MIRN, Account Number, or Meter Number' };
 }
 
+type MeterMatch = {
+  id: string;
+  supplier_id: string | null;
+  identifier_type: string | null;
+  lookup1: string | null;
+};
+
+/** Supplier names by id, for error messages only. One query for any number of ids. */
+async function supplierNamesByIds(
+  supabase: SupabaseClient,
+  supplierIds: (string | null)[]
+): Promise<Map<string, string>> {
+  const ids = Array.from(new Set(supplierIds.filter((id): id is string => Boolean(id))));
+  if (ids.length === 0) return new Map();
+  const { data } = await supabase.from('suppliers').select('id, name').in('id', ids);
+  const byId = new Map<string, string>();
+  for (const row of (data ?? []) as { id: string; name: string | null }[]) {
+    if (row.name?.trim()) byId.set(String(row.id), row.name.trim());
+  }
+  return byId;
+}
+
+/** Render a supplier id as a name for error text, falling back to the raw id. */
+function supplierLabel(supplierId: string | null, byId: Map<string, string>): string {
+  if (!supplierId) return '(none)';
+  return byId.get(supplierId) ?? `(unknown supplier id ${supplierId})`;
+}
+
+/** One-line description of a meter row for error text. */
+function describeMeter(meter: MeterMatch, byId: Map<string, string>): string {
+  return (
+    `identifier ${meter.identifier_type ?? '(none)'} ${meter.lookup1 ?? '(none)'}, ` +
+    `supplier "${supplierLabel(meter.supplier_id, byId)}" (meter id ${meter.id})`
+  );
+}
+
 export async function resolveMeterForIngestion(
   supabase: SupabaseClient,
   params: {
@@ -110,7 +146,7 @@ export async function resolveMeterForIngestion(
 
   let query = supabase
     .from('meters')
-    .select('id, supplier_id')
+    .select('id, supplier_id, identifier_type, lookup1')
     .eq('facility_id', facilityId)
     .eq('input_type_id', line.categoryId)
     .eq('lookup1', lookup1);
@@ -119,25 +155,37 @@ export async function resolveMeterForIngestion(
     .eq('identifier_type', params.identifierType)
     .limit(1);
 
-  let meter = exactRows?.[0] as { id: string; supplier_id: string | null } | undefined;
+  let meter = exactRows?.[0] as MeterMatch | undefined;
 
   if (!meter) {
     const { data: looseRows } = await supabase
       .from('meters')
-      .select('id, supplier_id')
+      .select('id, supplier_id, identifier_type, lookup1')
       .eq('facility_id', facilityId)
       .eq('input_type_id', line.categoryId)
       .eq('lookup1', lookup1)
-      .limit(2);
+      .limit(6);
 
     if ((looseRows?.length ?? 0) > 1) {
+      const matches = (looseRows ?? []) as MeterMatch[];
+      const shown = matches.slice(0, 5);
+      const supplierNames = await supplierNamesByIds(
+        supabase,
+        shown.map((m) => m.supplier_id)
+      );
       return {
         ok: false,
-        error: 'Multiple meters match this lookup1; set a unique identifier_type on the meter',
+        error:
+          `Multiple meters match lookup1 ${lookup1} at facility "${line.facilityName}" ` +
+          `for "${params.utilityName}"; set a unique identifier_type on the meter. ` +
+          `Matched: ${shown.map((m, i) => `[${i + 1}] ${describeMeter(m, supplierNames)}`).join('; ')}` +
+          (matches.length > shown.length ? ', …and more' : '') +
+          `. Row supplied: identifier ${params.identifierType} ${lookup1}, ` +
+          `facility "${params.facilityName}", supplier "${params.supplierName}".`,
         status: 409,
       };
     }
-    meter = looseRows?.[0] as { id: string; supplier_id: string | null } | undefined;
+    meter = looseRows?.[0] as MeterMatch | undefined;
   }
 
   if (!meter) {
@@ -149,9 +197,15 @@ export async function resolveMeterForIngestion(
   }
 
   if (meter.supplier_id && meter.supplier_id !== line.supplierId) {
+    const supplierNames = await supplierNamesByIds(supabase, [meter.supplier_id]);
     return {
       ok: false,
-      error: 'Meter exists but is linked to a different supplier than Provider / supplier_name',
+      error:
+        'Meter exists but is linked to a different supplier than Provider / supplier_name. ' +
+        `Matched meter: ${describeMeter(meter, supplierNames)}, facility "${line.facilityName}". ` +
+        `Row supplied: identifier ${params.identifierType} ${lookup1}, ` +
+        `facility "${params.facilityName}", supplier "${params.supplierName}". ` +
+        'Either correct Provider / supplier_name on the row, or update the meter\'s supplier in the tracker.',
       status: 409,
     };
   }
@@ -165,9 +219,17 @@ export async function resolveMeterForIngestion(
       .single();
     const dbL2 = m2?.lookup2?.trim() || null;
     if (dbL2 && dbL2 !== lookup2) {
+      const supplierNames = await supplierNamesByIds(supabase, [meter.supplier_id]);
       return {
         ok: false,
-        error: 'Meter lookup2 (network / region) does not match row Input Type',
+        error:
+          'Meter lookup2 (network / region) does not match row Input Type. ' +
+          `Matched meter: ${describeMeter(meter, supplierNames)}, ` +
+          `facility "${line.facilityName}", lookup2 "${dbL2}". ` +
+          `Row supplied: identifier ${params.identifierType} ${lookup1}, ` +
+          `facility "${params.facilityName}", supplier "${params.supplierName}", ` +
+          `Input Type / lookup2 "${lookup2}". ` +
+          'Either correct the row\'s Input Type, or update the meter\'s lookup2 in the tracker.',
         status: 409,
       };
     }
