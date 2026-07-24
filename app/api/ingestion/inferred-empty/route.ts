@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
-import { resolveIngestionLine } from '@/lib/ingestion-line';
+import {
+  resolveIngestionLine,
+  resolveIngestionScope,
+  rejectMeteredInputTypeOnLinePath,
+} from '@/lib/ingestion-line';
 import { checkApiKey } from '@/lib/ingestion-auth';
 import { logIngestionFromResponse } from '@/lib/ingestion-events';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -56,6 +60,20 @@ async function handleInferredEmpty(
         { error: 'input_type is required for line mode' },
         { status: 400 }
       );
+    }
+
+    const scopeResolved = await resolveIngestionScope(
+      supabase,
+      String(client_name),
+      String(supplier_name),
+      String(input_type)
+    );
+    if (!scopeResolved.ok) {
+      return NextResponse.json({ error: scopeResolved.error }, { status: scopeResolved.status });
+    }
+    const metered = rejectMeteredInputTypeOnLinePath(scopeResolved.scope);
+    if (metered) {
+      return NextResponse.json({ error: metered.error }, { status: metered.status });
     }
 
     const resolved = await resolveIngestionLine(

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { IdentifierType } from '@/types';
-import { resolveIngestionLine } from '@/lib/ingestion-line';
+import { resolveIngestionScope } from '@/lib/ingestion-line';
+import { lookupFacilityByName } from '@/lib/name-lookup';
 import { idKey, sameId, type RowId } from '@/lib/row-id';
 import { identifierLookupCandidates } from '@/lib/nmi';
 
@@ -62,10 +63,13 @@ export function parseMeterIdentifierFromNgersRow(
 
 type MeterMatch = {
   id: string | number;
+  facility_id: RowId;
   supplier_id: RowId;
   identifier_type: string | null;
   lookup1: string | null;
 };
+
+const METER_MATCH_COLUMNS = 'id, facility_id, supplier_id, identifier_type, lookup1';
 
 /** Supplier names by id, for error messages only. One query for any number of ids. */
 async function supplierNamesByIds(
@@ -88,12 +92,81 @@ function supplierLabel(supplierId: RowId, byId: Map<string, string>): string {
   return byId.get(idKey(supplierId)) ?? `(unknown supplier id ${supplierId})`;
 }
 
+/** Render a facility id as a name for error text, falling back to the raw id. */
+function facilityLabel(facilityId: RowId, byId: Map<string, string>): string {
+  if (facilityId === null) return '(none)';
+  return byId.get(idKey(facilityId)) ?? `(unknown facility id ${facilityId})`;
+}
+
 /** One-line description of a meter row for error text. */
-function describeMeter(meter: MeterMatch, byId: Map<string, string>): string {
+function describeMeter(
+  meter: MeterMatch,
+  byId: Map<string, string>,
+  facilitiesById: Map<string, string>
+): string {
   return (
     `identifier ${meter.identifier_type ?? '(none)'} ${meter.lookup1 ?? '(none)'}, ` +
-    `supplier "${supplierLabel(meter.supplier_id, byId)}" (meter id ${meter.id})`
+    `supplier "${supplierLabel(meter.supplier_id, byId)}", ` +
+    `facility "${facilityLabel(meter.facility_id, facilitiesById)}" (meter id ${meter.id})`
   );
+}
+
+/**
+ * Build the 409 for an identifier that matched more than one meter.
+ *
+ * Two different causes, two different repairs: the same identifier stored twice in
+ * different forms at one site is a duplicate to delete, whereas matches spread over
+ * several facilities just need `facility_name` to disambiguate.
+ */
+async function ambiguousMeterError(
+  supabase: SupabaseClient,
+  matches: MeterMatch[],
+  facilitiesById: Map<string, string>,
+  kind: 'exact' | 'loose',
+  params: { identifierType: IdentifierType; utilityName: string; clientName: string },
+  lookup1: string
+): Promise<{ ok: false; error: string; status: number }> {
+  const shown = matches.slice(0, 5);
+  const supplierNames = await supplierNamesByIds(
+    supabase,
+    shown.map((m) => m.supplier_id)
+  );
+  const list =
+    shown.map((m, i) => `[${i + 1}] ${describeMeter(m, supplierNames, facilitiesById)}`).join('; ') +
+    (matches.length > shown.length ? ', …and more' : '');
+
+  const distinctFacilities = new Set(matches.map((m) => idKey(m.facility_id)));
+  if (distinctFacilities.size > 1) {
+    return {
+      ok: false,
+      error:
+        `Identifier ${params.identifierType} ${lookup1} for "${params.utilityName}" matches meters at ` +
+        `${distinctFacilities.size} facilities of client "${params.clientName}": ${list}. ` +
+        'Pass facility_name to say which site this row is for.',
+      status: 409,
+    };
+  }
+
+  if (kind === 'exact') {
+    return {
+      ok: false,
+      error:
+        `Two meters at facility "${facilityLabel(matches[0].facility_id, facilitiesById)}" hold the same ` +
+        `identifier in different forms (an NMI with and without its checksum digit): ${list}. ` +
+        'These are one meter recorded twice — delete the duplicate, keeping whichever has the invoice history.',
+      status: 409,
+    };
+  }
+
+  return {
+    ok: false,
+    error:
+      `Multiple meters match lookup1 ${lookup1} at facility ` +
+      `"${facilityLabel(matches[0].facility_id, facilitiesById)}" for "${params.utilityName}"; ` +
+      `set a unique identifier_type on the meter. Matched: ${list}. ` +
+      `Row supplied: identifier ${params.identifierType} ${lookup1}.`,
+    status: 409,
+  };
 }
 
 export async function resolveMeterForIngestion(
@@ -111,27 +184,18 @@ export async function resolveMeterForIngestion(
   | { ok: true; meterId: string }
   | { ok: false; error: string; status: number }
 > {
-  const line = await resolveIngestionLine(
+  const resolvedScope = await resolveIngestionScope(
     supabase,
     params.clientName,
-    params.facilityName,
     params.supplierName,
     params.utilityName
   );
-  if (!line.ok) return line;
+  if (!resolvedScope.ok) return resolvedScope;
+  const scope = resolvedScope.scope;
 
-  const facilityId = line.facilityId;
-
-  const { data: inputType, error: catErr } = await supabase
-    .from('input_types')
-    .select('is_metered')
-    .eq('id', line.categoryId)
-    .single();
-
-  if (catErr || !inputType) {
-    return { ok: false, error: 'Input type not found', status: 404 };
-  }
-  if (!inputType.is_metered) {
+  // Checked before any facility work: a non-metered utility should be told so
+  // plainly rather than failing later on a meter search that was never going to match.
+  if (!scope.isMetered) {
     return {
       ok: false,
       error: `Input type "${params.utilityName}" is not marked metered — use non-metered ingestion instead`,
@@ -144,38 +208,76 @@ export async function resolveMeterForIngestion(
     return { ok: false, error: 'lookup1 / identifier is required', status: 400 };
   }
 
+  // Facility scope for the search. A named facility narrows it; without one, search
+  // every facility of the client and let the identifier pick the meter. The identifier
+  // is the stronger key — a NMI names one meter nationally — and the meter row already
+  // records which facility it sits at, so facility_name is genuinely optional here.
+  const facilitiesById = new Map<string, string>();
+  const facilityIds: string[] = [];
+  const facTrimmed = typeof params.facilityName === 'string' ? params.facilityName.trim() : '';
+
+  if (facTrimmed) {
+    const facilityLookup = await lookupFacilityByName(supabase, facTrimmed, scope.clientId);
+    if (facilityLookup.error) {
+      return { ok: false, error: facilityLookup.error, status: 500 };
+    }
+    if (!facilityLookup.data) {
+      return {
+        ok: false,
+        error: `Facility "${params.facilityName}" not found for client "${params.clientName}"`,
+        status: 404,
+      };
+    }
+    facilityIds.push(idKey(facilityLookup.data.id));
+    facilitiesById.set(idKey(facilityLookup.data.id), facilityLookup.data.name);
+  } else {
+    const { data: rows, error: facErr } = await supabase
+      .from('facilities')
+      .select('id, name')
+      .eq('client_id', scope.clientId);
+
+    if (facErr) {
+      return { ok: false, error: facErr.message, status: 500 };
+    }
+    for (const f of (rows ?? []) as { id: RowId; name: string }[]) {
+      facilityIds.push(idKey(f.id));
+      facilitiesById.set(idKey(f.id), f.name);
+    }
+    if (facilityIds.length === 0) {
+      return {
+        ok: false,
+        error: `No facilities found for client "${params.clientName}"`,
+        status: 404,
+      };
+    }
+  }
+
   // A NMI is stored either with or without its trailing checksum digit, and
   // source data uses both forms for the same meter. Match on every form the
   // value could legitimately take. Other identifier types resolve to just
   // themselves — see lib/nmi.ts.
   const lookupCandidates = identifierLookupCandidates(params.identifierType, lookup1);
 
-  let query = supabase
+  const { data: exactRows } = await supabase
     .from('meters')
-    .select('id, supplier_id, identifier_type, lookup1')
-    .eq('facility_id', facilityId)
-    .eq('input_type_id', line.categoryId)
-    .in('lookup1', lookupCandidates);
-
-  const { data: exactRows } = await query
+    .select(METER_MATCH_COLUMNS)
+    .in('facility_id', facilityIds)
+    .eq('input_type_id', scope.inputTypeId)
+    .in('lookup1', lookupCandidates)
     .eq('identifier_type', params.identifierType)
-    .limit(2);
+    .limit(6);
 
-  // Both the checksummed and un-checksummed form exist as separate meters —
-  // one physical site recorded twice. Say so rather than picking one, since
-  // silently choosing would split its consumption across the two.
+  // Several matches — never pick one silently, since a wrong choice splits or
+  // misfiles consumption with no visible symptom.
   if ((exactRows?.length ?? 0) > 1) {
-    const dupes = (exactRows ?? []) as MeterMatch[];
-    const supplierNames = await supplierNamesByIds(supabase, dupes.map((m) => m.supplier_id));
-    return {
-      ok: false,
-      error:
-        `Two meters at facility "${line.facilityName}" hold the same NMI in different forms ` +
-        `(with and without its checksum digit): ` +
-        `${dupes.map((m, i) => `[${i + 1}] ${describeMeter(m, supplierNames)}`).join('; ')}. ` +
-        'These are one meter recorded twice — delete the duplicate, keeping whichever has the invoice history.',
-      status: 409,
-    };
+    return ambiguousMeterError(
+      supabase,
+      (exactRows ?? []) as MeterMatch[],
+      facilitiesById,
+      'exact',
+      params,
+      lookup1
+    );
   }
 
   let meter = exactRows?.[0] as MeterMatch | undefined;
@@ -183,51 +285,47 @@ export async function resolveMeterForIngestion(
   if (!meter) {
     const { data: looseRows } = await supabase
       .from('meters')
-      .select('id, supplier_id, identifier_type, lookup1')
-      .eq('facility_id', facilityId)
-      .eq('input_type_id', line.categoryId)
+      .select(METER_MATCH_COLUMNS)
+      .in('facility_id', facilityIds)
+      .eq('input_type_id', scope.inputTypeId)
       .in('lookup1', lookupCandidates)
       .limit(6);
 
     if ((looseRows?.length ?? 0) > 1) {
-      const matches = (looseRows ?? []) as MeterMatch[];
-      const shown = matches.slice(0, 5);
-      const supplierNames = await supplierNamesByIds(
+      return ambiguousMeterError(
         supabase,
-        shown.map((m) => m.supplier_id)
+        (looseRows ?? []) as MeterMatch[],
+        facilitiesById,
+        'loose',
+        params,
+        lookup1
       );
-      return {
-        ok: false,
-        error:
-          `Multiple meters match lookup1 ${lookup1} at facility "${line.facilityName}" ` +
-          `for "${params.utilityName}"; set a unique identifier_type on the meter. ` +
-          `Matched: ${shown.map((m, i) => `[${i + 1}] ${describeMeter(m, supplierNames)}`).join('; ')}` +
-          (matches.length > shown.length ? ', …and more' : '') +
-          `. Row supplied: identifier ${params.identifierType} ${lookup1}, ` +
-          `facility "${params.facilityName}", supplier "${params.supplierName}".`,
-        status: 409,
-      };
     }
     meter = looseRows?.[0] as MeterMatch | undefined;
   }
 
   if (!meter) {
+    const where = facTrimmed
+      ? `at facility "${facTrimmed}"`
+      : `across the ${facilityIds.length} facility/facilities of client "${params.clientName}"`;
     return {
       ok: false,
-      error: `No meter found for facility + "${params.utilityName}" with identifier ${params.identifierType} ${lookup1}. Create the meter in the tracker first.`,
+      error:
+        `No meter found for "${params.utilityName}" with identifier ${params.identifierType} ${lookup1} ` +
+        `${where}. Create the meter in the tracker first.`,
       status: 404,
     };
   }
 
-  if (meter.supplier_id !== null && !sameId(meter.supplier_id, line.supplierId)) {
+  if (meter.supplier_id !== null && !sameId(meter.supplier_id, scope.supplierId)) {
     const supplierNames = await supplierNamesByIds(supabase, [meter.supplier_id]);
     return {
       ok: false,
       error:
         'Meter exists but is linked to a different supplier than Provider / supplier_name. ' +
-        `Matched meter: ${describeMeter(meter, supplierNames)}, facility "${line.facilityName}". ` +
+        `Matched meter: ${describeMeter(meter, supplierNames, facilitiesById)}. ` +
         `Row supplied: identifier ${params.identifierType} ${lookup1}, ` +
-        `facility "${params.facilityName}", supplier "${params.supplierName}". ` +
+        `facility "${facTrimmed || '(not supplied)'}", supplier "${params.supplierName}". ` +
         'Either correct Provider / supplier_name on the row, or update the meter\'s supplier in the tracker.',
       status: 409,
     };
@@ -247,10 +345,10 @@ export async function resolveMeterForIngestion(
         ok: false,
         error:
           'Meter lookup2 (network / region) does not match row Input Type. ' +
-          `Matched meter: ${describeMeter(meter, supplierNames)}, ` +
-          `facility "${line.facilityName}", lookup2 "${dbL2}". ` +
+          `Matched meter: ${describeMeter(meter, supplierNames, facilitiesById)}, ` +
+          `lookup2 "${dbL2}". ` +
           `Row supplied: identifier ${params.identifierType} ${lookup1}, ` +
-          `facility "${params.facilityName}", supplier "${params.supplierName}", ` +
+          `facility "${facTrimmed || '(not supplied)'}", supplier "${params.supplierName}", ` +
           `Input Type / lookup2 "${lookup2}". ` +
           'Either correct the row\'s Input Type, or update the meter\'s lookup2 in the tracker.',
         status: 409,

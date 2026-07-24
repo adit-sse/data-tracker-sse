@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
-import { resolveIngestionLine } from '@/lib/ingestion-line';
+import {
+  resolveIngestionLine,
+  resolveIngestionScope,
+  rejectMeteredInputTypeOnLinePath,
+} from '@/lib/ingestion-line';
 import { resolveMeterForIngestion } from '@/lib/ingestion-metered';
 import { deletePendingMonthSlots } from '@/lib/meter-month-slots';
 import { checkApiKey } from '@/lib/ingestion-auth';
@@ -63,12 +67,17 @@ async function handleRevertPending(
     supplier_name,
     category,
     input_type,
-    facility_name,
     utility_name,
     identifier_type,
     lookup1,
     lookup2,
   } = body;
+
+  // The n8n metered node sends `facility` (the NGERS column), not `facility_name`.
+  // Accept either so the site is used rather than silently dropped — an unread key
+  // would leave facility resolution to fall back to the identifier, which only
+  // matters (as a 409) when the same NMI exists at two of the client's sites.
+  const facility_name = body.facility_name ?? body.facility;
 
   if (!client_name || !supplier_name) {
     return NextResponse.json(
@@ -86,12 +95,32 @@ async function handleRevertPending(
       );
     }
 
+    // Reject a metered utility before searching non_metered_lines for it — that
+    // search cannot succeed for a meter's input type, and its 404 reads as missing
+    // configuration rather than the wrong mode.
+    const scopeResolved = await resolveIngestionScope(
+      supabase,
+      String(client_name),
+      String(supplier_name),
+      String(input_type)
+    );
+    if (!scopeResolved.ok) {
+      return NextResponse.json({ error: scopeResolved.error }, { status: scopeResolved.status });
+    }
+    const metered = rejectMeteredInputTypeOnLinePath(scopeResolved.scope);
+    if (metered) {
+      return NextResponse.json({ error: metered.error }, { status: metered.status });
+    }
+
     const resolved = await resolveIngestionLine(
       supabase,
       String(client_name),
       typeof facility_name === 'string' ? facility_name.trim() : '',
       String(supplier_name),
-      String(input_type)
+      String(input_type),
+      // This path deletes. Without configured coverage there is nothing to revert,
+      // and resolving anyway would return a reassuring "reverted: 0".
+      { requireLineCoverage: true }
     );
 
     if (!resolved.ok) {
@@ -191,13 +220,28 @@ async function handleRevertPending(
 
     if (metersErr) throw new Error(metersErr.message);
 
-    let candidateMeters = meters ?? [];
+    const allMeters = meters ?? [];
+    let candidateMeters = allMeters;
     if (utilityTrimmed) {
       const lower = utilityTrimmed.toLowerCase();
       candidateMeters = candidateMeters.filter((m: MeterRow) => {
         const name = (Array.isArray(m.input_type) ? m.input_type[0] : m.input_type)?.name;
         return typeof name === 'string' && name.toLowerCase() === lower;
       });
+
+      // Meters exist but none carry that input type — the filter is wrong, so say so.
+      // Reporting "reverted: 0" here looks like a clean sweep of an empty scope.
+      // Matches the same check in POST /api/ingestion/pending.
+      if (candidateMeters.length === 0 && allMeters.length > 0) {
+        return NextResponse.json(
+          {
+            error:
+              `No meters found with input type "${utilityTrimmed}" for this client and supplier. ` +
+              `${allMeters.length} meter(s) exist for the pair under other input types.`,
+          },
+          { status: 400 }
+        );
+      }
     }
 
     if (candidateMeters.length === 0) {
