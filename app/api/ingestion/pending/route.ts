@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
-import { resolveIngestionLine } from '@/lib/ingestion-line';
+import {
+  resolveIngestionLine,
+  resolveIngestionScope,
+  rejectMeteredInputTypeOnLinePath,
+} from '@/lib/ingestion-line';
 import { findCategoryForIngestion } from '@/lib/ingestion-utility-category';
 import {
   getCurrentFiscalYearMonthsThroughNow,
@@ -202,6 +206,24 @@ async function handlePending(
 
   // ── Mode: standalone non-metered line (unchanged) ────────────────────────
   if (mode === 'line') {
+      // Reject a metered utility up front, on the same `is_metered` predicate the
+      // rest of the line pipeline (confirm / revert / inferred-empty / error) uses.
+      // Previously this gated on `scope === 1`, which only coincided with "metered"
+      // because Electricity is the sole scope-2 type; the flag is the real boundary.
+      const scopeResolved = await resolveIngestionScope(
+        supabase,
+        String(client_name),
+        String(supplier_name),
+        utilityTrimmed
+      );
+      if (!scopeResolved.ok) {
+        return NextResponse.json({ error: scopeResolved.error }, { status: scopeResolved.status });
+      }
+      const metered = rejectMeteredInputTypeOnLinePath(scopeResolved.scope);
+      if (metered) {
+        return NextResponse.json({ error: metered.error }, { status: metered.status });
+      }
+
       const resolved = await resolveIngestionLine(
         supabase,
         String(client_name),
@@ -213,19 +235,6 @@ async function handlePending(
         return NextResponse.json({ error: resolved.error }, { status: resolved.status });
       }
 
-      const { data: itRow } = await supabase
-        .from('input_types')
-        .select('scope')
-        .eq('id', resolved.categoryId)
-        .maybeSingle();
-
-      if (typeof itRow?.scope !== 'number' || itRow.scope !== 1) {
-        return NextResponse.json(
-          { error: 'mode: "line" only supports Scope 1 input types.' },
-          { status: 400 }
-        );
-      }
-
       const { created, skipped } = await seedIngestionPendingNonMeteredLineMonths(supabase, {
         facilityId: resolved.facilityId,
         supplierId: resolved.supplierId,
@@ -235,7 +244,7 @@ async function handlePending(
 
       return NextResponse.json({
         mode: 'line',
-        scope: 1,
+        scope: scopeResolved.scope.scope,
         resolved: {
           facility_id: resolved.facilityId,
           facility_name: resolved.facilityName,

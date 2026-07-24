@@ -2,7 +2,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service';
-import { resolveIngestionLine } from '@/lib/ingestion-line';
+import {
+  resolveIngestionLine,
+  resolveIngestionScope,
+  rejectMeteredInputTypeOnLinePath,
+} from '@/lib/ingestion-line';
 import { logIngestionErrorReport } from '@/lib/ingestion-events';
 import { checkApiKey } from '@/lib/ingestion-auth';
 import { parseNgersDateRange } from '@/lib/ingestion-dates';
@@ -57,6 +61,22 @@ async function handleError(supabase: SupabaseClient, body: Record<string, unknow
 
     // ----- Standalone line -----
     if (mode === 'line') {
+      const scopeResolved = await resolveIngestionScope(
+        supabase,
+        client_name,
+        supplier_name,
+        utility_name
+      );
+      if (!scopeResolved.ok) {
+        return ok(
+          NextResponse.json({ error: scopeResolved.error }, { status: scopeResolved.status })
+        );
+      }
+      const metered = rejectMeteredInputTypeOnLinePath(scopeResolved.scope);
+      if (metered) {
+        return ok(NextResponse.json({ error: metered.error }, { status: metered.status }));
+      }
+
       const resolved = await resolveIngestionLine(
         supabase,
         client_name,

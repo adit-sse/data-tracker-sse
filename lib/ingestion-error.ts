@@ -13,7 +13,11 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { resolveIngestionLine } from '@/lib/ingestion-line';
+import {
+  resolveIngestionLine,
+  resolveIngestionScope,
+  rejectMeteredInputTypeOnLinePath,
+} from '@/lib/ingestion-line';
 import { lookupClientAndSupplier } from '@/lib/name-lookup';
 import { resolveMeterForIngestion } from '@/lib/ingestion-metered';
 import { parseNgersDateRange, monthStartIso } from '@/lib/ingestion-dates';
@@ -136,6 +140,18 @@ export async function markNonMeteredError(
 
   // ── Standalone line ──────────────────────────────────────────────────────────
   if (t.mode === 'line') {
+    const scopeResolved = await resolveIngestionScope(
+      supabase,
+      t.client_name,
+      t.supplier_name,
+      t.utility_name
+    );
+    if (!scopeResolved.ok) {
+      return { ok: false, error: scopeResolved.error, status: scopeResolved.status };
+    }
+    const metered = rejectMeteredInputTypeOnLinePath(scopeResolved.scope);
+    if (metered) return { ok: false, error: metered.error, status: metered.status };
+
     const resolved = await resolveIngestionLine(
       supabase,
       t.client_name,

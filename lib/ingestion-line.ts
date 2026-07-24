@@ -7,24 +7,34 @@ import {
 } from '@/lib/name-lookup';
 import { findOrCreateUtilityCategoryForIngestion } from '@/lib/ingestion-utility-category';
 
-/** Resolve client, supplier, utility category, and facility (under client) for standalone line ingestion. */
-export async function resolveIngestionLine(
+export interface IngestionScope {
+  clientId: string;
+  clientName: string;
+  supplierId: string;
+  supplierName: string;
+  inputTypeId: string;
+  inputTypeName: string;
+  scope: number;
+  isMetered: boolean;
+}
+
+/**
+ * Resolve client + supplier + input type — everything that identifies an ingestion
+ * scope *except* the facility.
+ *
+ * Split out from `resolveIngestionLine` because the two consumers disagree about
+ * where a facility comes from. Non-metered lines derive it from `non_metered_lines`
+ * coverage; metered rows derive it from the meter the identifier names. Metered
+ * resolution used to borrow the line resolver wholesale and inherited its
+ * `non_metered_lines` requirement — a lookup that can never succeed for a
+ * metered-only utility.
+ */
+export async function resolveIngestionScope(
   supabase: SupabaseClient,
   clientName: string,
-  facilityName: string,
   supplierName: string,
   utilityName: string
-): Promise<
-  | {
-      ok: true;
-      clientId: string;
-      facilityId: string;
-      facilityName: string;
-      supplierId: string;
-      categoryId: string;
-    }
-  | { ok: false; error: string; status: number }
-> {
+): Promise<{ ok: true; scope: IngestionScope } | { ok: false; error: string; status: number }> {
   const [clientLookup, supplierLookup] = await Promise.all([
     lookupClientByName(supabase, clientName),
     lookupSupplierByName(supabase, supplierName),
@@ -41,15 +51,77 @@ export async function resolveIngestionLine(
   if (!client) return { ok: false, error: `Client "${clientName}" not found`, status: 404 };
   if (!supplier) return { ok: false, error: `Supplier "${supplierName}" not found`, status: 404 };
 
-  let category: { id: string; scope: number };
+  let inputType: { id: string; name: string; scope: number; isMetered: boolean };
   try {
-    category = await findOrCreateUtilityCategoryForIngestion(supabase, utilityName);
+    inputType = await findOrCreateUtilityCategoryForIngestion(supabase, utilityName);
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Unknown error';
     return { ok: false, error: msg, status: 400 };
   }
 
-  const scope = category.scope;
+  return {
+    ok: true,
+    scope: {
+      clientId: client.id,
+      clientName: client.name,
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      inputTypeId: inputType.id,
+      inputTypeName: inputType.name,
+      scope: inputType.scope,
+      isMetered: inputType.isMetered,
+    },
+  };
+}
+
+/**
+ * Reject a metered input type on a non-metered (line) code path.
+ *
+ * Returns null when the input type belongs on the line path, or an error to return
+ * verbatim when it does not. `/api/ingestion/pending` has its own stricter scope-1
+ * check inline; this is for the endpoints that had no check at all and would
+ * otherwise search `non_metered_lines` for a meter's utility.
+ */
+export function rejectMeteredInputTypeOnLinePath(
+  scope: IngestionScope
+): { error: string; status: number } | null {
+  if (!scope.isMetered) return null;
+  return {
+    error:
+      `Input type "${scope.inputTypeName}" is metered — it has no non_metered_lines coverage by design. ` +
+      'Use mode: "metered" (with identifier_type + lookup1 to target one meter, or without them to sweep ' +
+      'every meter for this client+supplier).',
+    status: 400,
+  };
+}
+
+/** Resolve client, supplier, utility category, and facility (under client) for standalone line ingestion. */
+export async function resolveIngestionLine(
+  supabase: SupabaseClient,
+  clientName: string,
+  facilityName: string,
+  supplierName: string,
+  utilityName: string,
+  opts: { requireLineCoverage?: boolean } = {}
+): Promise<
+  | {
+      ok: true;
+      clientId: string;
+      facilityId: string;
+      facilityName: string;
+      supplierId: string;
+      categoryId: string;
+    }
+  | { ok: false; error: string; status: number }
+> {
+  const scopeResolved = await resolveIngestionScope(supabase, clientName, supplierName, utilityName);
+  if (!scopeResolved.ok) return scopeResolved;
+
+  const client = { id: scopeResolved.scope.clientId, name: scopeResolved.scope.clientName };
+  const supplier = { id: scopeResolved.scope.supplierId };
+  const category = { id: scopeResolved.scope.inputTypeId };
+
+  const scope = scopeResolved.scope.scope;
   const facTrimmed = typeof facilityName === 'string' ? facilityName.trim() : '';
 
   if (facTrimmed) {
@@ -76,6 +148,34 @@ export async function resolveIngestionLine(
         error: `Facility "${facilityName}" not found for client "${clientName}"`,
         status: 404,
       };
+    }
+
+    // Naming a facility skips the coverage lookup below, so callers that go on to
+    // *delete* by this scope can ask for it to be verified. Without this, a scope
+    // with no line configured resolves fine and the delete matches nothing —
+    // reporting success while reverting nothing.
+    if (opts.requireLineCoverage) {
+      const { data: line, error: lineErr } = await supabase
+        .from('non_metered_lines')
+        .select('id')
+        .eq('facility_id', facility.id)
+        .eq('supplier_id', supplier.id)
+        .eq('input_type_id', category.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (lineErr) {
+        return { ok: false, error: lineErr.message, status: 500 };
+      }
+      if (!line) {
+        return {
+          ok: false,
+          error:
+            `No non_metered_lines row for facility "${facility.name}", supplier "${supplierName}", ` +
+            `utility "${utilityName}" — nothing to revert for this scope.`,
+          status: 404,
+        };
+      }
     }
 
     return {
@@ -158,9 +258,27 @@ export async function resolveIngestionLine(
     };
   }
 
+  // Nothing matched. Say what *was* found for this pair rather than assuming the
+  // caller simply forgot to configure coverage — the usual cause is a metered
+  // utility arriving on a non-metered path, where adding a non_metered_lines row
+  // would be exactly the wrong repair.
+  const { count: meterCount } = await supabase
+    .from('meters')
+    .select('id', { count: 'exact', head: true })
+    .eq('supplier_id', supplier.id)
+    .eq('input_type_id', category.id)
+    .in('facility_id', facilityIds);
+
+  const found =
+    (meterCount ?? 0) > 0
+      ? `Found ${meterCount} meter(s) for that client, supplier and utility instead — this is metered coverage, so use mode: "metered".`
+      : 'No meters exist for that combination either — add the coverage in the tracker, or pass facility_name if the line is configured under a different utility.';
+
   return {
     ok: false,
-    error: `No non_metered_lines row for client "${clientName}", supplier "${supplierName}", utility "${utilityName}". Add coverage in the tracker or pass facility_name.`,
+    error:
+      `No non_metered_lines row for client "${clientName}", supplier "${supplierName}", ` +
+      `utility "${utilityName}". ${found}`,
     status: 404,
   };
 }
