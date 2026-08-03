@@ -386,3 +386,95 @@ export interface StuckPendingRecord {
   group_id?: number | null;
   group_name?: string | null;
 }
+
+// -------------------------------------------------------
+// Data intake dashboard (Google Sheets sourced)
+//
+// Two sheets back this feature and they are NOT interchangeable:
+//   p1EmailStaging / Sheet1        — every file that entered the pipeline
+//   ticket_tracker_template / Tickets_Current — errors being worked on
+//
+// `IntakeFileRow.rowNumber` and `OpenIssue.rowInStaging` are the same
+// identity (the staging sheet row), which is the only stable handle a
+// file has across both sheets.
+// -------------------------------------------------------
+
+/**
+ * Three buckets, and they must always sum to the total received.
+ *
+ * The n8n report has seven (plus an `unknown` catch-all); collapsing to
+ * three keeps the headline numbers addable. The finer distinction is not
+ * lost — it survives in `IntakeFileRow.detail` and `owner`.
+ */
+export type IntakeBucket = 'done' | 'action_needed' | 'ignored';
+
+export interface IntakeFileRow {
+  /** 1-based staging sheet row. Joins to OpenIssue.rowInStaging. */
+  rowNumber: number;
+  bucket: IntakeBucket;
+  /** '(unassigned)' when the sheet's Client cell is blank. */
+  customer: string;
+  fileName: string;
+  category: string;
+  inputType: string;
+  /** Short outcome label: 'Fully processed', 'Facility flag', 'Not found', … */
+  detail: string;
+  comment: string;
+  /** 'Dev to check' | 'Data team' | '' */
+  owner: string;
+  /** Staging column L. Stays false until the n8n write-back workflow exists. */
+  issueResolved: boolean;
+  /** ISO string, not a Date — these payloads cross a JSON boundary. */
+  time: string | null;
+}
+
+export interface IntakeCustomerSummary {
+  customer: string;
+  files: number;
+  done: number;
+  actionNeeded: number;
+  ignored: number;
+}
+
+export interface IntakeReportPayload {
+  /** False when the Google credentials are absent — the UI shows setup copy, not an error. */
+  configured: boolean;
+  /** 'YYYY-MM-DD' — the Monday of the reported week. */
+  weekKey: string;
+  /** 'Week ending Sunday 26 July 2026' */
+  weekEndingLabel: string;
+  totals: { received: number; done: number; actionNeeded: number; ignored: number };
+  byCustomer: IntakeCustomerSummary[];
+  files: IntakeFileRow[];
+}
+
+export type TicketOwner = 'Ethan' | 'Alistair' | 'Adit' | null;
+
+export interface OpenIssue {
+  rowInStaging: number;
+  /** Raw sheet value: 'Open', 'Review', 'Closed', … */
+  status: string;
+  isOpen: boolean;
+  createdAt: string | null;
+  ageDays: number;
+  client: string;
+  fileName: string;
+  errorType: string;
+  supplier: string;
+  utility: string;
+  owner: TicketOwner;
+  /** Whichever "<name>: what to do" cell was populated. */
+  nextStep: string;
+  /** n8n execution URL. */
+  link: string;
+  notes: string;
+  rerunRequested: boolean;
+}
+
+export interface OpenIssuesPayload {
+  configured: boolean;
+  totals: { open: number; awaitingRerun: number; oldestAgeDays: number };
+  byErrorType: { errorType: string; count: number }[];
+  byOwner: { owner: string; count: number }[];
+  issues: OpenIssue[];
+}
