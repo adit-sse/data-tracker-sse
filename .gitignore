@@ -31,7 +31,9 @@ yarn-error.log*
 # in .env.local, so the key file itself never belongs in the repo.
 careful-striker-*.json
 *-service-account*.json
+service-account*.json
 gcp-key*.json
+gcp-credentials*.json
 
 # Vercel
 .vercel
