@@ -9,6 +9,7 @@ import SupplierManager from '@/components/SupplierManager';
 import ReferenceDataManager from '@/components/ReferenceDataManager';
 import ViewByModal from '@/components/ViewByModal';
 import WeeklyIntakeCard from '@/components/WeeklyIntakeCard';
+import { readRecentClients, recordClientView, type RecentClient } from '@/lib/recently-viewed';
 
 interface Client {
   id: number;
@@ -33,7 +34,9 @@ export default function HomePage() {
   const [showViewBySuppliers, setShowViewBySuppliers] = useState(false);
   const [showViewByUtilities, setShowViewByUtilities] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [recentClients, setRecentClients] = useState<RecentClient[]>([]);
   
   const fetchClients = async ({ bypassCache = false }: { bypassCache?: boolean } = {}) => {
     try {
@@ -71,6 +74,12 @@ export default function HomePage() {
     fetchClients();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Read in an effect, never during render: localStorage does not exist on the
+  // server, and reading it while rendering produces a hydration mismatch.
+  useEffect(() => {
+    setRecentClients(readRecentClients());
+  }, []);
   
   const handleCreateClient = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,21 +87,43 @@ export default function HomePage() {
     if (!newClientName.trim()) return;
     
     setCreating(true);
-    
+    setCreateError(null);
+
     try {
       const response = await fetch('/api/clients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newClientName.trim() })
       });
-      
-      if (response.ok) {
-        setNewClientName('');
-        setShowAddModal(false);
-        fetchClients({ bypassCache: true });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        // Previously this branch did nothing at all, so a duplicate name or a
+        // database error left the modal sitting there with no explanation.
+        setCreateError(payload?.error ?? 'Could not create the client. Please try again.');
+        return;
       }
+
+      const created = payload?.data;
+      setNewClientName('');
+      setShowAddModal(false);
+
+      if (created?.id) {
+        // Straight to the new client. Recording the view here as well as on the
+        // client page means the redirect survives even if that page is opened
+        // from a cached route.
+        recordClientView(created.id, created.name ?? newClientName.trim());
+        router.push(`/clients/${created.id}`);
+        return;
+      }
+
+      // Created, but the response had no id to navigate to — fall back to
+      // refreshing in place rather than stranding the user.
+      fetchClients({ bypassCache: true });
     } catch (error) {
       console.error('Error creating client:', error);
+      setCreateError('Could not create the client. Please try again.');
     } finally {
       setCreating(false);
     }
@@ -103,6 +134,23 @@ export default function HomePage() {
         c.client.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
       )
     : clients;
+
+  /**
+   * Recent entries resolved against the clients actually loaded.
+   *
+   * The stored name is only a fallback — resolving against `clients` means a
+   * renamed client shows its current name, and one that has been deleted drops
+   * out instead of linking to a dead page. Skipped while `clients` is still
+   * loading so entries do not flash in and then vanish.
+   */
+  const resolvedRecents = clients.length
+    ? recentClients
+        .map((entry) => {
+          const match = clients.find((c) => String(c.client.id) === entry.id);
+          return match ? { id: entry.id, name: match.client.name } : null;
+        })
+        .filter((entry): entry is { id: string; name: string } => entry !== null)
+    : [];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
@@ -322,9 +370,54 @@ export default function HomePage() {
           </div>
         ) : (
           <>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Your Clients</h3>
-              <span className="text-sm text-gray-500">{clients.length} total</span>
+            {/* Hidden while searching — the recents are noise once you are
+                looking for something specific. */}
+            {resolvedRecents.length > 0 && !searchQuery.trim() && (
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold text-gray-500 mb-2">Recently viewed</h3>
+                {/* One row, always: long client names scroll sideways rather
+                    than wrapping onto a second line. */}
+                <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1">
+                  {resolvedRecents.map((recent) => (
+                    <Link
+                      key={recent.id}
+                      href={`/clients/${recent.id}`}
+                      className="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-sm font-medium text-gray-700 whitespace-nowrap hover:border-blue-300 hover:text-blue-700 transition-colors"
+                    >
+                      {recent.name}
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 whitespace-nowrap">Your Clients</h3>
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <svg
+                    className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
+                  </svg>
+                  <input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search clients"
+                    aria-label="Search clients"
+                    className="w-44 sm:w-64 pl-9 pr-3 py-2 border border-gray-200 rounded-lg bg-white text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  />
+                </div>
+                <span className="text-sm text-gray-500 whitespace-nowrap">
+                  {searchQuery.trim()
+                    ? `${filteredClients.length} of ${clients.length}`
+                    : `${clients.length} total`}
+                </span>
+              </div>
             </div>
             {filteredClients.length === 0 ? (
               <div className="text-center py-16">
@@ -371,6 +464,7 @@ export default function HomePage() {
                 onClick={() => {
                   setShowAddModal(false);
                   setNewClientName('');
+                  setCreateError(null);
                 }}
                 className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
               >
@@ -394,6 +488,11 @@ export default function HomePage() {
                   required
                   autoFocus
                 />
+                {createError && (
+                  <p className="mt-2 text-sm text-red-600" role="alert">
+                    {createError}
+                  </p>
+                )}
               </div>
               <div className="flex gap-3">
                 <button
@@ -401,6 +500,7 @@ export default function HomePage() {
                   onClick={() => {
                     setShowAddModal(false);
                     setNewClientName('');
+                    setCreateError(null);
                   }}
                   disabled={creating}
                   className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors disabled:opacity-50"
