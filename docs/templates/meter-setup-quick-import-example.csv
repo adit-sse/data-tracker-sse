@@ -1,0 +1,6 @@
+Facility,Input Type,Supplier,Address,MonthsWithData,Identifier,Category,MonthsDeactivated
+Perth Office,Electricity,Synergy,"123 Main Street, Perth WA 6000",Jul 2025 - Nov 2025,6305123456,ELECTRICITY,
+Perth Office,Natural gas distributed in a pipeline,Alinta,"123 Main Street, Perth WA 6000",Jul 2025 - Nov 2025,,Stationary Fuels,
+Warehouse,Electricity,Synergy,"456 Industrial Ave, Perth WA 6105",Jul 2025 - Sep 2025; Nov 2025,6305987654,ELECTRICITY,Oct 2025
+Warehouse,Diesel oil,Ampol,"456 Industrial Ave, Perth WA 6105",Jul 2025 - Nov 2025,,Transport Fuels,
+Karratha Depot,Liquefied petroleum gas (LPG),Elgas,"12 Depot Road, Karratha WA 6714",Sep 2025 - Nov 2025,,Stationary Fuels,Jul 2025 - Aug 2025

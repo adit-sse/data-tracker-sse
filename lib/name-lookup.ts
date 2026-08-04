@@ -8,6 +8,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { idKey, type RowId } from '@/lib/row-id';
+import { CANONICAL_CLIENTS } from '@/lib/canonical/data';
+import { resolveCanonical } from '@/lib/canonical/match';
 
 /**
  * `id` is always the normalised string form (see lib/row-id), while the same
@@ -35,11 +37,28 @@ async function firstRpcRow(
   };
 }
 
-export function lookupClientByName(
+/**
+ * Resolve a client by name, retrying under its standardised name.
+ *
+ * The name as sent is tried first: the tracker's own client names are the
+ * authority, and rewriting up front could push a name that already matched
+ * further away (the tracker holds "North Metro TAFE", the workbook
+ * "North Metropolitan Tafe"). Standardisation is a fallback for inbound names
+ * the tracker does not recognise, not a rewrite of ones it does.
+ */
+export async function lookupClientByName(
   supabase: SupabaseClient,
   name: string
 ): Promise<LookupResult> {
-  return firstRpcRow(supabase, 'get_client_by_name', { input_name: name });
+  const direct = await firstRpcRow(supabase, 'get_client_by_name', { input_name: name });
+  if (direct.error || direct.data) return direct;
+
+  const standardised = resolveCanonical(name, CANONICAL_CLIENTS);
+  if (!standardised || standardised.canonical.toLowerCase() === name.trim().toLowerCase()) {
+    return direct;
+  }
+
+  return firstRpcRow(supabase, 'get_client_by_name', { input_name: standardised.canonical });
 }
 
 export function lookupSupplierByName(

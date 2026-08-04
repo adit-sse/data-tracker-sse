@@ -15,6 +15,9 @@ import { lookupFacilityByName, lookupSupplierByName } from '@/lib/name-lookup';
 import { keywordMatches } from '@/lib/utility-category-classification';
 import { idKey, sameId } from '@/lib/row-id';
 import { identifierLookupCandidates } from '@/lib/nmi';
+import { CANONICAL_SUPPLIERS } from '@/lib/canonical/data';
+import { resolveCanonical, suggestNames } from '@/lib/canonical/match';
+import { resolveInputTypeName } from '@/lib/canonical/input-types';
 
 // ---------------------------------------------------------------------------
 // Context
@@ -30,6 +33,10 @@ export interface UploadContext {
   /** categories.name (lower) → NGERS reporting group */
   reportingCategoryCache: Map<string, { id: string; scope: number }>;
   meterCache: Map<string, string>;
+  /** input_types.name as stored — the canonical set for name standardisation. */
+  inputTypeNames: string[];
+  /** categories.name as stored, for "did you mean" on a bad reporting group. */
+  reportingCategoryNames: string[];
 }
 
 export function rememberMeter(
@@ -56,6 +63,8 @@ export async function initContext(supabase: SupabaseClient, clientId: string): P
     categoryCache: new Map(),
     reportingCategoryCache: new Map(),
     meterCache: new Map(),
+    inputTypeNames: [],
+    reportingCategoryNames: [],
   };
 
   const [facilitiesRes, suppliersRes, inputTypesRes, reportingCategoriesRes] = await Promise.all([
@@ -90,6 +99,7 @@ export async function initContext(supabase: SupabaseClient, clientId: string): P
       is_metered: c.is_metered ?? true,
       scope: typeof c.scope === 'number' ? c.scope : 2,
     });
+    ctx.inputTypeNames.push(c.name.trim());
   }
 
   for (const c of reportingCategoriesRes.data || []) {
@@ -97,6 +107,7 @@ export async function initContext(supabase: SupabaseClient, clientId: string): P
       id: c.id,
       scope: typeof c.scope === 'number' ? c.scope : 1,
     });
+    ctx.reportingCategoryNames.push(c.name.trim());
   }
 
   const facilityIds = facilityRows.map((f: { id: string }) => f.id);
@@ -206,8 +217,22 @@ export async function cachedFindOrCreateFacility(
   return createdId;
 }
 
-export async function cachedFindOrCreateSupplier(ctx: UploadContext, name: string): Promise<string> {
-  const key = name.trim().toLowerCase();
+/**
+ * Standardise a supplier name against the emailMapping list before it reaches
+ * the database, so "AMPOL", "Ampol " and "Ampol Australia" all land on the same
+ * supplier rather than creating three.
+ *
+ * Falls back to the raw name when nothing matches confidently — an unrecognised
+ * supplier is normal (the workbook lags reality) and must still import.
+ */
+export function standardiseSupplierName(name: string): string {
+  const match = resolveCanonical(name, CANONICAL_SUPPLIERS);
+  return match ? match.canonical : name.trim();
+}
+
+export async function cachedFindOrCreateSupplier(ctx: UploadContext, rawName: string): Promise<string> {
+  const name = standardiseSupplierName(rawName);
+  const key = name.toLowerCase();
   const cached = ctx.supplierCache.get(key);
   if (cached) return cached;
 
@@ -246,22 +271,34 @@ export async function cachedFindOrCreateSupplier(ctx: UploadContext, name: strin
 
 /**
  * Look up an input_type by name from the cache (pre-seeded at upload start).
- * Throws if not found — Input Types must be pre-defined; no auto-creation on upload.
+ *
+ * The raw cell is standardised against the names that actually exist
+ * (see lib/canonical/input-types.ts) so EnviroCapture spelling variants resolve
+ * to one input type. Throws with suggestions if nothing matches — Input Types
+ * must be pre-defined; no auto-creation on upload.
  */
 export async function cachedFindOrCreateCategory(
   ctx: UploadContext,
   name: string,
 ): Promise<{ id: string; is_metered: boolean; scope: number }> {
-  const normalizedName = toSentenceCase(name);
-  const key = normalizedName.toLowerCase();
+  // If the preload came back empty (transient query failure) fall back to the
+  // raw value and let the DB lookup below decide, rather than failing every row.
+  const resolvedName = ctx.inputTypeNames.length === 0
+    ? toSentenceCase(name)
+    : (() => {
+        const resolution = resolveInputTypeName(name, ctx.inputTypeNames);
+        if (!resolution.ok) throw new Error(resolution.error);
+        return resolution.name;
+      })();
 
+  const key = resolvedName.toLowerCase();
   const cached = ctx.categoryCache.get(key);
   if (cached) return cached;
 
   const { data: existing } = await ctx.supabase
     .from('input_types')
     .select('id, is_metered, scope')
-    .ilike('name', normalizedName)
+    .ilike('name', resolvedName)
     .limit(1);
 
   if (existing && existing.length > 0) {
@@ -276,7 +313,7 @@ export async function cachedFindOrCreateCategory(
   }
 
   throw new Error(
-    `Unknown Input Type: "${normalizedName}". Please create it in Manage Input Types before uploading.`,
+    `Unknown Input Type: "${name}". Please create it in Manage Input Types before uploading.`,
   );
 }
 
@@ -292,19 +329,29 @@ export async function cachedResolveReportingCategory(
   const trimmed = rawName?.trim() ?? '';
   if (!trimmed) return null;
 
-  const key = trimmed.toLowerCase();
+  // Standardise against the reporting groups that exist, so EnviroCapture's
+  // casing ("ELECTRICITY" vs "Electricity") resolves without a manual edit.
+  const standardised = ctx.reportingCategoryNames.length > 0
+    ? resolveCanonical(trimmed, ctx.reportingCategoryNames)?.canonical ?? trimmed
+    : trimmed;
+
+  const key = standardised.toLowerCase();
   let row = ctx.reportingCategoryCache.get(key);
 
   if (!row) {
     const { data: existing } = await ctx.supabase
       .from('categories')
       .select('id, name, scope')
-      .ilike('name', trimmed)
+      .ilike('name', standardised)
       .limit(2);
 
     if (!existing?.length) {
+      const suggestions = suggestNames(trimmed, ctx.reportingCategoryNames);
+      const hint = suggestions.length
+        ? ` Did you mean: ${suggestions.map((s) => `"${s}"`).join(', ')}?`
+        : '';
       throw new Error(
-        `Unknown Category (reporting group): "${trimmed}". Create it under Categories or correct the spelling.`,
+        `Unknown Category (reporting group): "${trimmed}".${hint} Create it under Categories or correct the spelling.`,
       );
     }
     if (existing.length > 1) {
