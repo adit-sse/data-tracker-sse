@@ -26,6 +26,13 @@ yarn-error.log*
 .env
 .env*.local
 
+# Google service account keys — the JSON downloaded from the GCP console.
+# Credentials are read from GOOGLE_SERVICE_ACCOUNT_EMAIL / GOOGLE_PRIVATE_KEY
+# in .env.local, so the key file itself never belongs in the repo.
+careful-striker-*.json
+*-service-account*.json
+gcp-key*.json
+
 # Vercel
 .vercel
 
