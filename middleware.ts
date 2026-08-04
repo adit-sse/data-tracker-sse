@@ -8,7 +8,10 @@ export async function middleware(request: NextRequest) {
 
   const path = request.nextUrl.pathname;
   // No session cookie work needed: login is public; ingestion uses its own API key + server secret.
-  if (path === '/login' || path.startsWith('/api/ingestion')) {
+  // Password recovery must be public too — a locked-out user has no session, and the recovery
+  // token arrives in the URL fragment/query, which only the browser client can exchange.
+  const PUBLIC_PATHS = ['/login', '/forgot-password', '/reset-password'];
+  if (PUBLIC_PATHS.includes(path) || path.startsWith('/api/ingestion')) {
     return NextResponse.next();
   }
 

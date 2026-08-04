@@ -26,6 +26,12 @@ yarn-error.log*
 .env
 .env*.local
 
+# Credentials / service account keys — never commit these
+careful-striker-459800-i2-5c31c4c2ad24.json
+*-service-account.json
+service-account*.json
+gcp-credentials*.json
+
 # Vercel
 .vercel
 
