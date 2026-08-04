@@ -15,6 +15,7 @@ import ConfirmModal from '@/components/ConfirmModal';
 import FacilityGroupManager from '@/components/FacilityGroupManager';
 import NeedsReviewBanner from '@/components/NeedsReviewBanner';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { recordClientView } from '@/lib/recently-viewed';
 import type {
   Client,
   MeterWithCoverage,
@@ -89,6 +90,16 @@ export default function ClientDetailPage() {
     row: NonMeteredRowWithCoverage;
     cell: NonMeteredMonthlyCoverage;
   } | null>(null);
+
+  /**
+   * Record the view here rather than on the home page's card click, so every
+   * arrival counts — search, a bookmark, a deep link, or the redirect after
+   * creating a client. Waits for the client to load so the stored name is real
+   * and a failed load records nothing.
+   */
+  useEffect(() => {
+    if (client?.name) recordClientView(clientId, client.name);
+  }, [clientId, client?.name]);
 
   useEffect(() => {
     // Persist active tab in URL
