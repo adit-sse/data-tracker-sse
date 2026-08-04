@@ -9,7 +9,10 @@
     "lint": "next lint",
     "seed:ingestion-test": "node scripts/seed-ingestion-test-subject.mjs",
     "seed:ingestion-test:force": "node scripts/seed-ingestion-test-subject.mjs --force",
-    "seed:ingestion-test:teardown": "node scripts/seed-ingestion-test-subject.mjs --teardown"
+    "seed:ingestion-test:teardown": "node scripts/seed-ingestion-test-subject.mjs --teardown",
+    "test:intake": "node scripts/test-intake-report.mjs",
+    "intake:check": "node scripts/check-google-sheets.mjs",
+    "intake:fixture": "node scripts/capture-intake-fixture.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",

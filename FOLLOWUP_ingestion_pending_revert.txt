@@ -1,0 +1,113 @@
+FOLLOW-UP WORK — ingestion /pending and teardown (revert / inferred-empty)
+===========================================================================
+Written 2026-07-24. Context: after fixing the metered revert-pending 404
+(branch fix/metered-revert-facility-resolution). This file lists what is DONE
+and what remains, so the remaining cleanup can be picked up cold.
+
+
+DONE (in the PR from branch fix/metered-revert-facility-resolution)
+-------------------------------------------------------------------
+- Fixed the original bug: /api/ingestion/revert-pending returned a 404
+  ("No non_metered_lines row for ... Electricity") for a METERED utility.
+  Root cause: metered resolution (resolveMeterForIngestion) borrowed the
+  non-metered line resolver, so it searched non_metered_lines for a meter's
+  utility — a lookup that can never succeed for a metered-only utility.
+  Fix: resolve the facility FROM THE METER via the identifier, across the
+  client's facilities. facility_name is now genuinely optional.
+- Guarded line mode on metered utilities across revert / inferred-empty /
+  error / unified-error, using one shared is_metered predicate
+  (rejectMeteredInputTypeOnLinePath in lib/ingestion-line.ts).
+- Closed a silent no-op: line-mode revert with a facility that has no
+  coverage used to return 200 {reverted:0}; now 404 (requireLineCoverage).
+- Closed a silent zero: bulk metered revert with a utility no meter carries
+  now returns 400, not a misleading {reverted:0}.
+- Rewrote the misleading 404 to report what WAS found (meters vs lines).
+- revert-pending now accepts `facility` as an alias for `facility_name`
+  (the n8n metered node sends `facility`).
+- #1 /pending line mode: replaced the inline `scope === 1` check with the
+  shared is_metered guard. Behaviour identical for real data (Electricity
+  still rejected), better message, and the response `scope` field now
+  reports the real scope instead of a hard-coded 1.
+- Verified against live data + swept stuck PENDING: Megasorber (7 slots) and
+  Sadleirs (31 slots across 6 meters). Both now at 0 pending.
+
+
+REMAINING — /pending cleanup
+----------------------------
+#2  KILL THE OVERLOADED NAMING.
+    The default path { client, supplier } is logged/documented as "group"
+    but actually seeds EVERYTHING (all facility groups + all standalone
+    lines + all meters). A true single-group seed only happens as a side
+    effect of passing utility_name. And utility_name means two different
+    things: an NGERS reporting category (selects a group) on the non-metered
+    side, and an input-type filter (selects meters) on the metered side.
+    Fix: rename the everything-path to `all`; split utility_name into
+    `category` (groups) and `input_type` (metered filter).
+    Cost: changes response shapes, docs, and n8n bodies — do it WITH the
+    structural work below, not as a quiet patch.
+
+#3  RETIRE DEAD SEEDING BRANCHES.
+    /pending mode:"line" and the specific-meter (identifier_type+lookup1)
+    SEEDING branches are never called by the workflow — 0 of 48 pending
+    events use them. Pre-unification leftovers. Delete or clearly mark
+    legacy.
+
+#4  SCOPE-3 SEEDABILITY (PARKED — do not build yet).
+    Bulk seed (seedAllScope1NonMeteredPending) and, previously, line mode
+    hard-code scope === 1. A scope-3 NON-metered line could therefore be
+    confirmed and reverted but never SEEDED as pending. This is latent:
+    there is NO scope-3 data in the database (input_types are only scope 1
+    non-metered + scope 2 Electricity; all 364 non_metered_lines are
+    scope 1; categories are scope 1 and 2 only). The real metered/non-metered
+    boundary is is_metered, not scope. Leave a comment at the two seed gates;
+    revisit only when scope 3 is actually introduced.
+
+
+REMAINING — bigger structural item (separate project)
+-----------------------------------------------------
+BUILD /unified-revert TO MIRROR /unified-confirm.
+    The real asymmetry, from 500 events of real traffic:
+      - Seed    (/pending):          48 calls, all { client, supplier }  -> bulk
+      - Confirm (/unified-confirm):  224 calls, rows[] auto-detected     -> bulk
+      - Inferred-empty:              per-group (by category)             -> granular
+      - Revert  (/revert-pending):   196 per-meter + group + line        -> granular
+    The workflow SEEDS in one bulk call and CONFIRMS in one bulk call, but
+    TEARS DOWN item-by-item. There is a /unified-confirm but no
+    /unified-revert, so n8n hand-decomposes each NGERS row back into
+    per-mode, per-item revert calls — exactly the fragility that produced
+    the original 404.
+    Proposal: a /unified-revert that takes the same NGERS rows[] the confirm
+    step already has, auto-detects metered / group / line per row (detection
+    logic already exists in parseMeterIdentifierFromNgersRow and
+    unified-error), and reverts per row. Fold inferred-empty into the same
+    call. #2 and #3 collapse naturally into this work.
+
+
+OTHER LOOSE ENDS (not /pending)
+-------------------------------
+- Commit + PR the fix branch (this is being done now).
+- n8n node hygiene: `facility` -> `facility_name` is now moot (endpoint
+  accepts `facility`), BUT switching the seed/revert expressions from
+  $('If Electricity').first() to $json.* still matters — .first() pins every
+  item to row 1, so N items collapse onto one payload and meters 2..N are
+  never processed. This explains the duplicate same-second calls in the log.
+- Two side-observations found during diagnosis, each its own investigation:
+    * Meter 4225 (Megasorber) has an overlapping CONFIRMED invoice
+      2026-01-06 -> 2026-06-30 from a single ~6-month invoice whose Date
+      Range was unpadded ("06/01/2026-30/06/2026"), sitting on top of the
+      per-month CONFIRMED rows. Should confirm split a multi-month range?
+    * Jan/Feb slots on meter 4225 were re-created at 07:34:01 with no
+      corresponding logged pending call — possible unlogged seeding path.
+
+
+KEY FILES
+---------
+  lib/ingestion-line.ts        resolveIngestionScope, resolveIngestionLine,
+                               rejectMeteredInputTypeOnLinePath
+  lib/ingestion-metered.ts     resolveMeterForIngestion (the fix)
+  lib/ingestion-utility-category.ts  findInputTypeForIngestion (is_metered)
+  app/api/ingestion/pending/route.ts        three branches: line / specific-
+                               meter / bulk(non-metered ∥ metered)
+  app/api/ingestion/revert-pending/route.ts line / group / metered
+  scripts/diagnose-megasorber-agl.mjs       read-only diagnostic (untracked)
+  docs/postmortem-2026-07-22-ingestion-outage.md   prior incident context

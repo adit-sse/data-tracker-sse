@@ -1,0 +1,184 @@
+{
+  "info": {
+    "name": "Fuzzy name lookup (ingestion RPC)",
+    "description": "Tests get_client_by_name / get_supplier_by_name via ingestion routes.\n\nVariables:\n- base_url — e.g. https://data-tracker-d8bml80tv-adit-sses-projects.vercel.app\n- ingestion_api_key — your INGESTION_API_KEY\n- client_exact — Test Client\n- supplier_exact — BFcards",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://data-tracker-d8bml80tv-adit-sses-projects.vercel.app" },
+    { "key": "ingestion_api_key", "value": "YOUR_INGESTION_API_KEY" },
+    { "key": "client_exact", "value": "Test Client" },
+    { "key": "supplier_exact", "value": "BFcards" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{ingestion_api_key}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "1 — Baseline exact (pending-mode)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/ingestion/pending-mode?client_name={{client_exact}}&supplier_name={{supplier_exact}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "ingestion", "pending-mode"],
+          "query": [
+            { "key": "client_name", "value": "{{client_exact}}" },
+            { "key": "supplier_name", "value": "{{supplier_exact}}" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Has groups or lines', () => {",
+              "  const j = pm.response.json();",
+              "  pm.expect(j).to.have.property('groups');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 — Baseline exact (mixed-scope)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/ingestion/mixed-scope?client_name={{client_exact}}&supplier_name={{supplier_exact}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "ingestion", "mixed-scope"],
+          "query": [
+            { "key": "client_name", "value": "{{client_exact}}" },
+            { "key": "supplier_name", "value": "{{supplier_exact}}" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 — Fuzzy lowercase (pending-mode)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/ingestion/pending-mode?client_name=test client&supplier_name=bfcards",
+          "host": ["{{base_url}}"],
+          "path": ["api", "ingestion", "pending-mode"],
+          "query": [
+            { "key": "client_name", "value": "test client" },
+            { "key": "supplier_name", "value": "bfcards" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Fuzzy match resolves (200)', () => pm.response.to.have.status(200));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 — Fuzzy client typo (pending-mode)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/ingestion/pending-mode?client_name=Test Clien&supplier_name={{supplier_exact}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "ingestion", "pending-mode"],
+          "query": [
+            { "key": "client_name", "value": "Test Clien" },
+            { "key": "supplier_name", "value": "{{supplier_exact}}" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Fuzzy client typo resolves (200)', () => pm.response.to.have.status(200));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 — Negative unknown client (404)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/ingestion/pending-mode?client_name=ZZZ No Such Client&supplier_name={{supplier_exact}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "ingestion", "pending-mode"],
+          "query": [
+            { "key": "client_name", "value": "ZZZ No Such Client" },
+            { "key": "supplier_name", "value": "{{supplier_exact}}" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": ["pm.test('Unknown client 404', () => pm.response.to.have.status(404));"],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 — DEV ONLY fuzzy pending (POST)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"client_name\": \"test client\",\n  \"supplier_name\": \"bfcards\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/ingestion/pending",
+          "host": ["{{base_url}}"],
+          "path": ["api", "ingestion", "pending"]
+        },
+        "description": "Creates PENDING rows. Run on dev/staging only — skip on prod unless you accept test data."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Pending with fuzzy names (200/201)', () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    }
+  ]
+}
