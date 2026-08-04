@@ -4,7 +4,7 @@ export const revalidate = 0;
 import { NextResponse } from 'next/server';
 import { fetchSheetRowsCached, isSheetsConfigured } from '@/lib/google-sheets';
 import { STAGING_SHEET_ID, STAGING_TAB } from '@/lib/intake-report/config';
-import { toIntakeFileRow, type StagingRow } from '@/lib/intake-report/classify';
+import { isUnprocessedRow, toIntakeFileRow, type StagingRow } from '@/lib/intake-report/classify';
 import { currentWeekKey, isInWeek, isWeekKey, parseSheetTime } from '@/lib/intake-report/dates';
 import { buildIntakeReport } from '@/lib/intake-report/summarise';
 import type { IntakeReportPayload } from '@/types';
@@ -51,7 +51,17 @@ export async function GET(request: Request) {
     // instead of silent: a rising number here means files are going unreported.
     let unparseableTimes = 0;
 
+    // Files the pipeline hasn't attempted yet have no outcome to report, so they
+    // are left out rather than bucketed. Counted for the same reason as above —
+    // a growing number means the pipeline has stalled, which is worth noticing.
+    let notYetProcessed = 0;
+
     const inWeek = (rows as StagingRow[]).filter((row) => {
+      if (isUnprocessedRow(row)) {
+        notYetProcessed += 1;
+        return false;
+      }
+
       const time = parseSheetTime(row.Time);
       if (time === null) {
         unparseableTimes += 1;
@@ -63,6 +73,12 @@ export async function GET(request: Request) {
     if (unparseableTimes > 0) {
       console.warn(
         `[intake-report] ${unparseableTimes} staging row(s) have an unreadable Time and are absent from every week.`,
+      );
+    }
+
+    if (notYetProcessed > 0) {
+      console.info(
+        `[intake-report] ${notYetProcessed} staging row(s) are not yet processed and are excluded from the report.`,
       );
     }
 

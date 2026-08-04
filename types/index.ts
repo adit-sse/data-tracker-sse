@@ -414,6 +414,15 @@ export interface IntakeFileRow {
   bucket: IntakeBucket;
   /** '(unassigned)' when the sheet's Client cell is blank. */
   customer: string;
+  /**
+   * Who the file came from, read from the staging sheet's `From` column.
+   *
+   * The column is not normalised upstream: some rows hold an address
+   * ("meterdatarequests@agl.com.au"), others a plain name ("AGL"). Shown
+   * verbatim rather than guessed at — see lib/canonical/match.ts if this ever
+   * needs standardising.
+   */
+  supplier: string;
   fileName: string;
   category: string;
   inputType: string;
@@ -426,6 +435,17 @@ export interface IntakeFileRow {
   issueResolved: boolean;
   /** ISO string, not a Date — these payloads cross a JSON boundary. */
   time: string | null;
+  /**
+   * The staging sheet's `Last Updated`, ISO, or null when it could not be read.
+   *
+   * Same day-first format as `Time`, so it shares parseSheetTime. A handful of
+   * older rows were hand-typed with dashes ("04-10-2026") and do not parse;
+   * `lastUpdatedRaw` keeps those visible instead of showing an empty cell for a
+   * value the sheet actually holds.
+   */
+  lastUpdated: string | null;
+  /** Verbatim `Last Updated` cell. Empty string when the cell is blank. */
+  lastUpdatedRaw: string;
 }
 
 export interface IntakeCustomerSummary {

@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { formatPerthDate } from '@/lib/intake-report/dates';
 import type {
   IntakeBucket,
   IntakeFileRow,
@@ -297,15 +298,17 @@ function ThisWeekTab({ refreshKey }: { refreshKey: number }) {
       const allFiles = [
         [`All files that went through this week (${data.totals.received})`],
         [],
-        ['Row', 'Status', 'Customer', 'Category', 'Input Type', 'File name', 'Detail', 'Comment', 'Owner / next step'],
+        ['Row', 'Status', 'Customer', 'Supplier', 'Category', 'Input Type', 'File name', 'Detail', 'Last updated', 'Comment', 'Owner / next step'],
         ...data.files.map((f) => [
           f.rowNumber,
           BUCKET_LABEL[f.bucket],
           f.customer,
+          f.supplier,
           f.category,
           f.inputType,
           f.fileName,
           f.detail,
+          formatLastUpdated(f),
           f.comment,
           f.owner,
         ]),
@@ -525,10 +528,12 @@ function ThisWeekTab({ refreshKey }: { refreshKey: number }) {
                     <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap">Row</th>
                     <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap">Status</th>
                     <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap">Customer</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap">Supplier</th>
                     <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap hidden lg:table-cell">Category</th>
                     <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap hidden lg:table-cell">Input type</th>
                     <th className="text-left px-4 py-3 font-semibold text-gray-600">File name</th>
                     <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap">Detail</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-600 whitespace-nowrap hidden lg:table-cell">Last updated</th>
                     <th className="text-left px-4 py-3 font-semibold text-gray-600 hidden xl:table-cell">Comment</th>
                   </tr>
                 </thead>
@@ -546,6 +551,18 @@ function ThisWeekTab({ refreshKey }: { refreshKey: number }) {
   );
 }
 
+/**
+ * `Last Updated` for a table cell.
+ *
+ * Falls back to the raw cell when it won't parse, rather than showing an empty
+ * dash for a value the sheet actually holds — a few older rows were hand-typed
+ * with dashes ("04-10-2026") instead of the day-first format the n8n job writes.
+ */
+function formatLastUpdated(file: IntakeFileRow): string {
+  if (file.lastUpdated) return formatPerthDate(new Date(file.lastUpdated));
+  return file.lastUpdatedRaw || '—';
+}
+
 function FileRow({ file }: { file: IntakeFileRow }) {
   return (
     <tr className="border-t border-gray-100 bg-white hover:bg-gray-50 transition-colors">
@@ -558,6 +575,12 @@ function FileRow({ file }: { file: IntakeFileRow }) {
         </span>
       </td>
       <td className="px-4 py-2.5 text-gray-900 whitespace-nowrap">{file.customer}</td>
+      <td
+        className="px-4 py-2.5 text-gray-700 max-w-[14rem] truncate"
+        title={file.supplier || undefined}
+      >
+        {file.supplier || '—'}
+      </td>
       <td className="px-4 py-2.5 text-gray-500 hidden lg:table-cell whitespace-nowrap">
         {file.category || '—'}
       </td>
@@ -573,6 +596,9 @@ function FileRow({ file }: { file: IntakeFileRow }) {
         )}
       </td>
       <td className="px-4 py-2.5 text-gray-700 whitespace-nowrap">{file.detail}</td>
+      <td className="px-4 py-2.5 text-gray-500 hidden lg:table-cell whitespace-nowrap">
+        {formatLastUpdated(file)}
+      </td>
       <td className="px-4 py-2.5 text-gray-500 hidden xl:table-cell max-w-md">{file.comment}</td>
     </tr>
   );

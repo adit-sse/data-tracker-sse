@@ -23,9 +23,11 @@ import { parseSheetTime } from './dates';
 export interface StagingRow {
   row_number?: number | string;
   Client?: string;
+  From?: string;
   AttachmentName?: string;
   AttachmentID?: string;
   Time?: string;
+  'Last Updated'?: string;
   Processed?: string;
   Completed?: string;
   Category?: string;
@@ -95,6 +97,21 @@ function ignoredDetail(row: StagingRow): string | null {
   if (COVER_ATTACHMENT_FILENAMES.has(fileName.toLowerCase())) return 'Cover attachment';
 
   return null;
+}
+
+/**
+ * True for files the pipeline has not attempted yet.
+ *
+ * These are excluded from the report entirely rather than given a bucket: a file
+ * that has not been processed has no outcome to report, and counting it as
+ * "action needed" would put work in the queue that nobody can act on yet. They
+ * reappear on their own once the pipeline sets a real status.
+ *
+ * Matched case-insensitively — the sheet currently holds a lowercase
+ * "unprocessed", and nothing upstream guarantees the casing stays that way.
+ */
+export function isUnprocessedRow(row: StagingRow): boolean {
+  return /^unprocessed$/i.test(text(row.Processed)) && text(row.Completed) === '';
 }
 
 /**
@@ -226,10 +243,16 @@ export function toIntakeFileRow(row: StagingRow): IntakeFileRow {
   const classification = classifyStagingRow(row);
   const time = parseSheetTime(row.Time);
 
+  // Same sheet, same n8n job, same day-first convention as Time — so this shares
+  // parseSheetTime rather than guessing at a second format.
+  const lastUpdatedRaw = text(row['Last Updated']);
+  const lastUpdated = parseSheetTime(lastUpdatedRaw);
+
   return {
     rowNumber: Number(row.row_number ?? 0),
     bucket: classification.bucket,
     customer: text(row.Client) || UNASSIGNED_CUSTOMER,
+    supplier: text(row.From),
     fileName: fileNameOf(row) || 'unnamed',
     category: text(row.Category),
     inputType: text(row['Input Type']),
@@ -238,5 +261,7 @@ export function toIntakeFileRow(row: StagingRow): IntakeFileRow {
     owner: classification.owner,
     issueResolved: /^y(es)?$/i.test(text(row['Issue Resolved'])),
     time: time ? time.toISOString() : null,
+    lastUpdated: lastUpdated ? lastUpdated.toISOString() : null,
+    lastUpdatedRaw,
   };
 }
