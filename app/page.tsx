@@ -375,12 +375,14 @@ export default function HomePage() {
             {resolvedRecents.length > 0 && !searchQuery.trim() && (
               <div className="mb-6">
                 <h3 className="text-sm font-semibold text-gray-500 mb-2">Recently viewed</h3>
-                <div className="flex flex-wrap gap-2">
+                {/* One row, always: long client names scroll sideways rather
+                    than wrapping onto a second line. */}
+                <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1">
                   {resolvedRecents.map((recent) => (
                     <Link
                       key={recent.id}
                       href={`/clients/${recent.id}`}
-                      className="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-sm font-medium text-gray-700 hover:border-blue-300 hover:text-blue-700 transition-colors"
+                      className="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-sm font-medium text-gray-700 whitespace-nowrap hover:border-blue-300 hover:text-blue-700 transition-colors"
                     >
                       {recent.name}
                     </Link>
